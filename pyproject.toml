@@ -1,0 +1,36 @@
+[project]
+name = "noval-workflow"
+version = "0.1.0"
+description = "AI-powered novel creation workflow with human-in-the-loop support."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "langgraph>=1.0.0",
+    "langchain-openai>=0.3.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6.1", "mypy>=1.11.1"]
+
+[build-system]
+requires = ["setuptools>=73.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["langgraph.templates.noval_workflow", "noval_workflow"]
+
+[tool.setuptools.package-dir]
+"langgraph.templates.noval_workflow" = "src/novel_workflow"
+"noval_workflow" = "src/novel_workflow"
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.7.0",
+    "langgraph-cli[inmem]>=0.4.14",
+    "pytest>=9.0.3",
+    "ruff>=0.8.2",
+]
