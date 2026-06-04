@@ -47,9 +47,12 @@ START
 ### 审核子图内部流程
 
 ```
-generate → llm_self_review → human_review（中断）──► 通过？ → END
-                                                 └─► 有意见？ → generate（重新生成）
+generate → llm_self_review ──► (有问题) → generate（自动重生成，不打扰人工）
+                           └─► (通过)   → human_review（中断）──► 批准 → END
+                                                               └─► 有意见 → generate（重新生成）
 ```
+
+> 说明：`llm_self_review` 不通过时直接路由回 `generate`，跳过人工审核；只有机审通过后才触发 `human_review` 中断。每轮 `generate` 会将对话追加进 `review_history`（最近 N 轮滑动窗口：foundation/titles 5 轮，chapter 3 轮），LLM 可看到完整修改链。
 
 ---
 
