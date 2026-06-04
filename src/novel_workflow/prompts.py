@@ -57,7 +57,7 @@ CHARACTER_PROFILES_PROMPT = """请为本小说创建【人物档案】。
 
 # Phase 2: Chapter prompts
 
-def titles_prompt(all_titles: list[str]) -> str:
+def titles_prompt(all_titles: list[str], chapter_context: str = "") -> str:
     """Build the prompt for generating next batch of 5 chapter titles."""
     existing = ""
     if all_titles:
@@ -65,13 +65,20 @@ def titles_prompt(all_titles: list[str]) -> str:
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
         )
 
-    return f"""请为本小说生成下5章的章节标题。{existing}
+    context_section = ""
+    if chapter_context:
+        context_section = f"\n\n【前文故事进展（请据此规划后续走向）】\n{chapter_context}"
+
+    return f"""请为本小说生成下5章的章节标题。{existing}{context_section}
 
 要求：
 - 每行一个标题，共5行
 - 标题简洁有力（4-12字），与故事情节紧密相关
 - 不要添加序号、标点或其他前缀
 - 标题不得与已有章节重复
+- 标题须符合系统提示中的整体大纲方向，体现故事在当前阶段应有的发展走向
+- 标题须与前文章节保持时间线与情节的连贯，不得跳跃或产生矛盾
+- 5个标题之间应形成自然的叙事流，层层递进，避免互不相关的孤立命名
 
 请直接输出5个标题，每行一个。"""
 

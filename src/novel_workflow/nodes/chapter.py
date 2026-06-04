@@ -33,7 +33,7 @@ def _clean_title(line: str) -> str:
 def prepare_titles(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": titles_prompt(state.all_chapter_titles),
+        "task_prompt": titles_prompt(state.all_chapter_titles, build_chapter_context(state)),
         "review_type": "titles",
         **reset_review_fields(),
     }
