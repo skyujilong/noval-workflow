@@ -49,6 +49,8 @@ def build_foundation_context(state: NovelState) -> str:
     parts.append("你是一位专业小说创作助手。以下是本次小说创作的核心设定，请严格遵守：\n")
 
     # User inputs
+    if state.novel_name:
+        parts.append(f"【小说名称】{state.novel_name}")
     if state.genre:
         parts.append(f"【小说类型】{state.genre}")
     if state.writing_style:
