@@ -14,9 +14,17 @@ _logger = logging.getLogger(__name__)
 
 # ── shared file-path utilities ─────────────────────────────────────────────────
 
-def get_output_dir() -> Path:
-    """Return the configured novel output root directory."""
-    return Path(os.environ.get("NOVEL_OUTPUT_DIR", "./output"))
+def get_output_dir(novel_name: str = "") -> Path:
+    """Return the output directory for the current novel.
+
+    Structure: <NOVEL_OUTPUT_DIR>/<safe_novel_name>/
+    Falls back to <NOVEL_OUTPUT_DIR>/ when novel_name is empty.
+    """
+    base = Path(os.environ.get("NOVEL_OUTPUT_DIR", "./output"))
+    if novel_name:
+        safe_name = re.sub(r'[^\w\u4e00-\u9fff]', '_', novel_name).strip('_')
+        return base / safe_name
+    return base
 
 
 def chapter_filename(chapter_num: int, title: str) -> str:
@@ -107,7 +115,7 @@ def build_chapter_context(state: NovelState) -> str:
             parts.extend(summary_entries)
 
     # Full content section (header only emitted when at least one entry is produced)
-    chapters_dir = get_output_dir() / "chapters"
+    chapters_dir = get_output_dir(state.novel_name) / "chapters"
     full_entries: list[str] = []
     for i in range(full_start, total):
         chapter_num = i + 1

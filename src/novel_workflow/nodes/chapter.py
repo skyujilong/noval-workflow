@@ -78,7 +78,7 @@ def save_chapter(state: NovelState) -> dict:
     chapter_num = state.total_chapters_written + 1
     title = state.current_batch_titles[state.current_chapter_index]
 
-    chapters_dir = get_output_dir() / "chapters"
+    chapters_dir = get_output_dir(state.novel_name) / "chapters"
     chapters_dir.mkdir(parents=True, exist_ok=True)
     filename = chapters_dir / chapter_filename(chapter_num, title)
 
@@ -130,7 +130,7 @@ def generate_summary(state: NovelState) -> dict:
         )
 
     if summary:
-        summaries_dir = get_output_dir() / "summaries"
+        summaries_dir = get_output_dir(state.novel_name) / "summaries"
         summaries_dir.mkdir(parents=True, exist_ok=True)
         filename = summaries_dir / chapter_filename(chapter_num, title)
         try:

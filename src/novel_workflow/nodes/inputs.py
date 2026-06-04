@@ -11,7 +11,8 @@ def collect_user_inputs(state: NovelState) -> dict:
     """Interrupt to collect the 6 basic novel parameters from the user."""
     # Allow pre-populated values via thread input (langgraph dev API)
     if (
-        state.genre
+        state.novel_name
+        and state.genre
         and state.writing_style
         and state.target_audience
         and state.core_tone
@@ -24,6 +25,7 @@ def collect_user_inputs(state: NovelState) -> dict:
         {
             "message": "请提供以下小说创作参数：",
             "fields": {
+                "novel_name": "小说名称（用于输出目录命名，如：星际迷途、长安风云）",
                 "genre": "小说类型（如：玄幻、都市、悬疑、言情等）",
                 "writing_style": "写作风格（如：硬核、轻松、意识流、简洁白描等）",
                 "target_audience": "目标读者（如：青少年、成年男性、职场女性等）",
@@ -32,6 +34,7 @@ def collect_user_inputs(state: NovelState) -> dict:
                 "total_word_count": "总字数目标（如：30万字、100万字）",
             },
             "current_values": {
+                "novel_name": state.novel_name,
                 "genre": state.genre,
                 "writing_style": state.writing_style,
                 "target_audience": state.target_audience,
@@ -43,7 +46,7 @@ def collect_user_inputs(state: NovelState) -> dict:
     )
 
     VALID_FIELDS = frozenset({
-        "genre", "writing_style", "target_audience",
+        "novel_name", "genre", "writing_style", "target_audience",
         "core_tone", "chapter_word_count", "total_word_count",
     })
 

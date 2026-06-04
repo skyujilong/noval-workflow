@@ -19,6 +19,7 @@ class ReviewSubState:
 @dataclass
 class NovelState:
     # User inputs (Phase 0)
+    novel_name: str = ""
     genre: str = ""
     writing_style: str = ""
     target_audience: str = ""
