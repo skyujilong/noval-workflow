@@ -19,6 +19,7 @@ def prepare_core_theme(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": CORE_THEME_PROMPT,
+        "review_type": "core_theme",
         **reset_review_fields(),
     }
 
@@ -27,6 +28,7 @@ def prepare_world_building(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": WORLD_BUILDING_PROMPT,
+        "review_type": "world_building",
         **reset_review_fields(),
     }
 
@@ -35,6 +37,7 @@ def prepare_core_conflicts(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": CORE_CONFLICTS_PROMPT,
+        "review_type": "core_conflicts",
         **reset_review_fields(),
     }
 
@@ -43,6 +46,7 @@ def prepare_overall_outline(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": OVERALL_OUTLINE_PROMPT,
+        "review_type": "overall_outline",
         **reset_review_fields(),
     }
 
@@ -51,6 +55,7 @@ def prepare_character_profiles(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": CHARACTER_PROFILES_PROMPT,
+        "review_type": "character_profiles",
         **reset_review_fields(),
     }
 

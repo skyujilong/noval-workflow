@@ -9,13 +9,18 @@ from langgraph.types import interrupt
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
+    CHARACTER_PROFILES_REVIEW_PROMPT,
     CHARACTER_RELATIONS_REVIEW_PROMPT,
     CHARACTER_STATUS_REVIEW_PROMPT,
     CHAPTER_REVIEW_PROMPT,
+    CORE_CONFLICTS_REVIEW_PROMPT,
+    CORE_THEME_REVIEW_PROMPT,
     FORESHADOWING_REVIEW_PROMPT,
     FOUNDATION_REVIEW_PROMPT,
+    OVERALL_OUTLINE_REVIEW_PROMPT,
     PHASE_SUMMARY_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
+    WORLD_BUILDING_REVIEW_PROMPT,
 )
 from noval_workflow.state import ReviewSubState
 
@@ -24,6 +29,11 @@ from noval_workflow.state import ReviewSubState
 # chapter: drafts are long (~2000 chars each), 3 rounds keeps token cost manageable.
 _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "foundation": 5,
+    "core_theme": 5,
+    "world_building": 5,
+    "core_conflicts": 5,
+    "overall_outline": 5,
+    "character_profiles": 5,
     "titles": 5,
     "chapter": 3,
     "arc_outline": 5,
@@ -36,6 +46,11 @@ _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
 _REVIEW_PROMPTS = {
     "foundation": FOUNDATION_REVIEW_PROMPT,
+    "core_theme": CORE_THEME_REVIEW_PROMPT,
+    "world_building": WORLD_BUILDING_REVIEW_PROMPT,
+    "core_conflicts": CORE_CONFLICTS_REVIEW_PROMPT,
+    "overall_outline": OVERALL_OUTLINE_REVIEW_PROMPT,
+    "character_profiles": CHARACTER_PROFILES_REVIEW_PROMPT,
     "titles": TITLES_REVIEW_PROMPT,
     "chapter": CHAPTER_REVIEW_PROMPT,
     "arc_outline": ARC_OUTLINE_REVIEW_PROMPT,
