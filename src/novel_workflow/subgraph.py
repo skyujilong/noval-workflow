@@ -47,6 +47,21 @@ _REVIEW_PROMPTS = {
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}
 
+# 触发「判为通过」的条件：
+#   1. 整条回复就是一个 pass 信号（精确匹配，允许前后有标点/空格）
+#   2. 回复较短（< 40 字）且完全被 pass 信号覆盖（避免「第二点无问题，但…」误判）
+def _is_pass(feedback: str) -> bool:
+    stripped = feedback.strip("。！!， ,、\n")
+    # 精确匹配：整条回复就是某个 pass 信号
+    if stripped in PASS_SIGNALS:
+        return True
+    # 短回复且只包含 pass 信号词，无否定/转折词
+    NEGATIVE_HINTS = {"但", "不", "问题", "错误", "矛盾", "建议", "修改", "缺少", "缺乏", "需要"}
+    if len(feedback) < 40 and any(s in feedback for s in PASS_SIGNALS):
+        if not any(h in feedback for h in NEGATIVE_HINTS):
+            return True
+    return False
+
 
 def generate(state: ReviewSubState) -> dict:
     """Generate or regenerate content based on task_prompt and any feedback."""
@@ -102,8 +117,7 @@ def llm_self_review(state: ReviewSubState) -> dict:
     result = llm.invoke(messages)
     feedback = result.content.strip()
 
-    is_pass = len(feedback) < 30 and any(s in feedback for s in PASS_SIGNALS)
-    if is_pass:
+    if _is_pass(feedback):
         return {"review_feedback": ""}
     return {"review_feedback": f"[AI审稿意见]\n{feedback}"}
 
