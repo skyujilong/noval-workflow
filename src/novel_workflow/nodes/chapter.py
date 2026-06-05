@@ -40,7 +40,12 @@ def prepare_titles(state: NovelState) -> dict:
 
 
 def save_titles(state: NovelState) -> dict:
-    """Parse titles from current_draft (one per line), stripping LLM numbering prefixes."""
+    """Parse titles from current_draft (one per line), stripping LLM numbering prefixes.
+
+    Note: all_chapter_titles is NOT appended here. Titles are appended one-by-one
+    in generate_summary after each chapter is written. This allows users to modify
+    current_batch_titles mid-batch and have changes reflected in all_chapter_titles.
+    """
     from noval_workflow.config import BATCH_SIZE
     lines = [_clean_title(l) for l in state.current_draft.strip().splitlines() if l.strip()]
     new_titles = [l for l in lines if l][:BATCH_SIZE]
@@ -49,8 +54,6 @@ def save_titles(state: NovelState) -> dict:
         raise ValueError(f"LLM returned no valid titles. Raw draft:\n{state.current_draft}")
 
     return {
-        # reducer (operator.add) appends these to all_chapter_titles
-        "all_chapter_titles": new_titles,
         "current_batch_titles": new_titles,
         "current_chapter_index": 0,
     }
@@ -62,9 +65,15 @@ def prepare_chapter(state: NovelState) -> dict:
     chapter_num = state.total_chapters_written + 1
     title = state.current_batch_titles[state.current_chapter_index]
     chapter_context = build_chapter_context(state)
+    # Merge historical titles + unwritten portion of current batch for the LLM TOC.
+    # all_chapter_titles accumulates one title per chapter via generate_summary, so it
+    # already contains the already-written chapters of the current batch. Appending only
+    # current_batch_titles[current_chapter_index:] (the not-yet-written portion) avoids
+    # duplicate entries in the numbered list rendered for the LLM.
+    merged_titles = state.all_chapter_titles + state.current_batch_titles[state.current_chapter_index:]
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": chapter_prompt(title, chapter_num, state.all_chapter_titles, chapter_context),
+        "task_prompt": chapter_prompt(title, chapter_num, merged_titles, chapter_context),
         "review_type": "chapter",
         **reset_review_fields(),
     }
@@ -110,9 +119,16 @@ def generate_summary(state: NovelState) -> dict:
     LLM failures are caught and logged; an empty summary is returned so the
     graph can continue. ChatOpenAI's built-in retry (max_retries=2) handles
     transient network errors before this handler is reached.
+
+    Also appends the chapter title to all_chapter_titles here (one per chapter),
+    so that mid-batch edits to current_batch_titles are reflected correctly.
+    save_chapter already incremented current_chapter_index, so the title is at
+    current_chapter_index - 1.
     """
     chapter_num = state.total_chapters_written   # already incremented by save_chapter
-    title = state.all_chapter_titles[chapter_num - 1]
+    # Title comes from current_batch_titles (not all_chapter_titles) so user edits
+    # made via ask_chapter_edit are picked up correctly.
+    title = state.current_batch_titles[state.current_chapter_index - 1]
 
     summary = ""
     try:
@@ -139,9 +155,133 @@ def generate_summary(state: NovelState) -> dict:
         except OSError as e:
             _logger.error("Failed to write summary file %s: %s", filename, e)
 
-    # Always append (even empty string) to keep all_chapter_summaries index
-    # aligned with all_chapter_titles (index N-1 == chapter N).
-    return {"all_chapter_summaries": [summary]}
+    # Append the chapter title to all_chapter_titles (one per chapter, so mid-batch
+    # title edits are reflected). Also append the summary (even if empty) to keep
+    # all_chapter_summaries index aligned with all_chapter_titles (index N-1 == chapter N).
+    return {
+        "all_chapter_titles": [title],
+        "all_chapter_summaries": [summary],
+    }
+
+
+# ── per-chapter user intervention ─────────────────────────────────────────────
+
+_SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "continue", "继续"}
+_CHOICE_MAP = {
+    "1": "character_status",
+    "2": "character_relations",
+    "3": "foreshadowing",
+    "4": "phase_summary",
+}
+_TRACKING_HISTORY_MAP = {
+    "character_status": "character_status_history",
+    "character_relations": "character_relations_history",
+    "foreshadowing": "foreshadowing_history",
+    "phase_summary": "phase_summary_history",
+}
+_TRACKING_LABELS = {
+    "character_status": "人物动态状态",
+    "character_relations": "人物关系/势力格局",
+    "foreshadowing": "伏笔台账",
+    "phase_summary": "阶段固化数据",
+}
+
+
+def ask_chapter_edit(state: NovelState) -> dict:
+    """每章写完后，让用户决策是否调整当前批次的标题/大纲/动态状态。
+
+    Supports multiple interrupt rounds within a single node:
+    1. First interrupt: show menu, user selects what to adjust (comma-separated).
+    2. For each selected item, a follow-up interrupt collects the new value.
+    Returns a state update dict with only the fields the user actually changed.
+    """
+    remaining_titles = state.current_batch_titles[state.current_chapter_index:]
+
+    # First interrupt: show menu and current status
+    choice = interrupt({
+        "message": (
+            f"第 {state.total_chapters_written} 章已完成。\n"
+            f"当前批次进度：{state.current_chapter_index}/{len(state.current_batch_titles)}\n"
+            "可调整项（输入对应编号/字母，多选用逗号分隔，直接回车跳过）：\n"
+            "  t  — 调整未写章节标题\n"
+            "  a  — 调整当前批次弧线大纲\n"
+            "  1  — 人物动态状态\n"
+            "  2  — 人物关系/势力格局\n"
+            "  3  — 伏笔台账\n"
+            "  4  — 阶段固化数据\n"
+        ),
+        "remaining_titles": remaining_titles,
+        "arc_outline": state.current_arc_outline,
+        "character_status": state.character_status_history[-1] if state.character_status_history else None,
+        "character_relations": state.character_relations_history[-1] if state.character_relations_history else None,
+        "foreshadowing": state.foreshadowing_history[-1] if state.foreshadowing_history else None,
+        "phase_summary": state.phase_summary_history[-1] if state.phase_summary_history else None,
+    })
+
+    raw = str(choice).strip().lower()
+
+    if raw in _SKIP_WORDS:
+        return {}
+
+    # Parse selections
+    selected_tracking: list[str] = []
+    do_titles = False
+    do_arc = False
+
+    for token in raw.replace("，", ",").split(","):
+        token = token.strip()
+        if token == "t":
+            do_titles = True
+        elif token == "a":
+            do_arc = True
+        elif token in _CHOICE_MAP:
+            selected_tracking.append(_CHOICE_MAP[token])
+
+    updates: dict = {}
+
+    # Handle title adjustment
+    if do_titles and remaining_titles:
+        new_titles_raw = interrupt({
+            "message": (
+                f"当前未写章节标题（共{len(remaining_titles)}个，每行一个）：\n"
+                + "\n".join(
+                    f"  {state.current_chapter_index + i + 1}. {t}"
+                    for i, t in enumerate(remaining_titles)
+                )
+                + "\n\n请输入新的标题列表（每行一个，数量保持一致）："
+            ),
+            "remaining_titles": remaining_titles,
+        })
+        new_lines = [l.strip() for l in str(new_titles_raw).strip().splitlines() if l.strip()]
+        if new_lines:
+            kept = state.current_batch_titles[:state.current_chapter_index]
+            updates["current_batch_titles"] = kept + new_lines[:len(remaining_titles)]
+
+    # Handle arc outline adjustment
+    if do_arc:
+        new_arc = interrupt({
+            "message": "当前批次弧线大纲如下，请输入修改后的完整内容：",
+            "current_arc_outline": state.current_arc_outline,
+        })
+        new_arc_str = str(new_arc).strip()
+        if new_arc_str:
+            updates["current_arc_outline"] = new_arc_str
+            updates["arc_outline_history"] = [new_arc_str]  # operator.add appends
+
+    # Handle tracking field adjustments
+    for field_name in selected_tracking:
+        hist_key = _TRACKING_HISTORY_MAP[field_name]
+        hist_list: list[str] = getattr(state, hist_key)
+        current_val = hist_list[-1] if hist_list else "（尚无记录）"
+        new_val_raw = interrupt({
+            "message": f"【{_TRACKING_LABELS[field_name]}】当前内容如下，请输入修改后的完整内容：",
+            "current": current_val,
+        })
+        new_val = str(new_val_raw).strip()
+        if new_val:
+            updates[hist_key] = [new_val]  # operator.add appends new snapshot
+
+    return updates
 
 
 # ── continue decision ─────────────────────────────────────────────────────────

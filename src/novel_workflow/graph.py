@@ -20,6 +20,7 @@ from noval_workflow.nodes.arc import (
     save_phase_summary,
 )
 from noval_workflow.nodes.chapter import (
+    ask_chapter_edit,
     ask_continue,
     generate_summary,
     prepare_chapter,
@@ -105,6 +106,7 @@ builder.add_node("prepare_chapter", prepare_chapter)
 builder.add_node("review_chapter", review_subgraph)
 builder.add_node("save_chapter", save_chapter)
 builder.add_node("generate_summary", generate_summary)
+builder.add_node("ask_chapter_edit", ask_chapter_edit)
 builder.add_node("ask_continue", ask_continue)
 
 # ── edges ──────────────────────────────────────────────────────────────────────
@@ -222,8 +224,9 @@ builder.add_conditional_edges(
 builder.add_edge("prepare_chapter", "review_chapter")
 builder.add_edge("review_chapter", "save_chapter")
 builder.add_edge("save_chapter", "generate_summary")
+builder.add_edge("generate_summary", "ask_chapter_edit")
 builder.add_conditional_edges(
-    "generate_summary",
+    "ask_chapter_edit",
     route_chapter_or_continue,
     {"prepare_chapter": "prepare_chapter", "ask_continue": "ask_continue"},
 )
