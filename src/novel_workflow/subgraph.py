@@ -7,7 +7,16 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
 from noval_workflow.llm import get_llm
-from noval_workflow.prompts import CHAPTER_REVIEW_PROMPT, FOUNDATION_REVIEW_PROMPT, TITLES_REVIEW_PROMPT
+from noval_workflow.prompts import (
+    ARC_OUTLINE_REVIEW_PROMPT,
+    CHARACTER_RELATIONS_REVIEW_PROMPT,
+    CHARACTER_STATUS_REVIEW_PROMPT,
+    CHAPTER_REVIEW_PROMPT,
+    FORESHADOWING_REVIEW_PROMPT,
+    FOUNDATION_REVIEW_PROMPT,
+    PHASE_SUMMARY_REVIEW_PROMPT,
+    TITLES_REVIEW_PROMPT,
+)
 from noval_workflow.state import ReviewSubState
 
 # Max review rounds kept in history, per review_type.
@@ -17,6 +26,11 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "foundation": 5,
     "titles": 5,
     "chapter": 3,
+    "arc_outline": 5,
+    "character_status": 3,
+    "character_relations": 3,
+    "foreshadowing": 3,
+    "phase_summary": 3,
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
@@ -24,6 +38,11 @@ _REVIEW_PROMPTS = {
     "foundation": FOUNDATION_REVIEW_PROMPT,
     "titles": TITLES_REVIEW_PROMPT,
     "chapter": CHAPTER_REVIEW_PROMPT,
+    "arc_outline": ARC_OUTLINE_REVIEW_PROMPT,
+    "character_status": CHARACTER_STATUS_REVIEW_PROMPT,
+    "character_relations": CHARACTER_RELATIONS_REVIEW_PROMPT,
+    "foreshadowing": FORESHADOWING_REVIEW_PROMPT,
+    "phase_summary": PHASE_SUMMARY_REVIEW_PROMPT,
 }
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}

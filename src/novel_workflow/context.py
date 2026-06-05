@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -76,6 +77,18 @@ def build_foundation_context(state: NovelState) -> str:
     if state.character_profiles:
         parts.append(f"\n【人物档案】\n{state.character_profiles}")
 
+    # Dynamic tracking fields (injected when available)
+    if state.current_arc_outline:
+        parts.append(f"\n【本批章节弧线大纲】\n{state.current_arc_outline}")
+    if state.character_status_history:
+        parts.append(f"\n【人物动态状态（最新）】\n{state.character_status_history[-1]}")
+    if state.character_relations_history:
+        parts.append(f"\n【人物关系/势力动态（最新）】\n{state.character_relations_history[-1]}")
+    if state.foreshadowing_history:
+        parts.append(f"\n【伏笔台账（最新）】\n{state.foreshadowing_history[-1]}")
+    if state.phase_summary_history:
+        parts.append(f"\n【阶段固化数据（最新）】\n{state.phase_summary_history[-1]}")
+
     return "\n".join(parts)
 
 
@@ -92,9 +105,6 @@ def build_chapter_context(state: NovelState) -> str:
     total = state.total_chapters_written
     if total == 0:
         return ""
-
-    FULL_COUNT = 2    # most recent N chapters get full content
-    SUMMARY_COUNT = 3 # next M chapters before that get summary only
 
     full_start = max(0, total - FULL_COUNT)
     summary_start = max(0, full_start - SUMMARY_COUNT)

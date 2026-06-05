@@ -41,8 +41,9 @@ def prepare_titles(state: NovelState) -> dict:
 
 def save_titles(state: NovelState) -> dict:
     """Parse titles from current_draft (one per line), stripping LLM numbering prefixes."""
+    from noval_workflow.config import BATCH_SIZE
     lines = [_clean_title(l) for l in state.current_draft.strip().splitlines() if l.strip()]
-    new_titles = [l for l in lines if l][:5]
+    new_titles = [l for l in lines if l][:BATCH_SIZE]
 
     if not new_titles:
         raise ValueError(f"LLM returned no valid titles. Raw draft:\n{state.current_draft}")
@@ -166,5 +167,5 @@ def route_chapter_or_continue(state: NovelState) -> str:
 
 def route_continue_or_end(state: NovelState) -> str:
     if state.continue_writing:
-        return "prepare_titles"
+        return "prepare_arc_outline"
     return END
