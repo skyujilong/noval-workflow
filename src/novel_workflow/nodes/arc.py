@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
-from noval_workflow.context import build_foundation_context
+from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.prompts import (
     arc_outline_prompt,
     character_relations_prompt,
@@ -119,7 +119,7 @@ def route_tracking_next(state: NovelState) -> str:
 def prepare_character_status(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": character_status_prompt(state),
+        "task_prompt": character_status_prompt(state, build_chapter_context(state)),
         "review_type": "character_status",
         **reset_review_fields(),
     }
@@ -137,7 +137,7 @@ def save_character_status(state: NovelState) -> dict:
 def prepare_character_relations(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": character_relations_prompt(state),
+        "task_prompt": character_relations_prompt(state, build_chapter_context(state)),
         "review_type": "character_relations",
         **reset_review_fields(),
     }
@@ -155,7 +155,7 @@ def save_character_relations(state: NovelState) -> dict:
 def prepare_foreshadowing(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": foreshadowing_prompt(state),
+        "task_prompt": foreshadowing_prompt(state, build_chapter_context(state)),
         "review_type": "foreshadowing",
         **reset_review_fields(),
     }
@@ -173,7 +173,7 @@ def save_foreshadowing(state: NovelState) -> dict:
 def prepare_phase_summary(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": phase_summary_prompt(state),
+        "task_prompt": phase_summary_prompt(state, build_chapter_context(state)),
         "review_type": "phase_summary",
         **reset_review_fields(),
     }

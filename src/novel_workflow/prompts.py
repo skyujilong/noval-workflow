@@ -140,13 +140,17 @@ def arc_outline_prompt(state: "NovelState") -> str:
 请直接输出本批弧线大纲内容，不需要标题。"""
 
 
-def character_status_prompt(state: "NovelState") -> str:
+def character_status_prompt(state: "NovelState", chapter_context: str = "") -> str:
     """Build the prompt for updating character dynamic status."""
     prev = ""
     if state.character_status_history:
         prev = f"\n\n【上次人物状态快照】\n{state.character_status_history[-1]}"
 
-    return f"""请根据最新章节内容，更新【人物动态状态】。{prev}
+    chapter_section = ""
+    if chapter_context:
+        chapter_section = f"\n\n【已完成章节内容（请据此更新状态）】\n{chapter_context}"
+
+    return f"""请根据已完成的章节内容，更新【人物动态状态】。{prev}{chapter_section}
 
 要求：
 - 涵盖主角及主要配角的当前状态（位置、情绪、目标、处境）
@@ -157,13 +161,17 @@ def character_status_prompt(state: "NovelState") -> str:
 请直接输出更新后的人物动态状态，不需要标题。"""
 
 
-def character_relations_prompt(state: "NovelState") -> str:
+def character_relations_prompt(state: "NovelState", chapter_context: str = "") -> str:
     """Build the prompt for updating character relations and faction dynamics."""
     prev = ""
     if state.character_relations_history:
         prev = f"\n\n【上次关系/势力快照】\n{state.character_relations_history[-1]}"
 
-    return f"""请根据最新章节内容，更新【人物关系/势力格局】。{prev}
+    chapter_section = ""
+    if chapter_context:
+        chapter_section = f"\n\n【已完成章节内容（请据此更新关系）】\n{chapter_context}"
+
+    return f"""请根据已完成的章节内容，更新【人物关系/势力格局】。{prev}{chapter_section}
 
 要求：
 - 记录主要人物之间的关系变化（友好/敌对/中立/合作）
@@ -174,13 +182,17 @@ def character_relations_prompt(state: "NovelState") -> str:
 请直接输出更新后的人物关系/势力格局，不需要标题。"""
 
 
-def foreshadowing_prompt(state: "NovelState") -> str:
+def foreshadowing_prompt(state: "NovelState", chapter_context: str = "") -> str:
     """Build the prompt for updating the foreshadowing ledger."""
     prev = ""
     if state.foreshadowing_history:
         prev = f"\n\n【上次伏笔台账】\n{state.foreshadowing_history[-1]}"
 
-    return f"""请根据最新章节内容，更新【伏笔台账】。{prev}
+    chapter_section = ""
+    if chapter_context:
+        chapter_section = f"\n\n【已完成章节内容（请据此核对伏笔）】\n{chapter_context}"
+
+    return f"""请根据已完成的章节内容，更新【伏笔台账】。{prev}{chapter_section}
 
 要求：
 - 列出本批新增的伏笔（标注"新增"）
@@ -192,13 +204,17 @@ def foreshadowing_prompt(state: "NovelState") -> str:
 请直接输出更新后的伏笔台账，不需要标题。"""
 
 
-def phase_summary_prompt(state: "NovelState") -> str:
+def phase_summary_prompt(state: "NovelState", chapter_context: str = "") -> str:
     """Build the prompt for updating phase-frozen hard data."""
     prev = ""
     if state.phase_summary_history:
         prev = f"\n\n【上次阶段固化数据】\n{state.phase_summary_history[-1]}"
 
-    return f"""请根据最新章节内容，更新【阶段固化数据】。{prev}
+    chapter_section = ""
+    if chapter_context:
+        chapter_section = f"\n\n【已完成章节内容（请据此更新硬性数据）】\n{chapter_context}"
+
+    return f"""请根据已完成的章节内容，更新【阶段固化数据】。{prev}{chapter_section}
 
 要求：
 - 记录主角的当前等级/境界/能力水平
