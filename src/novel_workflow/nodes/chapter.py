@@ -187,12 +187,90 @@ _TRACKING_LABELS = {
 }
 
 
+def _rewrite_arc_with_ai(state: NovelState, direction: str) -> str:
+    """用LLM根据用户方向重写当前批次弧线大纲。"""
+    already_written = state.current_batch_titles[:state.current_chapter_index]
+    remaining = state.current_batch_titles[state.current_chapter_index:]
+
+    chapter_ctx = build_chapter_context(state)
+    chapter_section = f"\n\n【最近章节内容（请据此保持连贯）】\n{chapter_ctx}" if chapter_ctx else ""
+
+    prev_section = (
+        f"\n\n【当前弧线大纲（供参考）】\n{state.current_arc_outline}"
+        if state.current_arc_outline else ""
+    )
+    written_section = (
+        "\n\n【本批已写章节（不得矛盾）】\n"
+        + "\n".join(
+            f"{state.total_chapters_written - len(already_written) + i + 1}. {t}"
+            for i, t in enumerate(already_written)
+        )
+    ) if already_written else ""
+    remaining_section = (
+        "\n\n【本批未写章节（必须覆盖）】\n"
+        + "\n".join(
+            f"{state.total_chapters_written + i + 1}. {t}"
+            for i, t in enumerate(remaining)
+        )
+    ) if remaining else ""
+
+    prompt = (
+        f"请根据以下调整方向，重新规划当前批次的故事弧线大纲。\n\n"
+        f"调整方向：{direction}{chapter_section}{prev_section}{written_section}{remaining_section}\n\n"
+        f"要求：\n"
+        f"- 用200-400字规划剩余章节的核心故事弧线节点\n"
+        f"- 必须覆盖所有未写章节的故事走向\n"
+        f"- 与已写章节自然衔接，不得矛盾\n"
+        f"- 严格体现调整方向的要求\n\n"
+        f"请直接输出更新后的弧线大纲，不需要标题。"
+    )
+    llm = get_llm(temperature=0.7)
+    result = llm.invoke([
+        SystemMessage(content=state.system_context),
+        HumanMessage(content=prompt),
+    ])
+    return result.content.strip()
+
+
+def _generate_titles_with_ai(
+    state: NovelState, arc_outline: str, direction: str, remaining_count: int
+) -> list[str]:
+    """用LLM根据新弧线大纲重新生成剩余章节标题。"""
+    existing_titles = state.all_chapter_titles + state.current_batch_titles[:state.current_chapter_index]
+    existing_section = (
+        "\n".join(f"{i+1}. {t}" for i, t in enumerate(existing_titles))
+        if existing_titles else "（暂无）"
+    )
+    chapter_ctx = build_chapter_context(state)
+    chapter_section = f"\n\n【最近章节内容（请据此保持情节连贯）】\n{chapter_ctx}" if chapter_ctx else ""
+
+    prompt = (
+        f"请根据以下弧线大纲，生成接下来{remaining_count}个章节的标题。\n\n"
+        f"【新的弧线大纲】\n{arc_outline}\n\n"
+        f"调整方向（供参考）：{direction}{chapter_section}\n\n"
+        f"已有章节标题（请勿重复）：\n{existing_section}\n\n"
+        f"要求：\n"
+        f"- 生成恰好{remaining_count}个标题，每行一个\n"
+        f"- 标题简洁有力（4-12字），紧密贴合新弧线大纲\n"
+        f"- 不要添加序号、标点或任何前缀\n\n"
+        f"请直接输出{remaining_count}个标题，每行一个。"
+    )
+    llm = get_llm(temperature=0.7)
+    result = llm.invoke([
+        SystemMessage(content=state.system_context),
+        HumanMessage(content=prompt),
+    ])
+    lines = [_clean_title(l) for l in result.content.strip().splitlines() if l.strip()]
+    return [l for l in lines if l][:remaining_count]
+
+
 def ask_chapter_edit(state: NovelState) -> dict:
-    """每章写完后，让用户决策是否调整当前批次的标题/大纲/动态状态。
+    """每章写完后，让用户决策是否调整当前批次的大纲/动态状态。
 
     Supports multiple interrupt rounds within a single node:
     1. First interrupt: show menu, user selects what to adjust (comma-separated).
     2. For each selected item, a follow-up interrupt collects the new value.
+       For 'a': AI rewrites arc outline → user confirms → AI regenerates remaining titles → user confirms.
     Returns a state update dict with only the fields the user actually changed.
     """
     remaining_titles = state.current_batch_titles[state.current_chapter_index:]
@@ -203,8 +281,7 @@ def ask_chapter_edit(state: NovelState) -> dict:
             f"第 {state.total_chapters_written} 章已完成。\n"
             f"当前批次进度：{state.current_chapter_index}/{len(state.current_batch_titles)}\n"
             "可调整项（输入对应编号/字母，多选用逗号分隔，直接回车跳过）：\n"
-            "  t  — 调整未写章节标题\n"
-            "  a  — 调整当前批次弧线大纲\n"
+            "  a  — 调整弧线大纲（AI将同步更新剩余章节标题）\n"
             "  1  — 人物动态状态\n"
             "  2  — 人物关系/势力格局\n"
             "  3  — 伏笔台账\n"
@@ -225,48 +302,134 @@ def ask_chapter_edit(state: NovelState) -> dict:
 
     # Parse selections
     selected_tracking: list[str] = []
-    do_titles = False
     do_arc = False
 
     for token in raw.replace("，", ",").split(","):
         token = token.strip()
-        if token == "t":
-            do_titles = True
-        elif token == "a":
+        if token == "a":
             do_arc = True
         elif token in _CHOICE_MAP:
             selected_tracking.append(_CHOICE_MAP[token])
 
     updates: dict = {}
 
-    # Handle title adjustment
-    if do_titles and remaining_titles:
-        new_titles_raw = interrupt({
+    # Handle arc outline adjustment (AI-assisted, with title regeneration)
+    if do_arc:
+        # Step 1: collect adjustment direction
+        direction_raw = interrupt({
             "message": (
-                f"当前未写章节标题（共{len(remaining_titles)}个，每行一个）：\n"
-                + "\n".join(
-                    f"  {state.current_chapter_index + i + 1}. {t}"
-                    for i, t in enumerate(remaining_titles)
+                "请输入弧线大纲调整方向（AI将据此重写大纲并更新剩余章节标题）\n"
+                "（直接回车取消本次调整）：\n\n"
+                + (
+                    f"【当前弧线大纲】\n{state.current_arc_outline}\n\n"
+                    if state.current_arc_outline else ""
                 )
-                + "\n\n请输入新的标题列表（每行一个，数量保持一致）："
+                + (
+                    "【当前剩余章节标题】\n"
+                    + "\n".join(
+                        f"  {state.current_chapter_index + i + 1}. {t}"
+                        for i, t in enumerate(remaining_titles)
+                    )
+                    if remaining_titles else ""
+                )
             ),
+            "current_arc_outline": state.current_arc_outline,
             "remaining_titles": remaining_titles,
         })
-        new_lines = [l.strip() for l in str(new_titles_raw).strip().splitlines() if l.strip()]
-        if new_lines:
-            kept = state.current_batch_titles[:state.current_chapter_index]
-            updates["current_batch_titles"] = kept + new_lines[:len(remaining_titles)]
+        direction = str(direction_raw).strip()
+        if direction:
+            # Step 2: AI rewrites arc outline（含降级）
+            try:
+                ai_arc = _rewrite_arc_with_ai(state, direction)
+            except Exception as e:
+                _logger.error("_rewrite_arc_with_ai failed: %s", e)
+                fallback_raw = interrupt({
+                    "message": (
+                        f"⚠️ AI 重写大纲失败（{e}），请手动输入新的弧线大纲\n"
+                        "（直接回车跳过本次弧线调整）："
+                    ),
+                    "error": str(e),
+                })
+                fallback = str(fallback_raw).strip()
+                ai_arc = fallback if fallback else None
 
-    # Handle arc outline adjustment
-    if do_arc:
-        new_arc = interrupt({
-            "message": "当前批次弧线大纲如下，请输入修改后的完整内容：",
-            "current_arc_outline": state.current_arc_outline,
-        })
-        new_arc_str = str(new_arc).strip()
-        if new_arc_str:
-            updates["current_arc_outline"] = new_arc_str
-            updates["arc_outline_history"] = [new_arc_str]  # operator.add appends
+            if ai_arc is not None:
+                # Step 3: user confirms or overrides arc outline
+                arc_confirm_raw = interrupt({
+                    "message": (
+                        "【AI生成的新弧线大纲】\n"
+                        + ai_arc
+                        + "\n\n直接回车接受，或输入修改后的完整内容覆盖："
+                    ),
+                    "ai_generated_arc": ai_arc,
+                })
+                arc_confirm = str(arc_confirm_raw).strip()
+                final_arc = arc_confirm if arc_confirm else ai_arc
+
+                updates["current_arc_outline"] = final_arc
+                updates["arc_outline_history"] = [final_arc]
+
+                # Step 4: if there are remaining titles, AI regenerates them based on new arc
+                if remaining_titles:
+                    # AI regenerates titles（含降级）
+                    try:
+                        ai_titles = _generate_titles_with_ai(
+                            state, final_arc, direction, len(remaining_titles)
+                        )
+                    except Exception as e:
+                        _logger.error("_generate_titles_with_ai failed: %s", e)
+                        ai_titles = []  # 空列表，触发 shortage_note 提示手动输入
+
+                    shortage = len(remaining_titles) - len(ai_titles)
+
+                    if not ai_titles:
+                        # LLM 完全失败（0 个标题）：消息明确说明将保留原标题
+                        titles_message = (
+                            f"⚠️ AI 未能生成任何标题（需要 {len(remaining_titles)} 个）。\n\n"
+                            "直接回车保留原标题，或输入新标题列表（每行一个）覆盖："
+                        )
+                    elif shortage > 0:
+                        # 部分生成：列出已有标题并提示数量不足
+                        titles_message = (
+                            "【AI根据新大纲生成的剩余章节标题】\n"
+                            + "\n".join(
+                                f"  {state.current_chapter_index + i + 1}. {t}"
+                                for i, t in enumerate(ai_titles)
+                            )
+                            + f"\n\n⚠️ AI 仅生成了 {len(ai_titles)} 个，需要 {len(remaining_titles)} 个，"
+                            "请在覆盖输入时补全所有标题。"
+                            + "\n\n直接回车接受已有部分（不足处保留原标题），或输入完整列表覆盖："
+                        )
+                    else:
+                        # 数量充足：正常确认流程
+                        titles_message = (
+                            "【AI根据新大纲生成的剩余章节标题】\n"
+                            + "\n".join(
+                                f"  {state.current_chapter_index + i + 1}. {t}"
+                                for i, t in enumerate(ai_titles)
+                            )
+                            + "\n\n直接回车接受，或输入新标题列表（每行一个）覆盖："
+                        )
+
+                    titles_confirm_raw = interrupt({
+                        "message": titles_message,
+                        "ai_generated_titles": ai_titles,
+                        "shortage": shortage,
+                    })
+                    titles_confirm = str(titles_confirm_raw).strip()
+                    if titles_confirm:
+                        new_lines = [_clean_title(l) for l in titles_confirm.splitlines() if l.strip()]
+                        final_titles = [l for l in new_lines if l][:len(remaining_titles)]
+                    else:
+                        final_titles = ai_titles
+
+                    # 数量不足时用原始标题补位（无论 AI 还是用户手动输入）
+                    if len(final_titles) < len(remaining_titles):
+                        final_titles = final_titles + remaining_titles[len(final_titles):]
+
+                    if final_titles:
+                        kept = state.current_batch_titles[:state.current_chapter_index]
+                        updates["current_batch_titles"] = kept + final_titles
 
     # Handle tracking field adjustments
     for field_name in selected_tracking:
