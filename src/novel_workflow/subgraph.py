@@ -156,7 +156,6 @@ def human_review(state: ReviewSubState) -> dict:
             state.current_draft
             + "\n\n---\n输入 '无问题' / 'approve' / 'ok' 通过，或输入修改意见重新生成"
         ),
-        "draft": state.current_draft,
     })
 
     if str(feedback).strip().lower() in _APPROVE_SIGNALS:
