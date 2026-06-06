@@ -20,7 +20,6 @@ from noval_workflow.nodes.arc import (
     save_phase_summary,
 )
 from noval_workflow.nodes.chapter import (
-    ask_chapter_edit,
     ask_continue,
     generate_summary,
     prepare_chapter,
@@ -45,6 +44,7 @@ from noval_workflow.nodes.foundation import (
 from noval_workflow.nodes.inputs import collect_user_inputs
 from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
+from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
 
 builder = StateGraph(NovelState)
 
@@ -106,8 +106,10 @@ builder.add_node("prepare_chapter", prepare_chapter)
 builder.add_node("review_chapter", review_subgraph)
 builder.add_node("save_chapter", save_chapter)
 builder.add_node("generate_summary", generate_summary)
-builder.add_node("ask_chapter_edit", ask_chapter_edit)
 builder.add_node("ask_continue", ask_continue)
+
+# Phase 2 — chapter edit subgraph
+builder.add_node("chapter_edit_subgraph", chapter_edit_subgraph)
 
 # ── edges ──────────────────────────────────────────────────────────────────────
 
@@ -224,12 +226,15 @@ builder.add_conditional_edges(
 builder.add_edge("prepare_chapter", "review_chapter")
 builder.add_edge("review_chapter", "save_chapter")
 builder.add_edge("save_chapter", "generate_summary")
-builder.add_edge("generate_summary", "ask_chapter_edit")
+builder.add_edge("generate_summary", "chapter_edit_subgraph")
+
+# chapter_edit_subgraph → chapter or batch end
 builder.add_conditional_edges(
-    "ask_chapter_edit",
+    "chapter_edit_subgraph",
     route_chapter_or_continue,
     {"prepare_chapter": "prepare_chapter", "ask_continue": "ask_continue"},
 )
+
 builder.add_conditional_edges(
     "ask_continue",
     route_continue_or_end,

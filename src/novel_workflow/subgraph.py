@@ -151,14 +151,13 @@ def human_review(state: ReviewSubState) -> dict:
     Type any approval signal (e.g. '无问题', 'approve', 'ok') to pass,
     or type feedback text to send back to the LLM for revision.
     """
-    display = {
+    feedback = interrupt({
+        "message": (
+            state.current_draft
+            + "\n\n---\n输入 '无问题' / 'approve' / 'ok' 通过，或输入修改意见重新生成"
+        ),
         "draft": state.current_draft,
-        "hint": "输入 '无问题' / 'approve' / 'ok' 通过，或输入修改意见重新生成",
-    }
-    if state.review_feedback:
-        display["llm_critique"] = state.review_feedback
-
-    feedback = interrupt(display)
+    })
 
     if str(feedback).strip().lower() in _APPROVE_SIGNALS:
         return {"approved": True, "review_feedback": ""}

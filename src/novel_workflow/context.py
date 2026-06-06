@@ -6,9 +6,41 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Protocol
 
 from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
-from noval_workflow.state import NovelState
+
+
+class _ContextState(Protocol):
+    """Structural type for states accepted by build_*_context functions.
+
+    Both NovelState and ChapterEditSubState satisfy this protocol —
+    no explicit import of either class is needed.
+    """
+    # Phase 0 — user inputs
+    novel_name: str
+    genre: str
+    writing_style: str
+    target_audience: str
+    core_tone: str
+    chapter_word_count: str
+    total_word_count: str
+    # Phase 1 — foundation results
+    core_theme: str
+    world_building: str
+    core_conflicts: str
+    overall_outline: str
+    character_profiles: str
+    # Phase 2.5 — dynamic tracking
+    current_arc_outline: str
+    character_status_history: list[str]
+    character_relations_history: list[str]
+    foreshadowing_history: list[str]
+    phase_summary_history: list[str]
+    # Phase 2 — chapter progress
+    total_chapters_written: int
+    all_chapter_titles: list[str]
+    all_chapter_summaries: list[str]
 
 _logger = logging.getLogger(__name__)
 
@@ -40,7 +72,7 @@ def chapter_filename(chapter_num: int, title: str) -> str:
 
 # ── foundation context ─────────────────────────────────────────────────────────
 
-def build_foundation_context(state: NovelState) -> str:
+def build_foundation_context(state: _ContextState) -> str:
     """Serialize approved foundation fields into a structured system prompt string.
 
     Only includes non-empty fields, so the context grows as Phase 1 progresses.
@@ -94,7 +126,7 @@ def build_foundation_context(state: NovelState) -> str:
 
 # ── chapter context window ─────────────────────────────────────────────────────
 
-def build_chapter_context(state: NovelState) -> str:
+def build_chapter_context(state: _ContextState) -> str:
     """Build the context window for the next chapter.
 
     Window (at most 5 chapters back):

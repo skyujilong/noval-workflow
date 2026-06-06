@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from noval_workflow.state import NovelState
+
+
+class _PromptState(Protocol):
+    character_status_history: list[str]
+    character_relations_history: list[str]
+    foreshadowing_history: list[str]
+    phase_summary_history: list[str]
 
 # Phase 1: Foundation prompts
 
@@ -140,7 +147,7 @@ def arc_outline_prompt(state: "NovelState") -> str:
 请直接输出本批弧线大纲内容，不需要标题。"""
 
 
-def character_status_prompt(state: "NovelState", chapter_context: str = "") -> str:
+def character_status_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating character dynamic status."""
     prev = ""
     if state.character_status_history:
@@ -161,7 +168,7 @@ def character_status_prompt(state: "NovelState", chapter_context: str = "") -> s
 请直接输出更新后的人物动态状态，不需要标题。"""
 
 
-def character_relations_prompt(state: "NovelState", chapter_context: str = "") -> str:
+def character_relations_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating character relations and faction dynamics."""
     prev = ""
     if state.character_relations_history:
@@ -182,7 +189,7 @@ def character_relations_prompt(state: "NovelState", chapter_context: str = "") -
 请直接输出更新后的人物关系/势力格局，不需要标题。"""
 
 
-def foreshadowing_prompt(state: "NovelState", chapter_context: str = "") -> str:
+def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating the foreshadowing ledger."""
     prev = ""
     if state.foreshadowing_history:
@@ -204,7 +211,7 @@ def foreshadowing_prompt(state: "NovelState", chapter_context: str = "") -> str:
 请直接输出更新后的伏笔台账，不需要标题。"""
 
 
-def phase_summary_prompt(state: "NovelState", chapter_context: str = "") -> str:
+def phase_summary_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating phase-frozen hard data."""
     prev = ""
     if state.phase_summary_history:
