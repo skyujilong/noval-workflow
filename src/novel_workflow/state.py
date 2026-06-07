@@ -14,6 +14,8 @@ class ReviewSubState:
     review_history: list = field(default_factory=list)
     # list[dict]，每条格式：{"role": "human"|"ai", "content": str}
     # 由 generate() 管理；按 _HISTORY_MAX_ROUNDS 上限滚动裁剪（每轮 2 条消息）
+    llm_review_count: int = 0
+    # LLM 自审累计轮数；达到上限后强制转人工，human_review 节点重置为 0
 
 
 @dataclass
@@ -34,6 +36,7 @@ class NovelState:
     review_feedback: str = ""       # 审核反馈（LLM 或人工；空 = 通过）
     approved: bool = False          # 审核是否通过
     review_type: str = "foundation" # 审稿类型，决定使用哪条 review prompt
+    llm_review_count: int = 0       # LLM 自审累计轮数（子图桥接字段）
 
     # ── Phase 1：小说基础设定（每项审核通过后保存）────────────────────────────────
     core_theme: str = ""            # 核心主题与立意
@@ -77,15 +80,8 @@ class NovelState:
     phase_summary_history: Annotated[list[str], operator.add] = field(default_factory=list)
     # 阶段固化数据快照历史（主角等级/装备/技能/资源等硬性数值，后续创作必须遵守）
 
-    # ── Phase 2.5：动态状态库写入控制 ──────────────────────────────────────────
-    tracking_fields_to_update: list[str] = field(default_factory=list)
-    # 本批需要更新的字段名列表（ask_update_tracking 写入，route_tracking_* 按序消费）
-    # 合法值：["character_status", "character_relations", "foreshadowing", "phase_summary"]
-
-    tracking_cursor: int = 0
-    # 当前正在处理的字段索引（指向 tracking_fields_to_update 中下一个待处理项）
 
 
 def reset_review_fields() -> dict:
     """Return a dict that clears the shared review bridge fields."""
-    return {"current_draft": "", "review_feedback": "", "approved": False, "review_history": []}
+    return {"current_draft": "", "review_feedback": "", "approved": False, "review_history": [], "llm_review_count": 0}

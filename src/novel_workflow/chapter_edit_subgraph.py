@@ -76,6 +76,7 @@ class ChapterEditSubState:
     approved: bool = False
     review_type: str = "foundation"
     review_history: list = field(default_factory=list)
+    llm_review_count: int = 0
 
     # ── 子图私有中间状态（不写回父图）──────────────────────────────────
     do_arc: bool = False

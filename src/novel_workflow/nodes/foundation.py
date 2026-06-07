@@ -7,8 +7,8 @@ from noval_workflow.prompts import (
     CHARACTER_PROFILES_PROMPT,
     CORE_CONFLICTS_PROMPT,
     CORE_THEME_PROMPT,
-    OVERALL_OUTLINE_PROMPT,
     WORLD_BUILDING_PROMPT,
+    overall_outline_prompt,
 )
 from noval_workflow.state import NovelState, reset_review_fields
 
@@ -45,7 +45,7 @@ def prepare_core_conflicts(state: NovelState) -> dict:
 def prepare_overall_outline(state: NovelState) -> dict:
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": OVERALL_OUTLINE_PROMPT,
+        "task_prompt": overall_outline_prompt(state.total_word_count),
         "review_type": "overall_outline",
         **reset_review_fields(),
     }

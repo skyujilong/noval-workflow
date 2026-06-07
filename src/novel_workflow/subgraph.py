@@ -117,6 +117,9 @@ def generate(state: ReviewSubState) -> dict:
     }
 
 
+_LLM_REVIEW_MAX = 3
+
+
 def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
     llm = get_llm(temperature=0.3)
@@ -133,8 +136,8 @@ def llm_self_review(state: ReviewSubState) -> dict:
     feedback = result.content.strip()
 
     if _is_pass(feedback):
-        return {"review_feedback": ""}
-    return {"review_feedback": f"[AI审稿意见]\n{feedback}"}
+        return {"review_feedback": "", "llm_review_count": state.llm_review_count + 1}
+    return {"review_feedback": f"[AI审稿意见]\n{feedback}", "llm_review_count": state.llm_review_count + 1}
 
 
 _APPROVE_SIGNALS = {
@@ -159,14 +162,14 @@ def human_review(state: ReviewSubState) -> dict:
     })
 
     if str(feedback).strip().lower() in _APPROVE_SIGNALS:
-        return {"approved": True, "review_feedback": ""}
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0}
     else:
-        return {"approved": False, "review_feedback": str(feedback).strip()}
+        return {"approved": False, "review_feedback": str(feedback).strip(), "llm_review_count": 0}
 
 
 def route_after_llm_review(state: ReviewSubState) -> str:
-    """If LLM found issues, regenerate directly; otherwise hand off to human."""
-    if state.review_feedback:
+    """If LLM found issues and under max rounds, regenerate; otherwise hand off to human."""
+    if state.review_feedback and state.llm_review_count < _LLM_REVIEW_MAX:
         return "generate"
     return "human_review"
 
