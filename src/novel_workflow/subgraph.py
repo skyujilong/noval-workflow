@@ -94,7 +94,7 @@ def generate(state: ReviewSubState) -> dict:
         regen_instruction = (
             f"{state.review_feedback}\n\n"
             "【输出规范】请根据以上意见重新创作，直接输出修改后的完整正文，"
-            "不得描述你做了哪些修改、不得使用"修改""替换""调整"等元叙述语言，"
+            "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言，"
             "从正文第一句话开始输出。"
         )
         messages.append(HumanMessage(content=regen_instruction))
