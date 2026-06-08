@@ -123,9 +123,6 @@ def generate(state: ReviewSubState) -> dict:
     }
 
 
-_LLM_REVIEW_MAX = 3
-
-
 def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
     llm = get_llm(temperature=0.3)
@@ -147,6 +144,7 @@ def llm_self_review(state: ReviewSubState) -> dict:
 
 
 _APPROVE_SIGNALS = {
+    "",  # 空回车 = 通过
     # English
     "approve", "approved", "ok", "okay", "yes", "y", "lgtm", "good",
     # Chinese
@@ -163,7 +161,9 @@ def human_review(state: ReviewSubState) -> dict:
     feedback = interrupt({
         "message": (
             state.current_draft
-            + "\n\n---\n输入 '无问题' / 'approve' / 'ok' 通过，或输入修改意见重新生成"
+            + "\n\n---\n"
+            + "· 直接回车 → 通过\n"
+            + "· 输入修改意见 → 重新生成"
         ),
     })
 
@@ -175,7 +175,7 @@ def human_review(state: ReviewSubState) -> dict:
 
 def route_after_llm_review(state: ReviewSubState) -> str:
     """If LLM found issues and under max rounds, regenerate; otherwise hand off to human."""
-    if state.review_feedback and state.llm_review_count < _LLM_REVIEW_MAX:
+    if state.review_feedback and state.llm_review_count < state.llm_review_max:
         return "generate"
     return "human_review"
 

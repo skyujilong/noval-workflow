@@ -16,6 +16,8 @@ class ReviewSubState:
     # 由 generate() 管理；按 _HISTORY_MAX_ROUNDS 上限滚动裁剪（每轮 2 条消息）
     llm_review_count: int = 0
     # LLM 自审累计轮数；达到上限后强制转人工，human_review 节点重置为 0
+    llm_review_max: int = 3
+    # LLM 自审轮数上限（可由子图工厂覆写）
 
 
 @dataclass
@@ -84,4 +86,4 @@ class NovelState:
 
 def reset_review_fields() -> dict:
     """Return a dict that clears the shared review bridge fields."""
-    return {"current_draft": "", "review_feedback": "", "approved": False, "review_history": [], "llm_review_count": 0}
+    return {"current_draft": "", "review_feedback": "", "approved": False, "review_history": [], "llm_review_count": 0, "llm_review_max": 3}

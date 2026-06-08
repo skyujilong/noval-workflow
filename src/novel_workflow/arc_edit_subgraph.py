@@ -29,9 +29,8 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
 from noval_workflow.context import build_chapter_context, build_foundation_context
+from noval_workflow.edit_step_subgraph import _SKIP_WORDS
 from noval_workflow.llm import get_llm
-
-_SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "否", "不"}
 
 
 @dataclass
@@ -190,8 +189,7 @@ def arc_direction_node(state: ArcEditSubState) -> dict:
     remaining_titles = state.current_batch_titles[state.current_chapter_index:]
     direction_raw = interrupt({
         "message": (
-            "请输入弧线大纲调整方向（AI将据此重写大纲并更新剩余章节标题）\n"
-            "（直接回车取消本次调整）：\n\n"
+            "【弧线大纲调整】\n\n"
             + (
                 f"【当前弧线大纲】\n{state.current_arc_outline}\n\n"
                 if state.current_arc_outline else ""
@@ -204,6 +202,9 @@ def arc_direction_node(state: ArcEditSubState) -> dict:
                 )
                 if remaining_titles else ""
             )
+            + "\n\n---\n"
+            + "· 直接回车 → 取消\n"
+            + "· 输入调整方向 → AI 重写大纲并更新剩余章节标题"
         ),
         "current_arc_outline": state.current_arc_outline,
         "remaining_titles": remaining_titles,
@@ -232,8 +233,10 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
     if not state.ai_arc:
         raw = interrupt({
             "message": (
-                f"AI重写失败（{state.arc_error}），请手动输入新的弧线大纲\n"
-                "（直接回车跳过本次弧线调整）："
+                f"AI重写失败（{state.arc_error}），请手动输入新的弧线大纲\n\n"
+                "---\n"
+                "· 直接回车 → 跳过\n"
+                "· 输入完整大纲内容 → 手动替换"
             ),
             "error": state.arc_error,
         })
@@ -248,10 +251,10 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
         "message": (
             "【AI生成的新弧线大纲】\n"
             + state.ai_arc
-            + "\n\n"
+            + "\n\n---\n"
             "· 直接回车 → 接受\n"
             "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
-            "· 以「=」开头 → 直接替换为完整内容（跳过 AI）："
+            "· 以「=」开头 → 直接替换为完整内容（跳过 AI）"
         ),
         "ai_generated_arc": state.ai_arc,
     })
@@ -320,10 +323,10 @@ def arc_titles_confirm_node(state: ArcEditSubState) -> dict:
         "message": (
             titles_display
             + shortage_note
-            + "\n\n"
+            + "\n\n---\n"
             "· 直接回车 → 接受\n"
             "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
-            "· 以「=」开头，每行一个标题 → 直接替换（跳过 AI）："
+            "· 以「=」开头，每行一个标题 → 直接替换（跳过 AI）"
         ),
         "ai_generated_titles": ai_titles,
         "shortage": shortage,
@@ -386,7 +389,12 @@ def _route_after_titles_confirm(state: ArcEditSubState) -> str:
 
 # ── factory ────────────────────────────────────────────────────────────────────
 
-def make_arc_edit_subgraph(*, entry_prompt: str = "是否调整弧线大纲？"):
+def make_arc_edit_subgraph(*, entry_prompt: str = (
+    "是否调整弧线大纲？\n\n"
+    "---\n"
+    "· 直接回车 → 跳过\n"
+    "· 输入任意内容 → 执行"
+)):
     """Build and compile the arc edit subgraph."""
     builder = StateGraph(ArcEditSubState)
 

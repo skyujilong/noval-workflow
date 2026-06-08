@@ -160,15 +160,23 @@ def generate_summary(state: NovelState) -> dict:
 
 # ── continue decision ─────────────────────────────────────────────────────────
 
+_CONTINUE_SIGNALS = {"", "yes", "y", "是", "继续"}
+
+
 def ask_continue(state: NovelState) -> dict:
     """Interrupt to ask if the user wants to write the next batch of 5 chapters."""
     answer = interrupt(
         {
-            "message": f"已完成 {state.total_chapters_written} 章。继续写下5章？(yes/no)",
+            "message": (
+                f"已完成 {state.total_chapters_written} 章。\n\n"
+                "---\n"
+                "· 直接回车 / 输入 yes / 是 / 继续 → 继续写下5章\n"
+                "· 输入 no / 否 → 停止"
+            ),
             "total_chapters_written": state.total_chapters_written,
         }
     )
-    return {"continue_writing": str(answer).strip().lower() in {"yes", "y", "是", "继续"}}
+    return {"continue_writing": str(answer).strip().lower() in _CONTINUE_SIGNALS}
 
 
 # ── routers ───────────────────────────────────────────────────────────────────

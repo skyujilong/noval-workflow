@@ -144,10 +144,14 @@ def _save_phase(state) -> dict:
 
 # ── Pre-compile the 5 step subgraphs ──────────────────────────────────────────
 
-_ARC_STEP = make_arc_edit_subgraph(entry_prompt="是否调整弧线大纲？")
+_ENTRY_HINT = "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
+
+_ARC_STEP = make_arc_edit_subgraph(
+    entry_prompt="是否调整弧线大纲？" + _ENTRY_HINT,
+)
 
 _STATUS_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新人物动态状态？",
+    entry_prompt="是否更新人物动态状态？" + _ENTRY_HINT,
     prepare_fn=_prepare_status,
     save_fn=_save_status,
     enable_llm_review=True,
@@ -155,7 +159,7 @@ _STATUS_STEP = make_edit_step_subgraph(
 )
 
 _RELATIONS_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新人物关系/势力格局？",
+    entry_prompt="是否更新人物关系/势力格局？" + _ENTRY_HINT,
     prepare_fn=_prepare_relations,
     save_fn=_save_relations,
     enable_llm_review=True,
@@ -163,7 +167,7 @@ _RELATIONS_STEP = make_edit_step_subgraph(
 )
 
 _FORESHADOW_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新伏笔台账？",
+    entry_prompt="是否更新伏笔台账？" + _ENTRY_HINT,
     prepare_fn=_prepare_foreshadowing,
     save_fn=_save_foreshadowing,
     enable_llm_review=True,
@@ -171,7 +175,7 @@ _FORESHADOW_STEP = make_edit_step_subgraph(
 )
 
 _PHASE_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新阶段固化数据？",
+    entry_prompt="是否更新阶段固化数据？" + _ENTRY_HINT,
     prepare_fn=_prepare_phase,
     save_fn=_save_phase,
     enable_llm_review=True,
