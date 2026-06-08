@@ -33,10 +33,10 @@ class _ContextState(Protocol):
     character_profiles: str
     # Phase 2.5 — dynamic tracking
     current_arc_outline: str
-    character_status_history: list[str]
-    character_relations_history: list[str]
-    foreshadowing_history: list[str]
-    phase_summary_history: list[str]
+    character_status: str
+    character_relations: str
+    foreshadowing: str
+    phase_summary: str
     # Phase 2 — chapter progress
     total_chapters_written: int
     all_chapter_titles: list[str]
@@ -72,10 +72,17 @@ def chapter_filename(chapter_num: int, title: str) -> str:
 
 # ── foundation context ─────────────────────────────────────────────────────────
 
-def build_foundation_context(state: _ContextState) -> str:
+def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = False) -> str:
     """Serialize approved foundation fields into a structured system prompt string.
 
     Only includes non-empty fields, so the context grows as Phase 1 progresses.
+
+    Args:
+        exclude_snapshots: When True, omit the four dynamic snapshot fields
+            (character_status/relations/foreshadowing/phase_summary). Use this
+            for the tracking-update prepare steps where the previous snapshot is
+            already injected into task_prompt via {prev}, so including it here
+            would only dilute the reviewer's attention.
     """
     parts: list[str] = []
 
@@ -109,17 +116,19 @@ def build_foundation_context(state: _ContextState) -> str:
     if state.character_profiles:
         parts.append(f"\n【人物档案】\n{state.character_profiles}")
 
-    # Dynamic tracking fields (injected when available)
+    # Dynamic tracking fields — omitted when the caller already injects prev snapshot
+    # into task_prompt (tracking-update steps), to avoid diluting reviewer attention.
     if state.current_arc_outline:
         parts.append(f"\n【本批章节弧线大纲】\n{state.current_arc_outline}")
-    if state.character_status_history:
-        parts.append(f"\n【人物动态状态（最新）】\n{state.character_status_history[-1]}")
-    if state.character_relations_history:
-        parts.append(f"\n【人物关系/势力动态（最新）】\n{state.character_relations_history[-1]}")
-    if state.foreshadowing_history:
-        parts.append(f"\n【伏笔台账（最新）】\n{state.foreshadowing_history[-1]}")
-    if state.phase_summary_history:
-        parts.append(f"\n【阶段固化数据（最新）】\n{state.phase_summary_history[-1]}")
+    if not exclude_snapshots:
+        if state.character_status:
+            parts.append(f"\n【人物动态状态（最新）】\n{state.character_status}")
+        if state.character_relations:
+            parts.append(f"\n【人物关系/势力动态（最新）】\n{state.character_relations}")
+        if state.foreshadowing:
+            parts.append(f"\n【伏笔台账（最新）】\n{state.foreshadowing}")
+        if state.phase_summary:
+            parts.append(f"\n【阶段固化数据（最新）】\n{state.phase_summary}")
 
     return "\n".join(parts)
 

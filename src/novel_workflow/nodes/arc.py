@@ -21,5 +21,4 @@ def prepare_arc_outline(state: NovelState) -> dict:
 def save_arc_outline(state: NovelState) -> dict:
     return {
         "current_arc_outline": state.current_draft,
-        "arc_outline_history": [state.current_draft],
     }

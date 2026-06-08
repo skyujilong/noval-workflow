@@ -9,10 +9,11 @@ if TYPE_CHECKING:
 
 
 class _PromptState(Protocol):
-    character_status_history: list[str]
-    character_relations_history: list[str]
-    foreshadowing_history: list[str]
-    phase_summary_history: list[str]
+    character_status: str
+    character_relations: str
+    foreshadowing: str
+    phase_summary: str
+    total_chapters_written: int
 
 # Phase 1: Foundation prompts
 
@@ -142,6 +143,19 @@ def chapter_prompt(title: str, chapter_num: int, all_titles: list[str], chapter_
 
 # Phase 2.5: Arc outline and dynamic tracking prompts
 
+# 7-field format shared by arc_outline_prompt and _rewrite_arc_with_ai
+ARC_CHAPTER_FORMAT = """\
+## 单章节固定必填字段（每章必须依次列出，缺一不可）
+【章节X】
+1. 本章核心事件：一句话概括本章主线行为与场景
+2. 人物行动：核心角色、配角的具体动作、分工、互动行为
+3. 情节转折：本章出现的冲突、反转、变故、突发危机
+4. 节奏&情绪锚点：标注本章节奏（平缓/紧张/爆发/悬疑）、核心情绪（愤怒/恐惧/释然/警惕等）、网文看点（爽点/悬念/铺垫/虐点）
+5. 伏笔&线索：本章新增伏笔、回收前文伏笔、遗留待解线索
+6. 创作锚点：为章节标题、正文细节描写提供关键词/方向指引
+7. 下章衔接指引：本章收尾状态，明确下一章开篇切入方向"""
+
+
 def arc_outline_prompt(state: "NovelState") -> str:
     """Build the prompt for generating a mini arc outline for the current batch."""
     from noval_workflow.config import BATCH_SIZE, SUMMARY_COUNT
@@ -155,31 +169,30 @@ def arc_outline_prompt(state: "NovelState") -> str:
             if s
         )
 
+    is_first_batch = state.total_chapters_written == 0
+    continuity_rule = (
+        "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
+        if is_first_batch else
+        "1. 严格承接上一批大纲最终结尾情节，情节逻辑连贯、无断层，全程贴合作品整体主线大纲，不偏离核心世界观、势力设定、人物人设与核心冲突。"
+    )
+
     max_words = BATCH_SIZE * 500
     return f"""请为本批接下来的 {BATCH_SIZE} 章规划故事弧线大纲。{prev_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
-1. 严格承接上一批大纲最终结尾情节，情节逻辑连贯、无断层，全程贴合作品整体主线大纲，不偏离核心世界观、势力设定、人物人设与核心冲突。
+{continuity_rule}
 2. 本批次所有章节大纲总字数严格控制在 {max_words} 以内；**单章节内容节点文字不得超过500字**，精简表述，拒绝冗余描写、抒情、旁白。
 3. 仅输出结构化章节大纲，不撰写正文内容、不生成章节标题，仅为标题、正文创作提供明确锚点。
 
-## 单章节固定必填字段（每章必须依次列出，缺一不可）
-【章节X】
-1. 本章核心事件：一句话概括本章主线行为与场景
-2. 人物行动：核心角色、配角的具体动作、分工、互动行为
-3. 情节转折：本章出现的冲突、反转、变故、突发危机
-4. 节奏&情绪锚点：标注本章节奏（平缓/紧张/爆发/悬疑）、核心情绪（愤怒/恐惧/释然/警惕等）、网文看点（爽点/悬念/铺垫/虐点）
-5. 伏笔&线索：本章新增伏笔、回收前文伏笔、遗留待解线索
-6. 创作锚点：为章节标题、正文细节描写提供关键词/方向指引
-7. 下章衔接指引：本章收尾状态，明确下一章开篇切入方向
+{ARC_CHAPTER_FORMAT}
 
 ## 内容创作规则
 1. 严守作品既定设定：类型一致、战力体系、物资规则、队伍规矩、人物关系、势力矛盾，不新增私设、不强行降智/拔高角色。
 2. 冲突设计循序渐进，支线服务主线，不随意新增无关人物、无关支线，避免剧情散乱。
 3. 动作、对话、冲突符合人物性格，角色行为逻辑自洽，保持人设统一。
 4. 涉及战斗、对峙、逃生场景，写明攻防动作、敌我态势，细节具备可落地性。
-5. 物资、伤口、尸变、环境等细节贴合末日校园世界观，逻辑严谨。
+5. 物资、伤亡、环境等细节贴合本作世界观设定，逻辑严谨。
 
 ## 格式与文字要求
 1. 统一使用上方固定字段排版，段落清晰，字段区分明确，不用花哨格式、表情、特殊符号。
@@ -195,63 +208,110 @@ def arc_outline_prompt(state: "NovelState") -> str:
 def character_status_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating character dynamic status."""
     prev = ""
-    if state.character_status_history:
-        prev = f"\n\n【上次人物状态快照】\n{state.character_status_history[-1]}"
+    if state.character_status:
+        prev = f"\n\n【上次人物状态快照】\n{state.character_status}"
 
     chapter_section = ""
     if chapter_context:
-        chapter_section = f"\n\n【已完成章节内容（请据此更新状态）】\n{chapter_context}"
+        chapter_section = f"\n\n【近期章节内容（请据此更新状态）】\n{chapter_context}"
 
+    carry_over = "\n- 上次快照中的每位人物都必须出现在本次输出中，状态未变者各字段直接沿用原文" if prev else ""
     return f"""请根据已完成的章节内容，更新【人物动态状态】。{prev}{chapter_section}
 
 要求：
-- 输出完整的当前人物状态快照，涵盖主角及所有主要配角
-- 上次快照中的每位人物都必须出现在本次输出中，状态未变者直接沿用原文
-- 本批有变化的状态用【变化】标注，说明具体变动
-- 格式清晰，便于后续章节创作时快速查阅
-- 尽量精炼，不超过500字
+- 输出完整的当前人物状态快照，涵盖主角及所有主要配角{carry_over}
+- 本批有变化的字段末尾标注【变化】，说明具体变动
+- 严格按照以下固定格式输出，每个人物一组
 
-请直接输出更新后的人物动态状态，不需要标题。"""
+**固定输出格式（每位关键角色一组，按角色分块）**
+
+角色：XXX
+【当前位置】（所在场景/地点，≤15字）
+【情绪/状态】（当前心理状态与身体状况，≤15字）
+【当前目标】（本阶段的行动目标，≤20字）
+【关键处境】（本批最重要的处境变化或持续状态，≤30字，无变化写原来的值，不更新）
+
+请直接输出更新后的人物动态状态，不需要额外标题。"""
 
 
 def character_relations_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating character relations and faction dynamics."""
     prev = ""
-    if state.character_relations_history:
-        prev = f"\n\n【上次关系/势力快照】\n{state.character_relations_history[-1]}"
+    if state.character_relations:
+        prev = f"\n\n【上次关系/势力快照】\n{state.character_relations}"
 
     chapter_section = ""
     if chapter_context:
-        chapter_section = f"\n\n【已完成章节内容（请据此更新关系）】\n{chapter_context}"
+        chapter_section = f"\n\n【近期章节内容（请据此更新关系）】\n{chapter_context}"
 
+    carry_over = "\n- 完整列出上次快照中所有的人物关系与势力格局，状态未变者直接沿用原文" if prev else ""
     return f"""请根据已完成的章节内容，更新【人物关系/势力格局】。{prev}{chapter_section}
 
-要求：
-- 完整列出上次快照中所有的人物关系与势力格局，状态未变者直接沿用原文
-- 本批关系发生转变的人物对，用【变化】标注并说明原因
-- 记录各势力当前格局与力量对比，标注本批新增或变化的势力动向
-- 尽量精炼，不超过500字
+要求：{carry_over}
+- 本批有变化的条目末尾标注【变化】，说明转变原因
+- 严格按照以下固定格式分两块输出
 
-请直接输出更新后的人物关系/势力格局，不需要标题。"""
+**固定输出格式**
+
+【人物关系】
+角色A → 角色B：当前关系描述（≤20字）
+（有变化时在行末加【变化】，下一行写变化原因，≤20字）
+
+【势力格局】
+势力名：当前状态与力量描述（≤30字）
+（有变化时在行末加【变化】，下一行写变化原因，≤20字）
+
+请直接输出更新后的人物关系/势力格局，不需要额外标题。"""
+
+
+_FORESHADOW_PRUNE_DISTANCE = 5  # 已收超过此章数后从上次台账中物理删除
+
+
+def _prune_collected_foreshadowing(ledger: str, current_chapter: int) -> str:
+    """Remove 【已收】entries whose 【回收章节】is more than _FORESHADOW_PRUNE_DISTANCE chapters back.
+
+    Each entry is delimited by the dashed separator line. Entries without a
+    【回收章节】field (older format or 【是否已回收】否) are kept as-is.
+    """
+    import re
+
+    separator = "-------------------------------------"
+    blocks = ledger.split(separator)
+    kept: list[str] = []
+    for block in blocks:
+        # Check if this block is a collected entry
+        if "【是否已回收】是" in block:
+            m = re.search(r"【回收章节】第?(\d+)章?", block)
+            if m:
+                collected_at = int(m.group(1))
+                if current_chapter - collected_at > _FORESHADOW_PRUNE_DISTANCE:
+                    continue  # physically drop this entry
+        kept.append(block)
+    return separator.join(kept)
 
 
 def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating the foreshadowing ledger."""
+    current_chapter = state.total_chapters_written  # chapters completed so far
+    current_chapter_info = f"第{current_chapter}章" if current_chapter > 0 else "起始"
+
     prev = ""
-    if state.foreshadowing_history:
-        prev = f"\n\n【上次伏笔台账】\n{state.foreshadowing_history[-1]}"
+    if state.foreshadowing:
+        pruned = _prune_collected_foreshadowing(state.foreshadowing, current_chapter)
+        prev = f"\n\n【上次伏笔台账】\n{pruned}"
 
     chapter_section = ""
     if chapter_context:
-        chapter_section = f"\n\n【已完成章节内容（请据此核对伏笔）】\n{chapter_context}"
+        chapter_section = f"\n\n【近期章节内容（请据此核对伏笔）】\n{chapter_context}"
 
-    return f"""请根据已完成的章节内容，更新【伏笔台账】。{prev}{chapter_section}
+    carry_over = "\n- 【悬置】列出当前所有仍待兑现的伏笔，必须包含上次台账中全部悬置项，本批无变化者原文保留" if prev else "\n- 【悬置】列出当前章节中出现的所有待兑现伏笔"
+    return f"""请根据已完成的章节内容，更新【伏笔台账】。当前所处章节：{current_chapter_info}。{prev}{chapter_section}
 
-要求：
-- 【悬置】列出当前所有仍待兑现的伏笔，必须包含上次台账中全部悬置项，本批无变化者原文保留
+要求：{carry_over}
 - 【新增】标注本批章节中首次埋下的新伏笔
-- 【已收】标注本批被兑现或回收的伏笔（【是否已回收】"是"）
+- 【已收】标注本批被兑现或回收的伏笔（【是否已回收】"是"，并填写【回收章节】）
   - 需要调整顺序到【悬置】下方
+  - 已回收的伏笔，在当前章节减去回收章节超过5章的，可以直接删除，用来节省上下文。
 
 **格式要求**
 
@@ -265,6 +325,7 @@ def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
 【预定回收区间】仅锁定大阶段（卷/批次范围，不锁具体章节）
 【自由度】高 / 中 / 低
 【是否已回收】是 / 否
+【回收章节】第X章（仅【是否已回收】为"是"时填写，否则留空）
 
 
 
@@ -274,24 +335,31 @@ def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
 def phase_summary_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating phase-frozen hard data."""
     prev = ""
-    if state.phase_summary_history:
-        prev = f"\n\n【上次阶段固化数据】\n{state.phase_summary_history[-1]}"
+    if state.phase_summary:
+        prev = f"\n\n【上次阶段固化数据】\n{state.phase_summary}"
 
     chapter_section = ""
     if chapter_context:
-        chapter_section = f"\n\n【已完成章节内容（请据此更新硬性数据）】\n{chapter_context}"
+        chapter_section = f"\n\n【近期章节内容（请据此更新硬性数据）】\n{chapter_context}"
 
+    carry_over = "\n- 完整保留上次快照中所有条目，本批无变化者直接沿用原文；有变化者标注【变化】" if prev else ""
     return f"""请根据已完成的章节内容，更新【阶段固化数据】。{prev}{chapter_section}
 
-要求：
-- 完整保留上次快照中所有硬性数据，本批无变化的项目直接沿用原文
-- 主角等级/境界/能力：更新本批有变化的部分，无变化则原文保留
-- 装备/技能/道具：列出主角当前持有的所有重要项目，除非本批明确失去/消耗
-- 资源/人脉/势力：记录当前全部资源状态，标注本批新增或变化项【变化】
-- 其他硬性数据（承诺、债务、特殊限制等）：全量保留，标注本批新增项
-- 尽量精炼，不超过500字
+要求：{carry_over}
+- 严格按照以下固定格式输出，每条不超过30字，全部合计不超过500字
+- 本批新增或变化的条目末尾标注【变化】
 
-请直接输出更新后的阶段固化数据，不需要标题。"""
+**固定输出格式（每位关键角色一组，按角色分块）**
+
+角色：XXX
+【等级/境界】（当前实力层级，≤20字）
+【核心能力】（已掌握的关键技能/能力，每条≤20字，可多条）
+【装备/道具】（当前持有的重要物品，每条≤20字，可多条）
+【资源/人脉】（可调用的资源、关键人脉，每条≤20字，可多条）
+【承诺/债务】（未了结的承诺、欠债、义务，每条≤20字，无则写"无"）
+【特殊限制】（对该角色行动有约束的条件，每条≤20字，无则写"无"）
+
+请直接输出更新后的阶段固化数据，不需要额外标题。"""
 
 
 SUMMARY_PROMPT = """请为以下章节内容生成简洁的情节概要。
@@ -401,6 +469,8 @@ CHAPTER_REVIEW_PROMPT = """请对以下章节内容进行审核：
 2. 人物性格是否与人物档案一致？
 3. 情节是否符合故事走向？
 4. 是否存在前后矛盾？
+5. 字数是否接近系统设定的每章字数目标？
+6. 情节走向是否符合系统提示中当前批次的弧线大纲？
 
 如果内容质量合格、无明显问题，请只输出：无问题
 如果有需要改进的地方，请具体指出问题并给出修改建议。"""
@@ -452,11 +522,11 @@ CHARACTER_STATUS_REVIEW_PROMPT = """请审核以下人物动态状态更新：
 {draft}
 
 审核要点：
-1. 是否准确反映了最新章节中人物的状态变化？
-2. 是否与人物档案及之前状态保持一致？
-3. 关键人物是否都有涵盖？
-4. 信息是否清晰、便于后续创作参考？
-5. 与上次快照相比，是否有条目被无故遗漏？（未变化的项目应在本次输出中保留）
+1. 【格式】每位关键角色是否均有独立分块？每块是否包含全部4个固定字段：【当前位置】【情绪/状态】【当前目标】【关键处境】？
+2. 【准确性】各字段内容是否与最新章节一致，有无遗漏或错误？
+3. 【字数】【当前位置】≤15字，【情绪/状态】≤15字，【当前目标】≤20字，【关键处境】≤30字？
+4. 【一致性】是否与人物档案及前文设定保持一致？
+5. 【完整性】与上次快照相比，是否有角色或字段被无故遗漏？（未变化的项目应在本次输出中保留）
 
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""
@@ -466,11 +536,10 @@ CHARACTER_RELATIONS_REVIEW_PROMPT = """请审核以下人物关系/势力格局�
 {draft}
 
 审核要点：
-1. 是否准确反映了最新章节中关系的变化？
-2. 是否存在与前文矛盾的关系描述？
-3. 主要势力格局是否清晰？
-4. 信息是否简洁易用？
-5. 与上次快照相比，是否有条目被无故遗漏？（未变化的项目应在本次输出中保留）
+1. 【格式】是否分为【人物关系】和【势力格局】两块？人物关系是否为"角色A → 角色B：描述"格式？势力格局是否为"势力名：状态描述"格式？
+2. 【字数】人物关系每条描述≤20字，势力格局每条≤30字？
+3. 【准确性】是否准确反映了最新章节中关系的变化？有无与前文矛盾的描述？
+4. 【完整性】与上次快照相比，是否有条目被无故遗漏？（未变化的项目应在本次输出中保留）
 
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""
@@ -508,11 +577,10 @@ PHASE_SUMMARY_REVIEW_PROMPT = """请审核以下阶段固化数据更新：
 {draft}
 
 审核要点：
-1. 主角等级/境界数据是否与最新章节一致？
-2. 装备/技能/道具信息是否有遗漏或错误？
-3. 资源/人脉数据是否准确？
-4. 是否有与前文设定矛盾的硬性数据？
-5. 与上次快照相比，是否有条目被无故遗漏？（未变化的项目应在本次输出中保留）
+1. 【格式】每位关键角色是否均有独立分块？每块是否包含全部6个固定字段：【等级/境界】【核心能力】【装备/道具】【资源/人脉】【承诺/债务】【特殊限制】？
+2. 【准确性】各字段内容是否与最新章节一致，有无遗漏或错误？
+3. 【矛盾】是否有与前文设定矛盾的硬性数据？
+4. 【完整性】与上次快照相比，是否有角色或条目被无故遗漏？（未变化的项目应在本次输出中保留）
 
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""

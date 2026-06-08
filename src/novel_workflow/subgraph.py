@@ -123,12 +123,22 @@ def generate(state: ReviewSubState) -> dict:
     }
 
 
+_SNAPSHOT_REVIEW_TYPES = {"character_status", "character_relations", "foreshadowing", "phase_summary"}
+
+
 def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
     llm = get_llm(temperature=0.3)
 
     review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
     review_prompt = review_template.format(draft=state.current_draft)
+
+    # For snapshot-type reviews, prepend the task_prompt (which contains the previous
+    # snapshot via {prev}) so the reviewer has an explicit baseline for point 5
+    # ("no entries dropped vs last snapshot") rather than having to find it buried
+    # in the long system_context.
+    if state.review_type in _SNAPSHOT_REVIEW_TYPES and state.task_prompt:
+        review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{review_prompt}"
 
     messages = [
         SystemMessage(content=state.system_context),

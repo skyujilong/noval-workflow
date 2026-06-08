@@ -62,13 +62,12 @@ class ChapterEditSubState:
 
     # ── Phase 2.5 弧线（读入 + 写回）──────────────────────────────────────────
     current_arc_outline: str = ""
-    arc_outline_history: list[str] = field(default_factory=list)
 
-    # ── Phase 2.5 动态状态库（读入最新快照 + 写回追加）────────────────────────
-    character_status_history: list[str] = field(default_factory=list)
-    character_relations_history: list[str] = field(default_factory=list)
-    foreshadowing_history: list[str] = field(default_factory=list)
-    phase_summary_history: list[str] = field(default_factory=list)
+    # ── Phase 2.5 动态状态库（读入最新值 + 覆盖写回）─────────────────────────
+    character_status: str = ""
+    character_relations: str = ""
+    foreshadowing: str = ""
+    phase_summary: str = ""
 
     # ── review_subgraph 桥接字段 ────────────────────────────────────────────────
     system_context: str = ""
@@ -96,50 +95,50 @@ class ChapterEditSubState:
 
 def _prepare_status(state) -> dict:
     return {
-        "system_context": build_foundation_context(state),
+        "system_context": build_foundation_context(state, exclude_snapshots=True),
         "task_prompt": character_status_prompt(state, build_chapter_context(state)),
         "review_type": "character_status",
     }
 
 
 def _save_status(state) -> dict:
-    return {"character_status_history": [state.current_draft]} if state.current_draft else {}
+    return {"character_status": state.current_draft} if state.current_draft else {}
 
 
 def _prepare_relations(state) -> dict:
     return {
-        "system_context": build_foundation_context(state),
+        "system_context": build_foundation_context(state, exclude_snapshots=True),
         "task_prompt": character_relations_prompt(state, build_chapter_context(state)),
         "review_type": "character_relations",
     }
 
 
 def _save_relations(state) -> dict:
-    return {"character_relations_history": [state.current_draft]} if state.current_draft else {}
+    return {"character_relations": state.current_draft} if state.current_draft else {}
 
 
 def _prepare_foreshadowing(state) -> dict:
     return {
-        "system_context": build_foundation_context(state),
+        "system_context": build_foundation_context(state, exclude_snapshots=True),
         "task_prompt": foreshadowing_prompt(state, build_chapter_context(state)),
         "review_type": "foreshadowing",
     }
 
 
 def _save_foreshadowing(state) -> dict:
-    return {"foreshadowing_history": [state.current_draft]} if state.current_draft else {}
+    return {"foreshadowing": state.current_draft} if state.current_draft else {}
 
 
 def _prepare_phase(state) -> dict:
     return {
-        "system_context": build_foundation_context(state),
+        "system_context": build_foundation_context(state, exclude_snapshots=True),
         "task_prompt": phase_summary_prompt(state, build_chapter_context(state)),
         "review_type": "phase_summary",
     }
 
 
 def _save_phase(state) -> dict:
-    return {"phase_summary_history": [state.current_draft]} if state.current_draft else {}
+    return {"phase_summary": state.current_draft} if state.current_draft else {}
 
 
 # ── Pre-compile the 5 step subgraphs ──────────────────────────────────────────

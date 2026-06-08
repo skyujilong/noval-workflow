@@ -61,11 +61,10 @@ class EditStepSubState(ReviewSubState):
     all_chapter_titles: list[str] = field(default_factory=list)
     all_chapter_summaries: list[str] = field(default_factory=list)
     current_arc_outline: str = ""
-    arc_outline_history: list[str] = field(default_factory=list)
-    character_status_history: list[str] = field(default_factory=list)
-    character_relations_history: list[str] = field(default_factory=list)
-    foreshadowing_history: list[str] = field(default_factory=list)
-    phase_summary_history: list[str] = field(default_factory=list)
+    character_status: str = ""
+    character_relations: str = ""
+    foreshadowing: str = ""
+    phase_summary: str = ""
     review_history: list = field(default_factory=list)
 
     # Step gate fields (not written back to parent graph)

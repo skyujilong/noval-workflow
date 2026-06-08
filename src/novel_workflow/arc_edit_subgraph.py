@@ -31,6 +31,7 @@ from langgraph.types import interrupt
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
 from noval_workflow.llm import get_llm
+from noval_workflow.prompts import ARC_CHAPTER_FORMAT
 
 
 @dataclass
@@ -55,11 +56,10 @@ class ArcEditSubState:
     all_chapter_titles: list[str] = field(default_factory=list)
     all_chapter_summaries: list[str] = field(default_factory=list)
     current_arc_outline: str = ""
-    arc_outline_history: list[str] = field(default_factory=list)
-    character_status_history: list[str] = field(default_factory=list)
-    character_relations_history: list[str] = field(default_factory=list)
-    foreshadowing_history: list[str] = field(default_factory=list)
-    phase_summary_history: list[str] = field(default_factory=list)
+    character_status: str = ""
+    character_relations: str = ""
+    foreshadowing: str = ""
+    phase_summary: str = ""
 
     # Review bridge (needed by system_context used in arc_rewrite)
     system_context: str = ""
@@ -115,11 +115,12 @@ def _rewrite_arc_with_ai(state: ArcEditSubState, direction: str) -> str:
         f"请根据以下调整方向，重新规划当前批次的故事弧线大纲。\n\n"
         f"调整方向：{direction}{chapter_section}{prev_section}{written_section}{remaining_section}\n\n"
         f"要求：\n"
-        f"- 用200-400字规划剩余章节的核心故事弧线节点\n"
         f"- 必须覆盖所有未写章节的故事走向\n"
         f"- 与已写章节自然衔接，不得矛盾\n"
-        f"- 严格体现调整方向的要求\n\n"
-        f"请直接输出更新后的弧线大纲，不需要标题。"
+        f"- 严格体现调整方向的要求\n"
+        f"- 单章内容不超过500字\n\n"
+        f"{ARC_CHAPTER_FORMAT}\n\n"
+        f"请直接输出更新后的弧线大纲，不需要额外标题。"
     )
     llm = get_llm(temperature=0.7)
     result = llm.invoke([
@@ -275,7 +276,6 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
         result: dict = {"final_arc": final, "arc_needs_rewrite": False}
         if final:
             result["current_arc_outline"] = final
-            result["arc_outline_history"] = [final]
         return result
 
     raw = interrupt({
@@ -297,7 +297,6 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
             "final_arc": final,
             "arc_needs_rewrite": False,
             "current_arc_outline": final,
-            "arc_outline_history": [final],
         }
 
     if confirm.startswith("="):
@@ -305,7 +304,6 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
         result = {"final_arc": final, "arc_needs_rewrite": False}
         if final:
             result["current_arc_outline"] = final
-            result["arc_outline_history"] = [final]
         return result
 
     return {

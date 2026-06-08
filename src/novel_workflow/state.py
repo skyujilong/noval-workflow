@@ -66,21 +66,18 @@ class NovelState:
     current_arc_outline: str = ""
     # 本批章节的故事弧线大纲（每批开始时由 save_arc_outline 覆盖写入，直接注入 system_context）
 
-    arc_outline_history: Annotated[list[str], operator.add] = field(default_factory=list)
-    # 历史弧线大纲归档（operator.add 追加，保留每批大纲供回溯）
+    # ── Phase 2.5：动态状态库（每次覆盖写入最新快照）────────────────────────────
+    character_status: str = ""
+    # 人物动态状态（主角 + 主要配角的当前位置/情绪/目标/处境）
 
-    # ── Phase 2.5：动态状态库（滑动窗口，注入时取 [-1] 最新快照）────────────────
-    character_status_history: Annotated[list[str], operator.add] = field(default_factory=list)
-    # 人物动态状态快照历史（主角 + 主要配角的当前位置/情绪/目标/处境）
+    character_relations: str = ""
+    # 人物关系/势力格局（各方关系变化 + 势力强弱对比）
 
-    character_relations_history: Annotated[list[str], operator.add] = field(default_factory=list)
-    # 人物关系/势力格局快照历史（各方关系变化 + 势力强弱对比）
+    foreshadowing: str = ""
+    # 伏笔台账（新增/已收/悬置伏笔分类记录）
 
-    foreshadowing_history: Annotated[list[str], operator.add] = field(default_factory=list)
-    # 伏笔台账快照历史（新增/已收/悬置伏笔分类记录）
-
-    phase_summary_history: Annotated[list[str], operator.add] = field(default_factory=list)
-    # 阶段固化数据快照历史（主角等级/装备/技能/资源等硬性数值，后续创作必须遵守）
+    phase_summary: str = ""
+    # 阶段固化数据（主角等级/装备/技能/资源等硬性数值，后续创作必须遵守）
 
 
 
