@@ -119,14 +119,17 @@ def _generate_titles_with_ai(
 
 def chapter_edit_menu(state) -> dict:
     """Interrupt: 展示菜单，收集用户选择（弧线 + 追踪字段）。"""
+    is_last_in_batch = state.current_chapter_index >= len(state.current_batch_titles)
     remaining_titles = state.current_batch_titles[state.current_chapter_index:]
+
+    arc_line = "" if is_last_in_batch else "  a  — 调整弧线大纲（AI将同步更新剩余章节标题）\n"
 
     choice = interrupt({
         "message": (
             f"第 {state.total_chapters_written} 章已完成。\n"
             f"当前批次进度：{state.current_chapter_index}/{len(state.current_batch_titles)}\n"
             "可调整项（输入对应编号/字母，多选用逗号分隔，直接回车跳过）：\n"
-            "  a  — 调整弧线大纲（AI将同步更新剩余章节标题）\n"
+            + arc_line +
             "  1  — 人物动态状态\n"
             "  2  — 人物关系/势力格局\n"
             "  3  — 伏笔台账\n"
@@ -147,7 +150,7 @@ def chapter_edit_menu(state) -> dict:
     if raw not in _SKIP_WORDS:
         for token in raw.replace("，", ",").split(","):
             token = token.strip()
-            if token == "a":
+            if token == "a" and not is_last_in_batch:
                 do_arc = True
             elif token in _CHOICE_MAP:
                 selected_tracking.append(_CHOICE_MAP[token])
