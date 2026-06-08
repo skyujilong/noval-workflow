@@ -147,7 +147,7 @@ def _save_phase(state) -> dict:
 _ENTRY_HINT = "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
 
 _ARC_STEP = make_arc_edit_subgraph(
-    entry_prompt="是否调整弧线大纲？" + _ENTRY_HINT,
+    entry_prompt="是否调整弧线大纲？",
 )
 
 _STATUS_STEP = make_edit_step_subgraph(

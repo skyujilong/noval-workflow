@@ -167,7 +167,38 @@ def _arc_entry(entry_prompt: str):
         is_last_in_batch = state.current_chapter_index >= len(state.current_batch_titles)
         if is_last_in_batch:
             return {"arc_execute_gate": False}
-        answer = interrupt({"message": entry_prompt})
+
+        already_written = state.current_batch_titles[:state.current_chapter_index]
+        remaining = state.current_batch_titles[state.current_chapter_index:]
+
+        arc_section = (
+            f"\n\n【当前弧线大纲】\n{state.current_arc_outline}"
+            if state.current_arc_outline else ""
+        )
+        written_section = (
+            "\n\n【本批已写章节】\n"
+            + "\n".join(
+                f"  {state.total_chapters_written - len(already_written) + i + 1}. {t}"
+                for i, t in enumerate(already_written)
+            )
+        ) if already_written else ""
+        remaining_section = (
+            "\n\n【本批未写章节】\n"
+            + "\n".join(
+                f"  {state.total_chapters_written + i + 1}. {t}"
+                for i, t in enumerate(remaining)
+            )
+        ) if remaining else ""
+
+        message = (
+            entry_prompt
+            + arc_section
+            + written_section
+            + remaining_section
+            + "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
+        )
+
+        answer = interrupt({"message": message})
         raw = str(answer).strip().lower()
         execute = raw not in _SKIP_WORDS
         return {
@@ -389,12 +420,7 @@ def _route_after_titles_confirm(state: ArcEditSubState) -> str:
 
 # ── factory ────────────────────────────────────────────────────────────────────
 
-def make_arc_edit_subgraph(*, entry_prompt: str = (
-    "是否调整弧线大纲？\n\n"
-    "---\n"
-    "· 直接回车 → 跳过\n"
-    "· 输入任意内容 → 执行"
-)):
+def make_arc_edit_subgraph(*, entry_prompt: str = "是否调整弧线大纲？"):
     """Build and compile the arc edit subgraph."""
     builder = StateGraph(ArcEditSubState)
 
