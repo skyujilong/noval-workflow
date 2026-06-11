@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from noval_workflow.context import build_foundation_context
+import json
+
+from noval_workflow.context import build_foundation_context, get_output_dir
 from noval_workflow.prompts import (
     CHARACTER_PROFILES_PROMPT,
     CORE_CONFLICTS_PROMPT,
@@ -80,3 +82,28 @@ def save_overall_outline(state: NovelState) -> dict:
 
 def save_character_profiles(state: NovelState) -> dict:
     return {"character_profiles": state.current_draft}
+
+
+def save_config(state: NovelState) -> dict:
+    """Persist foundation-phase state to <output_dir>/config.json before chapter writing."""
+    output_dir = get_output_dir(state.novel_name)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = {
+        "novel_name": state.novel_name,
+        "genre": state.genre,
+        "writing_style": state.writing_style,
+        "target_audience": state.target_audience,
+        "core_tone": state.core_tone,
+        "chapter_word_count": state.chapter_word_count,
+        "total_word_count": state.total_word_count,
+        "core_theme": state.core_theme,
+        "world_building": state.world_building,
+        "core_conflicts": state.core_conflicts,
+        "overall_outline": state.overall_outline,
+        "character_profiles": state.character_profiles,
+    }
+
+    config_path = output_dir / "config.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {}

@@ -25,6 +25,7 @@ from noval_workflow.nodes.foundation import (
     prepare_overall_outline,
     prepare_world_building,
     save_character_profiles,
+    save_config,
     save_core_conflicts,
     save_core_theme,
     save_overall_outline,
@@ -60,6 +61,7 @@ builder.add_node("save_world_building", save_world_building)
 builder.add_node("save_core_conflicts", save_core_conflicts)
 builder.add_node("save_overall_outline", save_overall_outline)
 builder.add_node("save_character_profiles", save_character_profiles)
+builder.add_node("save_config", save_config)
 
 # Phase 2.5 — arc outline
 builder.add_node("prepare_arc_outline", prepare_arc_outline)
@@ -106,8 +108,9 @@ builder.add_edge("save_overall_outline", "prepare_character_profiles")
 builder.add_edge("prepare_character_profiles", "review_character_profiles")
 builder.add_edge("review_character_profiles", "save_character_profiles")
 
-# Phase 1 → Phase 2.5: arc outline first
-builder.add_edge("save_character_profiles", "prepare_arc_outline")
+# Phase 1 → save config → Phase 2.5: arc outline first
+builder.add_edge("save_character_profiles", "save_config")
+builder.add_edge("save_config", "prepare_arc_outline")
 
 # Phase 2.5 — arc outline chain
 builder.add_edge("prepare_arc_outline", "review_arc_outline")
