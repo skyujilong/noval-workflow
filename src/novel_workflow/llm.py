@@ -43,8 +43,15 @@ class _PerfLogHandler(BaseCallbackHandler):
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         elapsed = time.monotonic() - self._starts.pop(run_id, time.monotonic())
         usage = self._extract_usage(response)
-        usage_str = f"，token {usage}" if usage else ""
-        self._log(f"✓ 完成 [{self._label}]，耗时 {elapsed:.1f}s{usage_str}")
+        finish = self._extract_finish_reason(response)
+        parts = [f"耗时 {elapsed:.1f}s"]
+        if usage:
+            parts.append(f"入 {usage['in']} tok")
+            parts.append(f"出 {usage['out']} tok")
+            parts.append(f"总 {usage['total']} tok")
+        if finish:
+            parts.append(f"结束原因={finish}")
+        self._log(f"✓ 完成 [{self._label}]，{', '.join(parts)}")
 
     def on_llm_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
@@ -53,8 +60,8 @@ class _PerfLogHandler(BaseCallbackHandler):
         self._log(f"✗ 失败 [{self._label}]，已耗时 {elapsed:.1f}s：{error!r}")
 
     @staticmethod
-    def _extract_usage(response: LLMResult) -> str:
-        """从返回结果里提取 token 用量，兼容不同字段命名；取不到则返回空串。"""
+    def _extract_usage(response: LLMResult) -> dict[str, int] | None:
+        """从返回结果里提取 token 用量，兼容不同字段命名。"""
         meta = (response.llm_output or {}).get("token_usage") if response.llm_output else None
         if not meta:
             # 部分实现把用量放在 generation 的 message.usage_metadata 上
@@ -64,11 +71,39 @@ class _PerfLogHandler(BaseCallbackHandler):
             except (IndexError, AttributeError):
                 meta = None
         if not meta:
-            return ""
+            return None
         prompt = meta.get("prompt_tokens") or meta.get("input_tokens")
         completion = meta.get("completion_tokens") or meta.get("output_tokens")
         total = meta.get("total_tokens") or meta.get("total")
-        return f"(in={prompt} out={completion} total={total})"
+        return {"in": prompt, "out": completion, "total": total}
+
+    @staticmethod
+    def _extract_finish_reason(response: LLMResult) -> str | None:
+        """提取结束原因：stop / length / content_filter / tool_calls 等。"""
+        try:
+            gen = response.generations[0][0]
+            # 优先从 generation_info 取
+            if gen.generation_info:
+                reason = gen.generation_info.get("finish_reason")
+                if reason:
+                    return reason
+            # 其次从 message 取
+            if hasattr(gen.message, "response_metadata"):
+                meta = gen.message.response_metadata
+                if meta:
+                    reason = meta.get("finish_reason")
+                    if reason:
+                        return reason
+            # 兜底从 llm_output 取
+            if response.llm_output:
+                choices = response.llm_output.get("choices", [])
+                if choices:
+                    reason = choices[0].get("finish_reason")
+                    if reason:
+                        return reason
+        except (IndexError, AttributeError):
+            pass
+        return None
 
 
 def get_llm(temperature: float = 0.8, label: str = "llm") -> ChatOpenAI:
@@ -89,5 +124,7 @@ def get_llm(temperature: float = 0.8, label: str = "llm") -> ChatOpenAI:
         base_url=os.environ.get(
             "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3"
         ),
+        timeout=120,  # 超时 2 分钟自动失败,避免卡住
+        max_retries=5,  # 最多重试 5 次,应对临时网络波动
         callbacks=[_PerfLogHandler(label)],
     )

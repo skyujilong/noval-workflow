@@ -82,7 +82,11 @@ def generate(state: ReviewSubState) -> dict:
     """Generate or regenerate content based on task_prompt and any feedback."""
     llm = get_llm(temperature=0.8, label=f"generate:{state.review_type}")
 
-    messages: list = [SystemMessage(content=state.system_context)]
+    # snapshot 类型的生成只依赖 task_prompt（已包含上次快照 + 当前章节内容），无需完整 system_context
+    if state.review_type in _SNAPSHOT_REVIEW_TYPES:
+        messages: list = [SystemMessage(content="你是严谨的小说数据维护员，负责根据任务要求生成或更新各类快照台账数据。")]
+    else:
+        messages: list = [SystemMessage(content=state.system_context)]
 
     if state.review_history:
         # Replay accumulated history, then append current feedback as new user turn
@@ -137,11 +141,18 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # snapshot via {prev}) so the reviewer has an explicit baseline for point 5
     # ("no entries dropped vs last snapshot") rather than having to find it buried
     # in the long system_context.
+    #
+    # 注意：snapshot review 不依赖完整 system_context，避免 token 爆炸
+    # system_context 只传给非 snapshot 类型（如章节正文、整体大纲等需要上下文连贯的内容）
     if state.review_type in _SNAPSHOT_REVIEW_TYPES and state.task_prompt:
         review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{review_prompt}"
+        # snapshot review 只用极简系统提示，不塞完整 system_context
+        system_msg = SystemMessage(content="你是严谨的小说数据审核员，负责审核各类快照数据的完整性与一致性。")
+    else:
+        system_msg = SystemMessage(content=state.system_context)
 
     messages = [
-        SystemMessage(content=state.system_context),
+        system_msg,
         HumanMessage(content=review_prompt),
     ]
 
