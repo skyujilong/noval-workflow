@@ -7,8 +7,9 @@ import os
 BATCH_SIZE: int = int(os.environ.get("NOVEL_BATCH_SIZE", "5"))
 
 # Context window split: how many of the most-recent chapters to include as full
-# text vs. summary-only.  Scales with BATCH_SIZE so the window stays proportional.
-#   BATCH_SIZE=5  → FULL_COUNT=2, SUMMARY_COUNT=3
-#   BATCH_SIZE=10 → FULL_COUNT=4, SUMMARY_COUNT=6
-FULL_COUNT: int = max(1, BATCH_SIZE * 2 // 5)
-SUMMARY_COUNT: int = max(1, BATCH_SIZE - FULL_COUNT)
+# text vs. summary-only.  Tuned for token efficiency without breaking coherence.
+#   FULL_COUNT=1  → 只保留紧邻上一章的完整原文，保证情节/对话/伏笔精准承接
+#   SUMMARY_COUNT=2  → 往前两章只用摘要，知道关键剧情节点即可
+#   总计：前3章有效上下文（比之前减少1章完整内容，约降 4k~7k token）
+FULL_COUNT: int = 1
+SUMMARY_COUNT: int = 2
