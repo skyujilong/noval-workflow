@@ -122,7 +122,7 @@ def _rewrite_arc_with_ai(state: ArcEditSubState, direction: str) -> str:
         f"{ARC_CHAPTER_FORMAT}\n\n"
         f"请直接输出更新后的弧线大纲，不需要额外标题。"
     )
-    llm = get_llm(temperature=0.7)
+    llm = get_llm(temperature=0.7, label="arc_edit:regenerate_outline")
     result = llm.invoke([
         SystemMessage(content=state.system_context),
         HumanMessage(content=prompt),
@@ -152,7 +152,7 @@ def _generate_titles_with_ai(
         f"- 不要添加序号、标点或任何前缀\n\n"
         f"请直接输出{remaining_count}个标题，每行一个。"
     )
-    llm = get_llm(temperature=0.7)
+    llm = get_llm(temperature=0.7, label="arc_edit:generate_titles")
     result = llm.invoke([
         SystemMessage(content=state.system_context),
         HumanMessage(content=prompt),

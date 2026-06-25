@@ -80,7 +80,7 @@ def _is_pass(feedback: str) -> bool:
 
 def generate(state: ReviewSubState) -> dict:
     """Generate or regenerate content based on task_prompt and any feedback."""
-    llm = get_llm(temperature=0.8)
+    llm = get_llm(temperature=0.8, label=f"generate:{state.review_type}")
 
     messages: list = [SystemMessage(content=state.system_context)]
 
@@ -128,7 +128,7 @@ _SNAPSHOT_REVIEW_TYPES = {"character_status", "character_relations", "foreshadow
 
 def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
-    llm = get_llm(temperature=0.3)
+    llm = get_llm(temperature=0.3, label=f"self_review:{state.review_type}")
 
     review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
     review_prompt = review_template.format(draft=state.current_draft)

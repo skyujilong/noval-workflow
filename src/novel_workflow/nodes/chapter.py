@@ -126,7 +126,7 @@ def generate_summary(state: NovelState) -> dict:
 
     summary = ""
     try:
-        llm = get_llm(temperature=0.3)
+        llm = get_llm(temperature=0.3, label="chapter_summary")
         messages = [
             SystemMessage(content=state.system_context),
             HumanMessage(content=SUMMARY_PROMPT.format(title=title, content=state.current_draft)),

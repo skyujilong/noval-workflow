@@ -86,7 +86,7 @@ def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = 
     """
     parts: list[str] = []
 
-    parts.append("你是一位专业小说创作助手。以下是本次小说创作的核心设定，请严格遵守：\n")
+    parts.append("你是一位擅长轻小说（ライトノベル）创作的资深作家与架构编辑，擅长以角色群像、对话关系与强主角视角推进故事。以下是本次作品的核心设定，请严格遵守：\n")
 
     # User inputs
     if state.novel_name:
