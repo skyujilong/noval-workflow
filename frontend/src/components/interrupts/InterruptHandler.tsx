@@ -2,7 +2,7 @@
 // 表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
 import { detectInterruptKind } from "../../lib/interruptTypes";
-import type { NovelState } from "../../lib/types";
+import type { SubgraphState } from "../../lib/langgraph";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
@@ -13,12 +13,12 @@ import { UserInputsForm } from "./UserInputsForm";
 
 interface Props {
   payload: unknown;
-  state: NovelState;
+  subgraphState: SubgraphState | null;
   onSubmit: (value: unknown) => void;
   disabled?: boolean;
 }
 
-export function InterruptHandler({ payload, state, onSubmit, disabled }: Props) {
+export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }: Props) {
   const kind = detectInterruptKind(payload);
 
   switch (kind) {
@@ -35,7 +35,7 @@ export function InterruptHandler({ payload, state, onSubmit, disabled }: Props) 
       return (
         <HumanReviewForm
           payload={payload as Parameters<typeof HumanReviewForm>[0]["payload"]}
-          reviewType={state.review_type}
+          subgraphState={subgraphState}
           onSubmit={onSubmit}
           disabled={disabled}
         />

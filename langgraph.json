@@ -4,5 +4,8 @@
   "graphs": {
     "noval_workflow": "./src/novel_workflow/graph.py:graph"
   },
-  "env": ".env.local"
+  "env": ".env.local",
+  "http": {
+    "app": "./src/http_app.py:app"
+  }
 }

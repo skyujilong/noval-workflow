@@ -71,6 +71,8 @@ export function GraphView({ schemaNodes, schemaEdges, currentNode }: Props) {
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable={false}
+      minZoom={0.2}
+      maxZoom={2}
       proOptions={{ hideAttribution: true }}
     >
       <Background gap={16} />

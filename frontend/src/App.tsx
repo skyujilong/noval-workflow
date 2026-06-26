@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { GraphView } from "./components/graph/GraphView";
 import { CheckpointTimeline } from "./components/history/CheckpointTimeline";
 import { InterruptHandler } from "./components/interrupts/InterruptHandler";
+import { ChapterReader } from "./components/novel/ChapterReader";
 import { NovelDetail } from "./components/novel/NovelDetail";
 import { NovelList } from "./components/novel/NovelList";
 import { useGraphSchema } from "./hooks/useGraphSchema";
@@ -18,8 +19,9 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [autoStart, setAutoStart] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
+  const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
 
-  const { state, currentNode, interrupt, running, error: runError, start, resume, refresh: refreshRun } =
+  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, refresh: refreshRun } =
     useRun(selectedId);
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
@@ -117,7 +119,10 @@ export default function App() {
               loading={loading}
               error={error}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              onSelect={(id) => {
+                setSelectedId(id);
+                setRightTab("detail");
+              }}
               onCreate={handleCreate}
               onRefresh={refresh}
             />
@@ -141,7 +146,7 @@ export default function App() {
             <div className="p-4">
               <InterruptHandler
                 payload={interrupt.payload}
-                state={state}
+                subgraphState={subgraphState}
                 onSubmit={handleSubmit}
                 disabled={running}
               />
@@ -155,25 +160,56 @@ export default function App() {
             </div>
           ) : selectedId ? (
             <>
-              <NovelDetail state={state} />
-              {!state.novel_name && (
-                <div className="px-4 pb-4">
-                  <button
-                    onClick={() => void start()}
-                    className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                  >
-                    开始创作
-                  </button>
-                </div>
-              )}
-              <div className="px-4 pb-4">
+              <div className="flex border-b text-xs">
                 <button
-                  onClick={() => void refreshRun()}
-                  className="w-full rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                  onClick={() => setRightTab("detail")}
+                  className={
+                    "flex-1 py-2 " +
+                    (rightTab === "detail"
+                      ? "border-b-2 border-blue-600 font-medium text-blue-600"
+                      : "text-gray-500")
+                  }
                 >
-                  刷新状态
+                  小说详情
+                </button>
+                <button
+                  onClick={() => setRightTab("reader")}
+                  disabled={!state.novel_name}
+                  className={
+                    "flex-1 py-2 disabled:text-gray-300 " +
+                    (rightTab === "reader"
+                      ? "border-b-2 border-blue-600 font-medium text-blue-600"
+                      : "text-gray-500")
+                  }
+                >
+                  阅读章节
                 </button>
               </div>
+              {rightTab === "detail" ? (
+                <>
+                  <NovelDetail state={state} />
+                  {!state.novel_name && (
+                    <div className="px-4 pb-4">
+                      <button
+                        onClick={() => void start()}
+                        className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        开始创作
+                      </button>
+                    </div>
+                  )}
+                  <div className="px-4 pb-4">
+                    <button
+                      onClick={() => void refreshRun()}
+                      className="w-full rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                    >
+                      刷新状态
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <ChapterReader state={state} />
+              )}
             </>
           ) : (
             <div className="flex h-full items-center justify-center p-4 text-center text-sm text-gray-400">

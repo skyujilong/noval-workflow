@@ -1,32 +1,40 @@
-// human_review 审稿表单。
-// 草稿在子图 state 中，父 thread state 不暴露；但 human_review 的 interrupt payload
-// 的 message 形如「{current_draft}\n\n---\n· 直接回车 → 通过\n· 输入修改意见 → 重新生成」，
-// 因此草稿从 message 的 "\n\n---\n" 之前部分解析。review_type 从父 state 取（已写回）。
+// human_review 富审稿表单。
+// 草稿/AI 自审意见/修改历史来自子图 state（useRun 经 getSubgraphState 获取）。
+// 子图 state 缺失时回退到从 interrupt message 的 "\n\n---\n" 之前解析草稿。
 // resume 值："" = 通过，非空文本 = 修改意见（驱动重新生成）。
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { MessageOnlyPayload } from "../../lib/interruptTypes";
+import type { SubgraphState } from "../../lib/langgraph";
 import { reviewTypeLabel } from "../../lib/types";
 
 interface Props {
   payload: MessageOnlyPayload;
-  reviewType: string;
+  subgraphState: SubgraphState | null;
   onSubmit: (value: string) => void;
   disabled?: boolean;
 }
 
-/** 从 interrupt message 解析草稿正文（分隔符 \n\n---\n 之前的部分） */
-function parseDraft(message: string): string {
+/** 从 interrupt message 解析草稿正文（分隔符 \n\n---\n 之前的部分），作为子图 state 缺失时的回退 */
+function parseDraftFromMessage(message: string): string {
   const idx = message.indexOf("\n\n---\n");
   return idx >= 0 ? message.slice(0, idx) : message;
 }
 
-export function HumanReviewForm({ payload, reviewType, onSubmit, disabled }: Props) {
+export function HumanReviewForm({ payload, subgraphState, onSubmit, disabled }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
 
-  const draft = parseDraft(payload.message ?? "");
+  // 草稿优先取子图 state 的 current_draft，回退到 message 解析
+  // 用 ?? 而非 ||：空字符串是有效草稿状态（生成失败/清空），不应被当作缺失而回退
+  const draft = subgraphState?.current_draft ?? parseDraftFromMessage(payload.message ?? "");
+  const aiFeedback = subgraphState?.review_feedback ?? "";
+  const history = subgraphState?.review_history ?? [];
+  const reviewType = subgraphState?.review_type ?? "foundation";
+  const llmReviewCount = subgraphState?.llm_review_count ?? 0;
+  // 每轮 2 条历史（human + ai）；轮次 = 已完成的 generate 次数
+  const round = Math.floor((history.length || 0) / 2);
 
   const submit = () => {
     onSubmit(mode === "approve" ? "" : feedback.trim());
@@ -34,9 +42,24 @@ export function HumanReviewForm({ payload, reviewType, onSubmit, disabled }: Pro
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-gray-800">
-        人工审核 · {reviewTypeLabel(reviewType || "foundation")}
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-gray-800">
+          人工审核 · {reviewTypeLabel(reviewType)}
+        </h3>
+        {round > 0 && (
+          <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+            第 {round} 轮迭代（AI 自审 {llmReviewCount} 次）
+          </span>
+        )}
+      </div>
+
+      {/* AI 自审意见（若有） */}
+      {aiFeedback && (
+        <div className="rounded border border-amber-200 bg-amber-50 p-3">
+          <div className="mb-1 text-xs font-medium text-amber-700">AI 自审意见</div>
+          <div className="whitespace-pre-wrap text-sm text-amber-900">{aiFeedback}</div>
+        </div>
+      )}
 
       {/* 当前草稿 */}
       <div className="rounded border border-gray-200 bg-white p-3">
@@ -45,6 +68,43 @@ export function HumanReviewForm({ payload, reviewType, onSubmit, disabled }: Pro
           <ReactMarkdown>{draft || "（无草稿内容）"}</ReactMarkdown>
         </div>
       </div>
+
+      {/* 修改历史 */}
+      {history.length > 0 && (
+        <details className="rounded border border-gray-200 p-2 text-sm">
+          <summary className="cursor-pointer text-gray-600">
+            修改历史（{history.length} 条）
+          </summary>
+          <div className="mt-2 space-y-2">
+            {history.map((h, i) => {
+              // generate() 会把 AI 自审反馈也作为 human turn 写入 history，
+              // 内容以 "[AI审稿意见]" 开头——据此区分展示标签
+              const isAiReview = h.content?.startsWith("[AI审稿意见]");
+              const label =
+                h.role === "ai"
+                  ? "AI 生成"
+                  : isAiReview
+                    ? "AI 审稿意见"
+                    : "你的修改意见";
+              return (
+                <div
+                  key={i}
+                  className={
+                    h.role === "ai"
+                      ? "rounded bg-gray-50 p-2 text-gray-700"
+                      : isAiReview
+                        ? "rounded bg-amber-50 p-2 text-amber-900"
+                        : "rounded bg-blue-50 p-2 text-blue-900"
+                  }
+                >
+                  <div className="mb-1 text-xs font-medium opacity-70">{label}</div>
+                  <div className="whitespace-pre-wrap">{h.content}</div>
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
 
       {/* 操作区 */}
       <div className="space-y-2 border-t pt-3">
