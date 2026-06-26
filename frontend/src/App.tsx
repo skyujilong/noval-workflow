@@ -140,8 +140,8 @@ export default function App() {
           />
         </main>
 
-        {/* 右侧：中断表单 / 小说详情 */}
-        <aside className="w-96 overflow-y-auto border-l bg-white">
+        {/* 右侧：中断表单 / 小说详情（与中部节点图各占剩余宽度一半） */}
+        <aside className="flex-1 overflow-y-auto border-l bg-white">
           {interrupt ? (
             <div className="p-4">
               <InterruptHandler
