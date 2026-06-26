@@ -150,41 +150,67 @@ LANGSMITH_TRACING=true
 
 ## 运行
 
-```bash
-# 启动 LangGraph 开发服务器（带交互界面）
-langgraph dev
+项目为前后端双进程：后端是 `langgraph dev`（加载 `noval_workflow` 图 + `/output` 静态文件服务），前端是 React + Vite 的创作工作台 UI。分别在两个终端启动：
 
-# 或使用项目 venv
-.venv/bin/langgraph dev
+```bash
+./dev-backend.sh     # 后端：http://127.0.0.1:28123（图 noval_workflow + /output 静态服务）
+./dev-frontend.sh    # 前端：http://127.0.0.1:15173（首次需先 cd frontend && npm install）
 ```
 
-启动后在浏览器打开 LangGraph Studio，选择 `novel-writing-workflow` 图，点击运行即可开始创作流程。
+前端默认直连后端 `http://127.0.0.1:28123`。端口可通过环境变量覆盖：
+
+```bash
+LANGGRAPH_PORT=29000 ./dev-backend.sh                                        # 改后端端口
+VITE_PORT=18000 ./dev-frontend.sh                                            # 改前端端口
+VITE_LANGGRAPH_API_URL=http://127.0.0.1:29000 ./dev-frontend.sh              # 后端端口非默认时，前端指过去
+```
+
+> 改后端端口时，前端默认 `API_URL` 不会自动跟随——用 `VITE_LANGGRAPH_API_URL` 覆盖，或同步改 `frontend/src/lib/langgraph.ts` 与 `frontend/vite.config.ts`。
+
+浏览器打开 `http://127.0.0.1:15173` 即可使用创作工作台：左侧管理小说（thread）列表与历史 checkpoint，中部展示节点图（当前执行节点高亮），右侧在中断时渲染对应表单（用户输入 / 人工审核 / 弧线确认等），无中断时展示小说详情或章节阅读视图。也可继续用 LangGraph Studio（`http://127.0.0.1:28123`）选择 `noval_workflow` 图运行。
+
+### Web UI 要点
+
+- **人工审核富表单**：草稿 / AI 自审意见 / 修改历史来自审稿子图 state（`getSubgraphState`），子图 state 获取失败时回退到从 interrupt message 解析草稿；提交「通过」resume 空串，「提出修改意见」resume 修改文本驱动重新生成。
+- **章节阅读**：从 `output/<小说名>/chapters/*.txt` 经后端 `/output` 静态服务读取，前端按 `context.py` 的 sanitize 规则镜像构造文件 URL。
+- **中断分发**：`InterruptHandler` 按 payload 结构字段判别中断类型并渲染对应表单，提交值经 `useRun.resume()` 用 `Command(resume=...)` 恢复 run。
 
 ---
 
 ## 项目结构
 
 ```
-src/novel_workflow/
-├── graph.py                  # 主图组装（节点注册 + 边连接）
-├── subgraph.py               # 可复用审稿子图（generate / llm_self_review / human_review）
-├── chapter_edit_subgraph.py  # 每章写完后的 5 步编辑子图（arc/status/relations/foreshadow/phase）
-├── arc_edit_subgraph.py      # 弧线调整子图（大纲重写 + 剩余标题重生成，支持多轮迭代）
-├── edit_step_subgraph.py     # 通用编辑步骤子图工厂（entry → prepare → generate → review → save）
-├── state.py                  # 状态定义（ReviewSubState / NovelState）
-├── context.py                # 系统提示词构建（基础设定上下文、章节上下文窗口）
-├── prompts.py                # 各生成节点的任务提示词与审稿提示词
-├── config.py                 # 全局配置常量（BATCH_SIZE / FULL_COUNT / SUMMARY_COUNT）
-├── llm.py                    # LLM 工厂（从环境变量读取配置）
-└── nodes/
-    ├── inputs.py             # Phase 0：collect_user_inputs
-    ├── foundation.py         # Phase 1：prepare_* / save_* 各 5 个节点
-    ├── chapter.py            # Phase 2：标题生成、章节生成、摘要、循环控制路由
-    ├── chapter_edit.py       # chapter_edit_done 节点（写回父图状态）
-    └── arc.py                # Phase 2.5：批次弧线大纲 prepare / save 节点
+src/
+├── http_app.py               # 自定义 HTTP 路由：挂载 /output 静态文件服务（供前端读章节正文）
+└── novel_workflow/
+    ├── graph.py                  # 主图组装（节点注册 + 边连接）
+    ├── subgraph.py               # 可复用审稿子图（generate / llm_self_review / human_review）
+    ├── chapter_edit_subgraph.py  # 每章写完后的 5 步编辑子图（arc/status/relations/foreshadow/phase）
+    ├── arc_edit_subgraph.py      # 弧线调整子图（大纲重写 + 剩余标题重生成，支持多轮迭代）
+    ├── edit_step_subgraph.py     # 通用编辑步骤子图工厂（entry → prepare → generate → review → save）
+    ├── state.py                  # 状态定义（ReviewSubState / NovelState）
+    ├── context.py                # 系统提示词构建（基础设定上下文、章节上下文窗口）
+    ├── prompts.py                # 各生成节点的任务提示词与审稿提示词
+    ├── config.py                 # 全局配置常量（BATCH_SIZE / FULL_COUNT / SUMMARY_COUNT）
+    ├── llm.py                    # LLM 工厂（从环境变量读取配置）
+    └── nodes/
+        ├── inputs.py             # Phase 0：collect_user_inputs
+        ├── foundation.py         # Phase 1：prepare_* / save_* 各 5 个节点
+        ├── chapter.py            # Phase 2：标题生成、章节生成、摘要、循环控制路由
+        ├── chapter_edit.py       # chapter_edit_done 节点（写回父图状态）
+        └── arc.py                # Phase 2.5：批次弧线大纲 prepare / save 节点
+
+frontend/                         # React + Vite + React Flow 创作工作台 UI
+├── src/
+│   ├── App.tsx                   # 顶层布局（小说列表 / 节点图 / 中断表单 / 详情/阅读）
+│   ├── hooks/                    # useRun（运行/中断/子图state）、useThreads、useGraphSchema
+│   ├── lib/                      # langgraph API 客户端、interrupt 类型分发、章节文件 URL
+│   └── components/               # graph / interrupts / novel / history 各组件
+├── vite.config.ts                # dev server :15173，/api 代理到后端 :28123
+└── package.json
 ```
 
-输出目录（运行时自动创建，按小说名称隔离）：
+输出目录（`langgraph dev` 启动时由 `http_app.py` 创建根目录 `output/`，子目录在写入章节时按需创建，按小说名称隔离）：
 
 ```
 output/
