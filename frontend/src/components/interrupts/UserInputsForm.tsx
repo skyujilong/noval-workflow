@@ -1,0 +1,70 @@
+// collect_user_inputs 的结构化表单。
+// payload 含 fields（字段名→说明）与 current_values（预填值）。
+// resume 值：dict {字段名: 值}。
+
+import { useState } from "react";
+import type { UserInputsPayload } from "../../lib/interruptTypes";
+
+interface Props {
+  payload: UserInputsPayload;
+  onSubmit: (value: Record<string, string>) => void;
+  disabled?: boolean;
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  novel_name: "小说名称",
+  genre: "小说类型",
+  writing_style: "写作风格",
+  target_audience: "目标读者",
+  core_tone: "核心基调",
+  chapter_word_count: "每章字数",
+  total_word_count: "总字数目标",
+};
+
+export function UserInputsForm({ payload, onSubmit, disabled }: Props) {
+  const fieldNames = Object.keys(payload.fields ?? {});
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const k of fieldNames) init[k] = payload.current_values?.[k] ?? "";
+    return init;
+  });
+
+  const submit = () => {
+    const result: Record<string, string> = {};
+    for (const k of fieldNames) result[k] = values[k]?.trim() ?? "";
+    onSubmit(result);
+  };
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-gray-800">小说创作参数</h3>
+      <p className="text-sm text-gray-500">{payload.message}</p>
+      <div className="space-y-3">
+        {fieldNames.map((k) => (
+          <div key={k}>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {FIELD_LABELS[k] ?? k}
+              <span className="ml-2 text-xs text-gray-400 font-normal">
+                {payload.fields[k]}
+              </span>
+            </label>
+            <input
+              type="text"
+              value={values[k] ?? ""}
+              onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+              disabled={disabled}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+            />
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={submit}
+        disabled={disabled || fieldNames.some((k) => !values[k]?.trim())}
+        className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+      >
+        提交并开始创作
+      </button>
+    </div>
+  );
+}

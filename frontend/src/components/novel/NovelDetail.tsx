@@ -1,0 +1,81 @@
+// 小说详情面板：展示当前 state 的关键进度（基础设定成果 + 章节进度 + 快照）。
+
+import ReactMarkdown from "react-markdown";
+import { reviewTypeLabel, type NovelState } from "../../lib/types";
+
+interface Props {
+  state: NovelState;
+}
+
+function Field({ label, value }: { label: string; value?: string }) {
+  if (!value) return null;
+  return (
+    <div>
+      <div className="mb-0.5 text-xs font-medium text-gray-500">{label}</div>
+      <div className="prose prose-sm max-w-none max-h-48 overflow-y-auto rounded border border-gray-200 bg-white p-2">
+        <ReactMarkdown>{value}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
+export function NovelDetail({ state }: Props) {
+  const titles = state.all_chapter_titles ?? [];
+  return (
+    <div className="space-y-3 p-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-gray-800">
+          {state.novel_name || "（未命名）"}
+        </h3>
+        <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+          已写 {state.total_chapters_written ?? 0} 章
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <Info label="类型" value={state.genre} />
+        <Info label="风格" value={state.writing_style} />
+        <Info label="读者" value={state.target_audience} />
+        <Info label="基调" value={state.core_tone} />
+        <Info label="每章字数" value={state.chapter_word_count} />
+        <Info label="总字数" value={state.total_word_count} />
+      </div>
+
+      <Field label="核心主题" value={state.core_theme} />
+      <Field label="世界观" value={state.world_building} />
+      <Field label="核心冲突" value={state.core_conflicts} />
+      <Field label="整体大纲" value={state.overall_outline} />
+      <Field label="人物档案" value={state.character_profiles} />
+      <Field label="当前弧线大纲" value={state.current_arc_outline} />
+
+      {state.review_type && state.current_draft && (
+        <Field
+          label={`当前草稿 · ${reviewTypeLabel(state.review_type)}`}
+          value={state.current_draft}
+        />
+      )}
+
+      {titles.length > 0 && (
+        <div>
+          <div className="mb-0.5 text-xs font-medium text-gray-500">
+            章节标题（{titles.length}）
+          </div>
+          <ol className="list-inside list-decimal rounded border border-gray-200 bg-white p-2 text-sm text-gray-700">
+            {titles.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Info({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="rounded border border-gray-100 bg-gray-50 px-2 py-1">
+      <div className="text-gray-400">{label}</div>
+      <div className="truncate text-gray-700">{value || "—"}</div>
+    </div>
+  );
+}

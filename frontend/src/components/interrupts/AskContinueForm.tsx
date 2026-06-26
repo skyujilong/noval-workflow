@@ -1,0 +1,37 @@
+// ask_continue 表单：是否继续写下一批 5 章。
+// resume 值："" / "yes" / "继续" = 继续；"no" = 停止。
+
+import type { AskContinuePayload } from "../../lib/interruptTypes";
+
+interface Props {
+  payload: AskContinuePayload;
+  onSubmit: (value: string) => void;
+  disabled?: boolean;
+}
+
+export function AskContinueForm({ payload, onSubmit, disabled }: Props) {
+  return (
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-gray-800">是否继续创作？</h3>
+      <div className="rounded border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+        {payload.message}
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => onSubmit("no")}
+          disabled={disabled}
+          className="flex-1 rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+        >
+          停止
+        </button>
+        <button
+          onClick={() => onSubmit("")}
+          disabled={disabled}
+          className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+        >
+          继续写下 5 章
+        </button>
+      </div>
+    </div>
+  );
+}
