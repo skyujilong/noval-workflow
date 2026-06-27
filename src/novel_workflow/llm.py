@@ -106,25 +106,29 @@ class _PerfLogHandler(BaseCallbackHandler):
         return None
 
 
-def get_llm(temperature: float = 0.8, label: str = "llm") -> ChatOpenAI:
+def get_llm(temperature: float = 0.8, label: str = "llm", max_tokens: int | None = None) -> ChatOpenAI:
     """Create a ChatOpenAI instance from environment configuration.
 
     ChatOpenAI has built-in retry logic (max_retries=2 by default via tenacity),
     so transient network errors and rate limits are already handled internally.
 
     ``label`` 标识调用方（节点名），会出现在性能日志里，便于区分是哪个步骤在跑。
+    ``max_tokens`` 显式设置最大输出 token 数，避免长文本生成被截断。
     """
     api_key = os.environ.get("ARK_API_KEY")
     if not api_key:
         raise ValueError("ARK_API_KEY environment variable is required")
+    if max_tokens is None:
+        max_tokens = int(os.environ.get("ARK_MAX_TOKENS", "16384"))
     return ChatOpenAI(
         model=os.environ.get("ARK_MODEL", "doubao-seed-2.0-lite"),
         temperature=temperature,
+        max_tokens=max_tokens,
         api_key=api_key,
         base_url=os.environ.get(
             "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3"
         ),
-        timeout=120,  # 超时 2 分钟自动失败,避免卡住
-        max_retries=5,  # 最多重试 5 次,应对临时网络波动
+        timeout=900,  # 超时 15 分钟自动失败，避免长文本生成卡住
+        max_retries=2,  # 减少重试次数，避免总耗时过长
         callbacks=[_PerfLogHandler(label)],
     )
