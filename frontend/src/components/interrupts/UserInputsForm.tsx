@@ -2,7 +2,7 @@
 // payload 含 fields（字段名→说明）与 current_values（预填值）。
 // resume 值：dict {字段名: 值}。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { UserInputsPayload } from "../../lib/interruptTypes";
 
 interface Props {
@@ -29,6 +29,15 @@ export function UserInputsForm({ payload, onSubmit, disabled }: Props) {
     return init;
   });
   const [submitting, setSubmitting] = useState(false);
+
+  // 提交结束（disabled false）或新 interrupt（payload 变化）时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+    const init: Record<string, string> = {};
+    const names = Object.keys(payload.fields ?? {});
+    for (const k of names) init[k] = payload.current_values?.[k] ?? "";
+    setValues(init);
+  }, [disabled, payload]);
 
   const handleSubmit = () => {
     setSubmitting(true);

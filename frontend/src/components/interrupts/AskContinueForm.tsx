@@ -1,7 +1,7 @@
 // ask_continue 表单：是否继续写下一批 5 章。
 // resume 值："" / "yes" / "继续" = 继续；"no" = 停止。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AskContinuePayload } from "../../lib/interruptTypes";
 
 interface Props {
@@ -12,6 +12,11 @@ interface Props {
 
 export function AskContinueForm({ payload, onSubmit, disabled }: Props) {
   const [submitting, setSubmitting] = useState(false);
+
+  // 提交结束或新 interrupt 时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+  }, [disabled, payload]);
 
   const handleSubmit = (value: string) => {
     setSubmitting(true);

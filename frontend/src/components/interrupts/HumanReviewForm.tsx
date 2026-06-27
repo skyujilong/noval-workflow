@@ -3,7 +3,7 @@
 // 前端直接读，不再依赖 getSubgraphState（避免嵌套子图冒泡选错 task）。
 // resume 值："" = 通过，非空文本 = 修改意见（驱动重新生成）。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { HumanReviewPayload } from "../../lib/interruptTypes";
 import { reviewTypeLabel } from "../../lib/types";
@@ -27,6 +27,13 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
   const llmReviewCount = payload.llm_review_count ?? 0;
   // 每轮 2 条历史（human + ai）；轮次 = 已完成的 generate 次数
   const round = Math.floor((history.length || 0) / 2);
+
+  // 提交结束（disabled false）或新 interrupt（payload 变化）时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+    setFeedback("");
+    setMode("approve");
+  }, [disabled, payload]);
 
   const handleSubmit = () => {
     setSubmitting(true);

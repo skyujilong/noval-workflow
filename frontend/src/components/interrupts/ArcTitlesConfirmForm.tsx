@@ -5,7 +5,7 @@
 //   "=<每行一个标题>" = 手动替换（跳过 AI），用 _clean_title 规则清理
 //   "<方向文本>"      = 让 AI 按新方向重新生成
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ArcTitlesConfirmPayload } from "../../lib/interruptTypes";
 import { buildManualReplaceValue } from "../../lib/interruptTypes";
 
@@ -23,6 +23,14 @@ export function ArcTitlesConfirmForm({ payload, onSubmit, disabled }: Props) {
   const [regenText, setRegenText] = useState("");
   const [manualText, setManualText] = useState(aiTitles.join("\n"));
   const [submitting, setSubmitting] = useState(false);
+
+  // 提交结束（disabled false）或新 interrupt（payload 变化）时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+    setMode("accept");
+    setRegenText("");
+    setManualText(aiTitles.join("\n"));
+  }, [disabled, payload, aiTitles]);
 
   const handleSubmit = () => {
     setSubmitting(true);

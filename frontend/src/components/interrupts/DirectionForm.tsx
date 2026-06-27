@@ -2,7 +2,7 @@
 // resume 值："" = 用默认 / 取消；非空 = 调整方向。
 // arc_direction 的 payload 含 current_arc_outline / remaining_titles，额外展示上下文。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ArcDirectionPayload, MessageOnlyPayload } from "../../lib/interruptTypes";
 import { directionTitleOf } from "../../lib/interruptTypes";
 import ReactMarkdown from "react-markdown";
@@ -20,6 +20,12 @@ export function DirectionForm({ payload, onSubmit, disabled }: Props) {
   const remaining = (payload as ArcDirectionPayload).remaining_titles ?? [];
   // 标题由 payload.type 派生（type 自描述契约），无需外部传入
   const title = directionTitleOf((payload as { type?: unknown }).type);
+
+  // 提交结束（disabled false）或新 interrupt（payload 变化）时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+    setDirection("");
+  }, [disabled, payload]);
 
   const handleSubmit = (value: string) => {
     setSubmitting(true);

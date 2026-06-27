@@ -22,10 +22,15 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
   // fallback 场景的 textarea 引用，避免脆弱的 DOM 遍历
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // 用 payload.type 作为 key 强制重挂载：同类型不同 interrupt 也会创建新组件实例，
+  // 彻底解决组件复用导致的 submitting=true 永久锁死问题（root cause fix）。
+  const formKey = String((payload as { type?: unknown })?.type ?? "unknown");
+
   switch (kind) {
     case "user_inputs":
       return (
         <UserInputsForm
+          key={formKey}
           payload={payload as Parameters<typeof UserInputsForm>[0]["payload"]}
           onSubmit={(v) => onSubmit(v)}
           disabled={disabled}
@@ -35,6 +40,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "human_review":
       return (
         <HumanReviewForm
+          key={formKey}
           payload={payload as Parameters<typeof HumanReviewForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -44,6 +50,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "ask_continue":
       return (
         <AskContinueForm
+          key={formKey}
           payload={payload as Parameters<typeof AskContinueForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -53,6 +60,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "entry_gate":
       return (
         <EntryGateForm
+          key={formKey}
           payload={payload as Parameters<typeof EntryGateForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -63,6 +71,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "arc_direction":
       return (
         <DirectionForm
+          key={formKey}
           payload={payload as Parameters<typeof DirectionForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -72,6 +81,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "arc_confirm":
       return (
         <ArcConfirmForm
+          key={formKey}
           payload={payload as Parameters<typeof ArcConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -81,6 +91,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
     case "arc_titles_confirm":
       return (
         <ArcTitlesConfirmForm
+          key={formKey}
           payload={payload as Parameters<typeof ArcTitlesConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
@@ -89,7 +100,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
 
     default:
       return (
-        <div className="space-y-3">
+        <div key={formKey} className="space-y-3">
           <h3 className="text-lg font-semibold text-gray-800">未识别的中断</h3>
           <p className="text-xs text-amber-600">
             payload 缺少 type 字段或 type 未在 TYPE_TO_FORM 登记（后端契约故障，显式暴露）。

@@ -5,7 +5,7 @@
 //   "=<内容>"     = 手动替换（跳过 AI）
 //   "<方向文本>"  = 让 AI 按新方向重新生成（可多次迭代）
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type {
   ArcConfirmErrorPayload,
@@ -28,6 +28,14 @@ export function ArcConfirmForm({ payload, onSubmit, disabled }: Props) {
   const [regenText, setRegenText] = useState("");
   const [manualText, setManualText] = useState(aiArc);
   const [submitting, setSubmitting] = useState(false);
+
+  // 提交结束（disabled false）或新 interrupt（payload 变化）时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+    setMode(isError ? "manual" : "accept");
+    setRegenText("");
+    setManualText(aiArc);
+  }, [disabled, payload, aiArc, isError]);
 
   const handleSubmit = () => {
     setSubmitting(true);

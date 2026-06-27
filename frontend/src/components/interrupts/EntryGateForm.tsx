@@ -1,7 +1,7 @@
 // step_entry / arc_entry 的「跳过 / 执行」门表单。
 // resume 值：""（skip 词）= 跳过；"yes"（非 skip 词）= 执行。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { MessageOnlyPayload } from "../../lib/interruptTypes";
 import { EXECUTE_VALUE, SKIP_VALUE } from "../../lib/interruptTypes";
 
@@ -14,6 +14,11 @@ interface Props {
 
 export function EntryGateForm({ payload, onSubmit, disabled, title }: Props) {
   const [submitting, setSubmitting] = useState(false);
+
+  // 提交结束或新 interrupt 时重置状态
+  useEffect(() => {
+    setSubmitting(false);
+  }, [disabled, payload]);
 
   const handleSubmit = (value: string) => {
     setSubmitting(true);
