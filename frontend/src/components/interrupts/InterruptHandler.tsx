@@ -1,6 +1,7 @@
 // Interrupt 分发器：根据 payload 结构判别中断类型，渲染对应表单。
 // 表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
+import { useRef } from "react";
 import { detectInterruptKind } from "../../lib/interruptTypes";
 import type { SubgraphState } from "../../lib/langgraph";
 import { ArcConfirmForm } from "./ArcConfirmForm";
@@ -20,6 +21,8 @@ interface Props {
 
 export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }: Props) {
   const kind = detectInterruptKind(payload);
+  // fallback 场景的 textarea 引用，避免脆弱的 DOM 遍历
+  const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   switch (kind) {
     case "user_inputs":
@@ -96,15 +99,24 @@ export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }:
             {JSON.stringify(payload, null, 2)}
           </pre>
           <textarea
+            ref={fallbackTextareaRef}
             placeholder="输入任意文本作为 resume 值提交…"
             rows={3}
+            disabled={disabled}
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                onSubmit((e.target as HTMLTextAreaElement).value);
+                onSubmit(fallbackTextareaRef.current?.value ?? "");
               }
             }}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100"
           />
+          <button
+            onClick={() => onSubmit(fallbackTextareaRef.current?.value ?? "")}
+            disabled={disabled}
+            className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+          >
+            提交
+          </button>
           <p className="text-xs text-gray-400">Cmd/Ctrl+Enter 提交</p>
         </div>
       );

@@ -147,7 +147,7 @@ export default function App() {
         </main>
 
         {/* 右侧：中断表单 / 小说详情（与中部节点图各占剩余宽度一半） */}
-        <aside className="flex-1 overflow-y-auto border-l bg-white">
+        <aside className="relative flex-1 overflow-y-auto border-l bg-white">
           {interrupt ? (
             <div className="p-4">
               <InterruptHandler
@@ -198,7 +198,8 @@ export default function App() {
                     <div className="px-4 pb-4">
                       <button
                         onClick={() => void start()}
-                        className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                        disabled={running}
+                        className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
                       >
                         开始创作
                       </button>

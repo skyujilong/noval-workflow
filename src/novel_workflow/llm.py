@@ -128,7 +128,7 @@ def get_llm(temperature: float = 0.8, label: str = "llm", max_tokens: int | None
         base_url=os.environ.get(
             "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3"
         ),
-        timeout=900,  # 超时 15 分钟自动失败，避免长文本生成卡住
-        max_retries=2,  # 减少重试次数，避免总耗时过长
+        timeout=900,  # 超时 15 分钟，适应长文本生成避免中途截断
+        max_retries=2,  # 减少重试次数，平衡总等待时长
         callbacks=[_PerfLogHandler(label)],
     )
