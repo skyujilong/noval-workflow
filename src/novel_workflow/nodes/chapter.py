@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END
 from langgraph.types import interrupt
 
+from noval_workflow.config import BATCH_SIZE
 from noval_workflow.context import (
     build_chapter_context,
     build_foundation_context,
@@ -165,14 +166,14 @@ _CONTINUE_SIGNALS = {"", "yes", "y", "是", "继续"}
 
 
 def ask_continue(state: NovelState) -> dict:
-    """Interrupt to ask if the user wants to write the next batch of 5 chapters."""
+    """Interrupt to ask if the user wants to write the next batch of chapters."""
     answer = interrupt(
         {
             "type": InterruptType.ASK_CONTINUE.value,
             "message": (
                 f"已完成 {state.total_chapters_written} 章。\n\n"
                 "---\n"
-                "· 直接回车 / 输入 yes / 是 / 继续 → 继续写下5章\n"
+                f"· 直接回车 / 输入 yes / 是 / 继续 → 继续写下{BATCH_SIZE}章\n"
                 "· 输入 no / 否 → 停止"
             ),
             "total_chapters_written": state.total_chapters_written,
