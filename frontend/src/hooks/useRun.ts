@@ -12,6 +12,9 @@ import {
   extractInterrupt,
   getSubgraphState,
   getThreadState,
+  joinRunStream,
+  listActiveRuns,
+  replayFromCheckpoint,
   runStream,
   type CurrentInterrupt,
   type SubgraphState,
@@ -33,6 +36,8 @@ export interface UseRunResult {
   start: () => Promise<void>;
   /** 从当前 interrupt 恢复 */
   resume: (value: unknown) => Promise<void>;
+  /** 从指定 checkpoint 重跑（同线程 replay） */
+  replay: (checkpointId: string) => Promise<void>;
   /** 清空状态（切换小说时） */
   reset: () => void;
 }
@@ -76,6 +81,26 @@ export function useRun(threadId: string | null): UseRunResult {
         }
       } else {
         setSubgraphState(null);
+        // 无中断 — 检查后台是否有正在运行的 run（页面刷新后恢复 running 状态）
+        const activeRuns = await listActiveRuns(threadId);
+        if (activeRuns.length > 0) {
+          setRunning(true);
+          runningRef.current = true;
+          try {
+            await joinRunStream(threadId, activeRuns[0].run_id, (e) => {
+              if (e.event === "updates") setCurrentNode(e.node);
+              if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
+            });
+          } catch (e) {
+            setError(`等待运行完成失败：${(e as Error).message}`);
+          } finally {
+            runningRef.current = false;
+            setRunning(false);
+          }
+          // run 结束后重新拉取状态（可能已产生新中断）
+          await refresh();
+          return;
+        }
       }
       setError(null);
     } catch (e) {
@@ -144,6 +169,31 @@ export function useRun(threadId: string | null): UseRunResult {
     [threadId, refresh]
   );
 
+  const replay = useCallback(
+    async (checkpointId: string) => {
+      if (!threadId || runningRef.current) return;
+      runningRef.current = true;
+      setRunning(true);
+      setError(null);
+      setInterrupt(null);
+      setSubgraphState(null);
+      try {
+        await replayFromCheckpoint(threadId, checkpointId, (e) => {
+          if (e.event === "updates") setCurrentNode(e.node);
+          if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
+        });
+        await refresh();
+      } catch (e) {
+        setError(`重跑失败：${(e as Error).message}`);
+        await refresh();
+      } finally {
+        runningRef.current = false;
+        setRunning(false);
+      }
+    },
+    [threadId, refresh]
+  );
+
   const reset = useCallback(() => {
     setState(EMPTY_NOVEL_STATE);
     setCurrentNode("");
@@ -152,5 +202,5 @@ export function useRun(threadId: string | null): UseRunResult {
     setError(null);
   }, []);
 
-  return { state, currentNode, interrupt, subgraphState, running, error, refresh, start, resume, reset };
+  return { state, currentNode, interrupt, subgraphState, running, error, refresh, start, resume, replay, reset };
 }

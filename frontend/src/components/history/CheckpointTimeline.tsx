@@ -1,12 +1,12 @@
-// 历史回溯面板：列出 thread 的 checkpoint，点击查看快照，支持从此点分叉。
+// 历史回溯面板：列出 thread 的 checkpoint，点击查看快照，支持从此点重跑。
 
 import { useEffect, useState } from "react";
-import { forkThread, getThreadHistory } from "../../lib/langgraph";
+import { getThreadHistory } from "../../lib/langgraph";
 import { EMPTY_NOVEL_STATE, type NovelState } from "../../lib/types";
 
 interface Props {
   threadId: string | null;
-  onForked: (newThreadId: string) => void;
+  onReplay: (checkpointId: string) => void;
 }
 
 interface CpItem {
@@ -16,7 +16,7 @@ interface CpItem {
   state: NovelState;
 }
 
-export function CheckpointTimeline({ threadId, onForked }: Props) {
+export function CheckpointTimeline({ threadId, onReplay }: Props) {
   const [items, setItems] = useState<CpItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,13 +47,8 @@ export function CheckpointTimeline({ threadId, onForked }: Props) {
       .finally(() => setLoading(false));
   }, [threadId]);
 
-  const fork = async (cp: CpItem) => {
-    try {
-      const t = await forkThread(threadId!, cp.checkpointId);
-      onForked(t.thread_id);
-    } catch (e) {
-      setError(`分叉失败：${(e as Error).message}`);
-    }
+  const replay = (cp: CpItem) => {
+    onReplay(cp.checkpointId);
   };
 
   if (!threadId) return null;
@@ -96,10 +91,10 @@ export function CheckpointTimeline({ threadId, onForked }: Props) {
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-600">快照预览</span>
             <button
-              onClick={() => fork(selected)}
-              className="rounded bg-amber-600 px-2 py-0.5 text-xs text-white hover:bg-amber-700"
+              onClick={() => replay(selected)}
+              className="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-700"
             >
-              从此点分叉
+              从此点重跑
             </button>
           </div>
           <div className="max-h-40 overflow-y-auto rounded bg-white p-2 text-xs text-gray-700">

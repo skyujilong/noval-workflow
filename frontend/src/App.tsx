@@ -16,12 +16,14 @@ type LeftTab = "novels" | "history";
 
 export default function App() {
   const { threads, loading, error, refresh, create } = useThreads();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => localStorage.getItem("selectedThreadId")
+  );
   const [autoStart, setAutoStart] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
   const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
 
-  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, refresh: refreshRun } =
+  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, replay, refresh: refreshRun } =
     useRun(selectedId);
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
@@ -34,6 +36,12 @@ export default function App() {
       setAutoStart(true);
     }
   }, [create]);
+
+  // 持久化 selectedId，页面刷新后恢复
+  useEffect(() => {
+    if (selectedId) localStorage.setItem("selectedThreadId", selectedId);
+    else localStorage.removeItem("selectedThreadId");
+  }, [selectedId]);
 
   // 自动启动：新创建的空 thread 立刻启动，停在 collect_user_inputs
   useEffect(() => {
@@ -60,11 +68,9 @@ export default function App() {
     [resume]
   );
 
-  const handleForked = useCallback((newId: string) => {
-    setSelectedId(newId);
-    setLeftTab("novels");
-    void refresh();
-  }, [refresh]);
+  const handleReplay = useCallback((checkpointId: string) => {
+    void replay(checkpointId);
+  }, [replay]);
 
   return (
     <div className="flex h-full flex-col">
@@ -127,7 +133,7 @@ export default function App() {
               onRefresh={refresh}
             />
           ) : (
-            <CheckpointTimeline threadId={selectedId} onForked={handleForked} />
+            <CheckpointTimeline threadId={selectedId} onReplay={handleReplay} />
           )}
         </aside>
 
