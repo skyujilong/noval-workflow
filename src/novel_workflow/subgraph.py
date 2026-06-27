@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from noval_workflow.interrupt_types import review_type_to_interrupt_type
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
@@ -178,14 +179,22 @@ def human_review(state: ReviewSubState) -> dict:
 
     Type any approval signal (e.g. '无问题', 'approve', 'ok') to pass,
     or type feedback text to send back to the LLM for revision.
+
+    payload 自描述：带权威 type（由 review_type 反查）+ 完整富表单上下文
+    （草稿/AI 自审意见/修改历史/review_type/轮次）。前端按 type 分发并直接
+    渲染这些字段，无需再调用 getSubgraphState 反查嵌套子图 state——后者在
+    多层子图冒泡时会选错 task，是"多子图映射不对"的根因。
     """
     feedback = interrupt({
-        "message": (
-            state.current_draft
-            + "\n\n---\n"
-            + "· 直接回车 → 通过\n"
-            + "· 输入修改意见 → 重新生成"
-        ),
+        "type": review_type_to_interrupt_type(state.review_type).value,
+        "review_type": state.review_type,
+        "current_draft": state.current_draft,
+        "review_feedback": state.review_feedback,
+        "review_history": state.review_history,
+        "llm_review_count": state.llm_review_count,
+        "llm_review_max": state.llm_review_max,
+        # message 仅放操作提示；草稿正文走 current_draft 字段，前端单独渲染，避免重复存储。
+        "message": "· 直接回车 → 通过\n· 输入修改意见 → 重新生成",
     })
 
     # 处理 None/falsy 值，避免 str(None) = "None" 的问题

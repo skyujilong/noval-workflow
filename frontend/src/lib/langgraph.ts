@@ -354,6 +354,8 @@ export interface CurrentInterrupt {
  * 从 thread state 的 tasks 中提取当前待处理的中断。
  * LangGraph 在 interrupt() 处暂停后，getState().tasks[].interrupts 非空。
  * 返回第一个可恢复的中断；无中断返回 null（表示流程已结束或正在运行）。
+ *
+ * payload 自描述（带 type + 业务上下文），前端无需再读嵌套子图 state。
  */
 export function extractInterrupt(state: {
   tasks?: Array<{ name?: string; interrupts?: Array<{ value?: unknown; resumable?: boolean }> }>;
@@ -365,42 +367,6 @@ export function extractInterrupt(state: {
       if (it.resumable !== false) {
         return { payload: it.value, nodeName: t.name ?? "" };
       }
-    }
-  }
-  return null;
-}
-
-/**
- * 取当前中断所在子图的 state（用于 human_review 富表单：展示草稿/AI 自审意见/修改历史）。
- *
- * 实测确认：getState 传 {subgraphs:true} 时，返回的 tasks[].state.values 即子图 state
- * （含 current_draft / review_feedback / review_history / review_type / llm_review_count）。
- * 只在 task 带 interrupts（即处于子图中断）时返回其子图 state，否则返回 null。
- */
-export interface SubgraphState {
-  current_draft?: string;
-  review_feedback?: string;
-  review_history?: Array<{ role: string; content: string }>;
-  review_type?: string;
-  llm_review_count?: number;
-  llm_review_max?: number;
-  approved?: boolean;
-}
-
-export async function getSubgraphState(threadId: string): Promise<SubgraphState | null> {
-  // SDK 类型未声明 subgraphs 选项与 task.state 字段，经 unknown 转型访问
-  const st = (await client.threads.getState(threadId, undefined, {
-    subgraphs: true,
-  } as unknown as undefined)) as unknown as {
-    tasks?: Array<{
-      interrupts?: unknown[];
-      state?: { values?: SubgraphState };
-    }>;
-  };
-  const tasks = st.tasks ?? [];
-  for (const t of tasks) {
-    if (t.interrupts && t.interrupts.length > 0 && t.state?.values) {
-      return t.state.values;
     }
   }
   return null;

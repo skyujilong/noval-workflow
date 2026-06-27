@@ -30,6 +30,7 @@ from langgraph.types import interrupt
 
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
+from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import ARC_CHAPTER_FORMAT
 
@@ -199,7 +200,7 @@ def _arc_entry(entry_prompt: str):
             + "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
         )
 
-        answer = interrupt({"message": message})
+        answer = interrupt({"type": InterruptType.ARC_ENTRY_GATE.value, "message": message})
         # 直接处理 None/falsy 值，避免 str(None) = "None" 的问题
         if not answer:
             execute = False
@@ -224,6 +225,7 @@ def _arc_entry(entry_prompt: str):
 def arc_direction_node(state: ArcEditSubState) -> dict:
     remaining_titles = state.current_batch_titles[state.current_chapter_index:]
     direction_raw = interrupt({
+        "type": InterruptType.ARC_DIRECTION_INPUT.value,
         "message": (
             "【弧线大纲调整】\n\n"
             + (
@@ -269,6 +271,7 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
 
     if not state.ai_arc:
         raw = interrupt({
+            "type": InterruptType.ARC_CONFIRM_ERROR.value,
             "message": (
                 f"AI重写失败（{state.arc_error}），请手动输入新的弧线大纲\n\n"
                 "---\n"
@@ -285,6 +288,7 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
         return result
 
     raw = interrupt({
+        "type": InterruptType.ARC_CONFIRM.value,
         "message": (
             "【AI生成的新弧线大纲】\n"
             + state.ai_arc
@@ -356,6 +360,7 @@ def arc_titles_confirm_node(state: ArcEditSubState) -> dict:
         )
 
     titles_confirm_raw = interrupt({
+        "type": InterruptType.ARC_TITLES_CONFIRM.value,
         "message": (
             titles_display
             + shortage_note

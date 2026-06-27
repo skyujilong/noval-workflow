@@ -1,39 +1,30 @@
 // human_review 富审稿表单。
-// 草稿/AI 自审意见/修改历史来自子图 state（useRun 经 getSubgraphState 获取）。
-// 子图 state 缺失时回退到从 interrupt message 的 "\n\n---\n" 之前解析草稿。
+// 草稿/AI 自审意见/修改历史/review_type 均来自 payload（后端 subgraph.py:human_review 自描述），
+// 前端直接读，不再依赖 getSubgraphState（避免嵌套子图冒泡选错 task）。
 // resume 值："" = 通过，非空文本 = 修改意见（驱动重新生成）。
 
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { MessageOnlyPayload } from "../../lib/interruptTypes";
-import type { SubgraphState } from "../../lib/langgraph";
+import type { HumanReviewPayload } from "../../lib/interruptTypes";
 import { reviewTypeLabel } from "../../lib/types";
 
 interface Props {
-  payload: MessageOnlyPayload;
-  subgraphState: SubgraphState | null;
+  payload: HumanReviewPayload;
   onSubmit: (value: string) => void;
   disabled?: boolean;
 }
 
-/** 从 interrupt message 解析草稿正文（分隔符 \n\n---\n 之前的部分），作为子图 state 缺失时的回退 */
-function parseDraftFromMessage(message: string): string {
-  const idx = message.indexOf("\n\n---\n");
-  return idx >= 0 ? message.slice(0, idx) : message;
-}
-
-export function HumanReviewForm({ payload, subgraphState, onSubmit, disabled }: Props) {
+export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
   const [submitting, setSubmitting] = useState(false);
 
-  // 草稿优先取子图 state 的 current_draft，回退到 message 解析
-  // 用 ?? 而非 ||：空字符串是有效草稿状态（生成失败/清空），不应被当作缺失而回退
-  const draft = subgraphState?.current_draft ?? parseDraftFromMessage(payload.message ?? "");
-  const aiFeedback = subgraphState?.review_feedback ?? "";
-  const history = subgraphState?.review_history ?? [];
-  const reviewType = subgraphState?.review_type ?? "foundation";
-  const llmReviewCount = subgraphState?.llm_review_count ?? 0;
+  // 全部上下文直接取自 payload（用 ?? 兜底缺失，空字符串是有效草稿状态）
+  const draft = payload.current_draft ?? "";
+  const aiFeedback = payload.review_feedback ?? "";
+  const history = payload.review_history ?? [];
+  const reviewType = payload.review_type ?? "foundation";
+  const llmReviewCount = payload.llm_review_count ?? 0;
   // 每轮 2 条历史（human + ai）；轮次 = 已完成的 generate 次数
   const round = Math.floor((history.length || 0) / 2);
 

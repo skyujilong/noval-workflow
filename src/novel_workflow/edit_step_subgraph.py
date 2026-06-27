@@ -23,6 +23,7 @@ from typing import Callable
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.state import ReviewSubState, reset_review_fields
 from noval_workflow.subgraph import (
     generate,
@@ -77,6 +78,8 @@ def make_edit_step_subgraph(
     entry_prompt: str,
     prepare_fn: Callable,
     save_fn: Callable,
+    entry_gate_type: InterruptType,
+    direction_type: InterruptType,
     enable_llm_review: bool = True,
     llm_review_max: int = 3,
     ask_direction: bool = False,
@@ -89,6 +92,9 @@ def make_edit_step_subgraph(
                            task_prompt, review_type (and any other overrides).
         save_fn:           Receives state; writes current_draft back to the
                            appropriate history field; returns a dict.
+        entry_gate_type:   step_entry 中断的权威 type（复用节点由调用方传入身份，
+                           对应 InterruptType.*_ENTRY_GATE）。
+        direction_type:    step_direction 中断的权威 type（对应 *_DIRECTION_INPUT）。
         enable_llm_review: Whether to run LLM self-review after generation.
         llm_review_max:    Max LLM review rounds before forcing human review.
         ask_direction:     If True, interrupt after entry to collect a direction
@@ -98,7 +104,7 @@ def make_edit_step_subgraph(
     # ── node closures ──────────────────────────────────────────────────────────
 
     def step_entry(state: EditStepSubState) -> dict:
-        answer = interrupt({"message": entry_prompt})
+        answer = interrupt({"type": entry_gate_type.value, "message": entry_prompt})
         # 直接处理 None/falsy 值，避免 str(None) = "None" 的问题
         if not answer:
             execute = False
@@ -107,7 +113,10 @@ def make_edit_step_subgraph(
         return {"step_execute_gate": execute, "step_direction_input": ""}
 
     def step_direction(state: EditStepSubState) -> dict:
-        direction = interrupt({"message": "请输入调整方向（直接回车使用默认提示词）："})
+        direction = interrupt({
+            "type": direction_type.value,
+            "message": "请输入调整方向（直接回车使用默认提示词）：",
+        })
         # 处理 None，避免 str(None) = "None"
         return {"step_direction_input": str(direction or "").strip()}
 

@@ -10,24 +10,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   extractInterrupt,
-  getSubgraphState,
   getThreadState,
   joinRunStream,
   listActiveRuns,
   replayFromCheckpoint,
   runStream,
   type CurrentInterrupt,
-  type SubgraphState,
 } from "../lib/langgraph";
-import { detectInterruptKind } from "../lib/interruptTypes";
 import { EMPTY_NOVEL_STATE, type NovelState } from "../lib/types";
 
 export interface UseRunResult {
   state: NovelState;
   currentNode: string;
   interrupt: CurrentInterrupt | null;
-  /** 中断所在子图的 state（human_review 时含草稿/AI意见/历史）；非子图中断为 null */
-  subgraphState: SubgraphState | null;
   running: boolean;
   error: string | null;
   /** LLM 流式输出的增量内容（打字机效果） */
@@ -50,7 +45,6 @@ export function useRun(threadId: string | null): UseRunResult {
   const [state, setState] = useState<NovelState>(EMPTY_NOVEL_STATE);
   const [currentNode, setCurrentNode] = useState("");
   const [interrupt, setInterrupt] = useState<CurrentInterrupt | null>(null);
-  const [subgraphState, setSubgraphState] = useState<SubgraphState | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
@@ -105,23 +99,8 @@ export function useRun(threadId: string | null): UseRunResult {
       if (it) {
         const next = (st as { next?: string[] }).next ?? [];
         if (next.length) setCurrentNode(next[0]);
-        // 仅 human_review 富表单消费子图 state；其他中断（user_inputs/ask_continue 等）
-        // 非子图中断，调用 getSubgraphState 必然返回 null，故跳过以免多余网络往返。
-        if (detectInterruptKind(it.payload) === "human_review") {
-          try {
-            const sub = await getSubgraphState(threadId);
-            setSubgraphState(sub);
-          } catch (e) {
-            // 子图 state 获取失败不阻断主流程，富表单回退到 message 解析；
-            // 但须保留错误上下文以便排查，不可静默吞掉（CLAUDE.md：关键错误尽早暴露）。
-            console.warn("获取子图 state 失败，回退到 message 解析", e);
-            setSubgraphState(null);
-          }
-        } else {
-          setSubgraphState(null);
-        }
+        // payload 自描述（带 type + 富表单上下文），无需再调 getSubgraphState 取子图 state。
       } else {
-        setSubgraphState(null);
         // 无中断 — 检查后台是否有正在运行的 run（页面刷新后恢复 running 状态）
         const activeRuns = await listActiveRuns(threadId);
         if (activeRuns.length > 0) {
@@ -151,7 +130,6 @@ export function useRun(threadId: string | null): UseRunResult {
     setState(EMPTY_NOVEL_STATE);
     setCurrentNode("");
     setInterrupt(null);
-    setSubgraphState(null);
     setError(null);
     streamingStateRef.current = { node: "", content: "" };
     setStreamingContent("");
@@ -190,7 +168,7 @@ export function useRun(threadId: string | null): UseRunResult {
       streamingStateRef.current = { node: "", content: "" };
       setStreamingContent("");
       setStreamingNode("");
-      // 不提前清空 interrupt/subgraphState：重复提交已由 runningRef + disabled={running} 防止，
+      // 不提前清空 interrupt：重复提交已由 runningRef + disabled={running} 防止，
       // 提前清空会导致 resume 失败时（catch 中 refresh() 还原前）UI 闪现「无中断」。
       // 运行期间保留旧中断（表单 disabled），成功后由 refresh() 更新或清空，失败时 refresh() 还原。
       try {
@@ -215,7 +193,6 @@ export function useRun(threadId: string | null): UseRunResult {
       setRunning(true);
       setError(null);
       setInterrupt(null);
-      setSubgraphState(null);
       // 重置流式状态（包括 ref）
       streamingStateRef.current = { node: "", content: "" };
       setStreamingContent("");
@@ -238,7 +215,6 @@ export function useRun(threadId: string | null): UseRunResult {
     setState(EMPTY_NOVEL_STATE);
     setCurrentNode("");
     setInterrupt(null);
-    setSubgraphState(null);
     setError(null);
     streamingStateRef.current = { node: "", content: "" };
     setStreamingContent("");
@@ -249,7 +225,6 @@ export function useRun(threadId: string | null): UseRunResult {
     state,
     currentNode,
     interrupt,
-    subgraphState,
     running,
     error,
     streamingContent,

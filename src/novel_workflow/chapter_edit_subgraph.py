@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
+from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
 from noval_workflow.prompts import (
     character_relations_prompt,
@@ -153,6 +154,8 @@ _STATUS_STEP = make_edit_step_subgraph(
     entry_prompt="是否更新人物动态状态？" + _ENTRY_HINT,
     prepare_fn=_prepare_status,
     save_fn=_save_status,
+    entry_gate_type=InterruptType.STATUS_ENTRY_GATE,
+    direction_type=InterruptType.STATUS_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
 )
@@ -161,6 +164,8 @@ _RELATIONS_STEP = make_edit_step_subgraph(
     entry_prompt="是否更新人物关系/势力格局？" + _ENTRY_HINT,
     prepare_fn=_prepare_relations,
     save_fn=_save_relations,
+    entry_gate_type=InterruptType.RELATIONS_ENTRY_GATE,
+    direction_type=InterruptType.RELATIONS_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
 )
@@ -169,6 +174,8 @@ _FORESHADOW_STEP = make_edit_step_subgraph(
     entry_prompt="是否更新伏笔台账？" + _ENTRY_HINT,
     prepare_fn=_prepare_foreshadowing,
     save_fn=_save_foreshadowing,
+    entry_gate_type=InterruptType.FORESHADOWING_ENTRY_GATE,
+    direction_type=InterruptType.FORESHADOWING_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
 )
@@ -177,6 +184,8 @@ _PHASE_STEP = make_edit_step_subgraph(
     entry_prompt="是否更新阶段固化数据？" + _ENTRY_HINT,
     prepare_fn=_prepare_phase,
     save_fn=_save_phase,
+    entry_gate_type=InterruptType.PHASE_SUMMARY_ENTRY_GATE,
+    direction_type=InterruptType.PHASE_SUMMARY_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
 )

@@ -14,6 +14,7 @@ from noval_workflow.context import (
     chapter_filename,
     get_output_dir,
 )
+from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
 from noval_workflow.nodes.chapter_edit import _clean_title
 from noval_workflow.prompts import SUMMARY_PROMPT, chapter_prompt, titles_prompt
@@ -167,6 +168,7 @@ def ask_continue(state: NovelState) -> dict:
     """Interrupt to ask if the user wants to write the next batch of 5 chapters."""
     answer = interrupt(
         {
+            "type": InterruptType.ASK_CONTINUE.value,
             "message": (
                 f"已完成 {state.total_chapters_written} 章。\n\n"
                 "---\n"

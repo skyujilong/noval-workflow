@@ -23,7 +23,7 @@ export default function App() {
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
   const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
 
-  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
+  const { state, currentNode, interrupt, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
     useRun(selectedId);
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
@@ -152,7 +152,6 @@ export default function App() {
             <div className="p-4">
               <InterruptHandler
                 payload={interrupt.payload}
-                subgraphState={subgraphState}
                 onSubmit={handleSubmit}
                 disabled={running}
               />

@@ -1,0 +1,190 @@
+// 各 interrupt() payload 类型定义 + 权威 type 分发。
+// payload 结构来自源码核实（subgraph.py / arc_edit_subgraph.py / edit_step_subgraph.py /
+// nodes/inputs.py / nodes/chapter.py）。后端 interrupt() 必带 type 字段（见后端
+// InterruptType 枚举），前端按 type 显式查表分发，不再依赖 message 文案匹配。
+
+// ── InterruptType 枚举（镜像 src/novel_workflow/interrupt_types.py）──────────────
+// 作为前后端 API 契约：每个 interrupt 点的"唯一标识"。新增 interrupt 时需同步两边。
+export const InterruptType = {
+  // 用户输入阶段
+  USER_INPUTS: "user_inputs",
+  USER_INPUTS_ERROR: "user_inputs_error",
+  // 弧线大纲步骤（arc_edit_subgraph）
+  ARC_ENTRY_GATE: "arc_entry_gate",
+  ARC_DIRECTION_INPUT: "arc_direction_input",
+  ARC_CONFIRM: "arc_confirm",
+  ARC_CONFIRM_ERROR: "arc_confirm_error",
+  ARC_TITLES_CONFIRM: "arc_titles_confirm",
+  // 人物动态状态快照（edit_step_subgraph 实例：status）
+  STATUS_ENTRY_GATE: "status_entry_gate",
+  STATUS_DIRECTION_INPUT: "status_direction_input",
+  STATUS_REVIEW: "status_review",
+  // 人物关系/势力格局快照（relations）
+  RELATIONS_ENTRY_GATE: "relations_entry_gate",
+  RELATIONS_DIRECTION_INPUT: "relations_direction_input",
+  RELATIONS_REVIEW: "relations_review",
+  // 伏笔台账快照（foreshadowing）
+  FORESHADOWING_ENTRY_GATE: "foreshadowing_entry_gate",
+  FORESHADOWING_DIRECTION_INPUT: "foreshadowing_direction_input",
+  FORESHADOWING_REVIEW: "foreshadowing_review",
+  // 阶段固化数据快照（phase_summary）
+  PHASE_SUMMARY_ENTRY_GATE: "phase_summary_entry_gate",
+  PHASE_SUMMARY_DIRECTION_INPUT: "phase_summary_direction_input",
+  PHASE_SUMMARY_REVIEW: "phase_summary_review",
+  // 通用审核（基础设定类、标题、弧线大纲等共用 review_generic；章节正文 review_chapter）
+  REVIEW_GENERIC: "review_generic",
+  REVIEW_CHAPTER: "review_chapter",
+  // 其他
+  ASK_CONTINUE: "ask_continue",
+} as const;
+
+export type InterruptTypeValue = (typeof InterruptType)[keyof typeof InterruptType];
+
+// ── 各中断点的 payload 形态 ────────────────────────────────────────────────────
+// 每个 payload 都带 type 字段（权威契约），其余为该表单所需的结构化数据。
+
+export interface UserInputsPayload {
+  type: InterruptTypeValue;
+  message: string;
+  fields: Record<string, string>; // 字段名 → 说明
+  current_values: Record<string, string>;
+}
+export interface UserInputsErrorPayload {
+  type: InterruptTypeValue;
+  error: string;
+  required_fields: string[];
+  received: string;
+}
+export interface MessageOnlyPayload {
+  type: InterruptTypeValue;
+  message: string;
+}
+export interface AskContinuePayload {
+  type: InterruptTypeValue;
+  message: string;
+  total_chapters_written: number;
+}
+export interface ArcDirectionPayload {
+  type: InterruptTypeValue;
+  message: string;
+  current_arc_outline: string;
+  remaining_titles: string[];
+}
+export interface ArcConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  ai_generated_arc: string;
+}
+export interface ArcConfirmErrorPayload {
+  type: InterruptTypeValue;
+  message: string;
+  error: string;
+}
+export interface ArcTitlesConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  ai_generated_titles: string[];
+  shortage: number;
+}
+
+/**
+ * human_review 富审稿表单 payload。
+ * 后端 subgraph.py:human_review 把草稿/AI 自审意见/修改历史/review_type/轮次一并塞入，
+ * 前端直接读，无需再调 getSubgraphState（后者在嵌套子图冒泡时会选错 task）。
+ */
+export interface HumanReviewPayload {
+  type: InterruptTypeValue;
+  message: string;
+  review_type: string;
+  current_draft: string;
+  review_feedback: string;
+  review_history: Array<{ role: "human" | "ai"; content: string }>;
+  llm_review_count: number;
+  llm_review_max: number;
+}
+
+// ── type → 表单种类 分发 ───────────────────────────────────────────────────────
+
+export type FormKind =
+  | "user_inputs"
+  | "human_review"
+  | "ask_continue"
+  | "entry_gate"
+  | "direction"
+  | "arc_direction"
+  | "arc_confirm"
+  | "arc_titles_confirm"
+  | "unknown";
+
+/**
+ * 每个 InterruptType 显式映射到表单种类。多个 type 可指向同一表单
+ * （如所有 *_review → human_review，所有 *_entry_gate → entry_gate）。
+ * 新增 interrupt 类型时必须在此登记，否则落到 unknown 显式暴露。
+ */
+const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
+  [InterruptType.USER_INPUTS]: "user_inputs",
+  [InterruptType.USER_INPUTS_ERROR]: "user_inputs",
+
+  [InterruptType.ARC_ENTRY_GATE]: "entry_gate",
+  [InterruptType.STATUS_ENTRY_GATE]: "entry_gate",
+  [InterruptType.RELATIONS_ENTRY_GATE]: "entry_gate",
+  [InterruptType.FORESHADOWING_ENTRY_GATE]: "entry_gate",
+  [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
+
+  // 弧线方向单独识别（标题为"弧线大纲调整方向"），其余 step 方向归入 direction
+  [InterruptType.ARC_DIRECTION_INPUT]: "arc_direction",
+  [InterruptType.STATUS_DIRECTION_INPUT]: "direction",
+  [InterruptType.RELATIONS_DIRECTION_INPUT]: "direction",
+  [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "direction",
+  [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "direction",
+
+  [InterruptType.STATUS_REVIEW]: "human_review",
+  [InterruptType.RELATIONS_REVIEW]: "human_review",
+  [InterruptType.FORESHADOWING_REVIEW]: "human_review",
+  [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
+  [InterruptType.REVIEW_GENERIC]: "human_review",
+  [InterruptType.REVIEW_CHAPTER]: "human_review",
+
+  [InterruptType.ARC_CONFIRM]: "arc_confirm",
+  [InterruptType.ARC_CONFIRM_ERROR]: "arc_confirm",
+  [InterruptType.ARC_TITLES_CONFIRM]: "arc_titles_confirm",
+
+  [InterruptType.ASK_CONTINUE]: "ask_continue",
+};
+
+/**
+ * 根据 payload.type 查表得到表单种类。
+ * type 缺失或未登记 → unknown（视为后端契约故障，由 InterruptHandler 显式暴露，
+ * 不做 message 文案兜底，避免掩盖真实问题）。
+ */
+export function formKindFromType(type: unknown): FormKind {
+  if (typeof type !== "string") return "unknown";
+  return (TYPE_TO_FORM as Record<string, FormKind>)[type] ?? "unknown";
+}
+
+/** 从 payload 中安全提取 type 并查表分发（InterruptHandler 入口） */
+export function formKindOfPayload(payload: unknown): FormKind {
+  if (!payload || typeof payload !== "object") return "unknown";
+  return formKindFromType((payload as { type?: unknown }).type);
+}
+
+// ── resume 值构造辅助 ─────────────────────────────────────────────────────────
+
+/** resume 时表示「执行」的值（后端 step_entry/arc_entry 用 _SKIP_WORDS 判定跳过，"yes" 非跳过词即执行） */
+export const EXECUTE_VALUE = "yes";
+/** resume 时表示「跳过」的值（空串属于后端 _SKIP_WORDS） */
+export const SKIP_VALUE = "";
+
+/** arc_confirm / arc_titles_confirm 的「手动替换」前缀语法 */
+export const MANUAL_REPLACE_PREFIX = "=";
+
+/** 构造手动替换的 resume 值：=开头 + 内容 */
+export function buildManualReplaceValue(content: string): string {
+  return MANUAL_REPLACE_PREFIX + content.trim();
+}
+
+/** 继续信号集（ask_continue 的 _CONTINUE_SIGNALS） */
+const CONTINUE_VALUES = new Set(["", "yes", "y", "是", "继续"]);
+export function isContinueValue(v: string): boolean {
+  return CONTINUE_VALUES.has(v.trim().toLowerCase());
+}

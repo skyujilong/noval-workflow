@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from langgraph.types import interrupt
 
+from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.state import NovelState
 
 
@@ -23,6 +24,7 @@ def collect_user_inputs(state: NovelState) -> dict:
 
     answers = interrupt(
         {
+            "type": InterruptType.USER_INPUTS.value,
             "message": "请提供以下小说创作参数：",
             "fields": {
                 "novel_name": "小说名称（用于输出目录命名，如：星际迷途、长安风云）",
@@ -57,6 +59,7 @@ def collect_user_inputs(state: NovelState) -> dict:
 
     # Non-dict or empty dict: re-interrupt with error guidance
     return interrupt({
+        "type": InterruptType.USER_INPUTS_ERROR.value,
         "error": "请提供一个包含所有必填字段的 dict 作为回答。",
         "required_fields": list(VALID_FIELDS),
         "received": str(answers),

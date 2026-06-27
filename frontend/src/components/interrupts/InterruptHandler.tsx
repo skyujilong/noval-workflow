@@ -1,9 +1,8 @@
-// Interrupt 分发器：根据 payload 结构判别中断类型，渲染对应表单。
-// 表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
+// Interrupt 分发器：按 payload.type 权威字段查表分发到对应表单（见 interruptTypes.ts
+// 的 TYPE_TO_FORM 契约表）。表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
 import { useRef } from "react";
-import { detectInterruptKind } from "../../lib/interruptTypes";
-import type { SubgraphState } from "../../lib/langgraph";
+import { formKindOfPayload } from "../../lib/interruptTypes";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
@@ -14,13 +13,12 @@ import { UserInputsForm } from "./UserInputsForm";
 
 interface Props {
   payload: unknown;
-  subgraphState: SubgraphState | null;
   onSubmit: (value: unknown) => void;
   disabled?: boolean;
 }
 
-export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }: Props) {
-  const kind = detectInterruptKind(payload);
+export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
+  const kind = formKindOfPayload(payload);
   // fallback 场景的 textarea 引用，避免脆弱的 DOM 遍历
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -38,7 +36,6 @@ export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }:
       return (
         <HumanReviewForm
           payload={payload as Parameters<typeof HumanReviewForm>[0]["payload"]}
-          subgraphState={subgraphState}
           onSubmit={onSubmit}
           disabled={disabled}
         />
@@ -95,6 +92,9 @@ export function InterruptHandler({ payload, subgraphState, onSubmit, disabled }:
       return (
         <div className="space-y-3">
           <h3 className="text-lg font-semibold text-gray-800">未识别的中断</h3>
+          <p className="text-xs text-amber-600">
+            payload 缺少 type 字段或 type 未在 TYPE_TO_FORM 登记（后端契约故障，显式暴露）。
+          </p>
           <pre className="overflow-x-auto rounded bg-gray-100 p-3 text-xs text-gray-700">
             {JSON.stringify(payload, null, 2)}
           </pre>
