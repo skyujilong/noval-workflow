@@ -15,8 +15,17 @@ interface Props {
 
 export function DirectionForm({ payload, onSubmit, disabled, title }: Props) {
   const [direction, setDirection] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const arc = (payload as ArcDirectionPayload).current_arc_outline ?? "";
   const remaining = (payload as ArcDirectionPayload).remaining_titles ?? [];
+
+  const handleSubmit = (value: string) => {
+    setSubmitting(true);
+    onSubmit(value);
+  };
+
+  // 本地 submitting 优先于上层 disabled，确保点击后立即禁用
+  const isDisabled = disabled || submitting;
 
   return (
     <div className="space-y-4">
@@ -47,25 +56,25 @@ export function DirectionForm({ payload, onSubmit, disabled, title }: Props) {
       <textarea
         value={direction}
         onChange={(e) => setDirection(e.target.value)}
-        disabled={disabled}
+        disabled={isDisabled}
         placeholder="输入调整方向（直接回车/留空 → 使用默认 / 取消）"
         rows={4}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+        className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
       />
       <div className="flex gap-2">
         <button
-          onClick={() => onSubmit("")}
-          disabled={disabled}
-          className="rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+          onClick={() => handleSubmit("")}
+          disabled={isDisabled}
+          className="rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          用默认 / 取消
+          {submitting ? "⏳" : "用默认 / 取消"}
         </button>
         <button
-          onClick={() => onSubmit(direction.trim())}
-          disabled={disabled || !direction.trim()}
-          className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+          onClick={() => handleSubmit(direction.trim())}
+          disabled={isDisabled || !direction.trim()}
+          className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
-          提交调整方向
+          {submitting ? "⏳ 提交中..." : "提交调整方向"}
         </button>
       </div>
     </div>

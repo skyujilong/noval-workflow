@@ -27,12 +27,17 @@ export function ArcConfirmForm({ payload, onSubmit, disabled }: Props) {
   const [mode, setMode] = useState<Mode>(isError ? "manual" : "accept");
   const [regenText, setRegenText] = useState("");
   const [manualText, setManualText] = useState(aiArc);
+  const [submitting, setSubmitting] = useState(false);
 
-  const submit = () => {
+  const handleSubmit = () => {
+    setSubmitting(true);
     if (mode === "accept") onSubmit("");
     else if (mode === "regen") onSubmit(regenText.trim());
     else onSubmit(buildManualReplaceValue(manualText));
   };
+
+  // 本地 submitting 优先于上层 disabled，确保点击后立即禁用所有控件
+  const isDisabled = disabled || submitting;
 
   return (
     <div className="space-y-4">
@@ -55,39 +60,43 @@ export function ArcConfirmForm({ payload, onSubmit, disabled }: Props) {
         </div>
       )}
 
+      {/* 模式选择 - 分层设计：选择器使用 border 样式，与底部提交按钮区分 */}
       <div className="flex gap-2">
         <button
+          type="button"
           onClick={() => setMode("accept")}
-          disabled={disabled || isError}
+          disabled={isDisabled || isError}
           className={
-            "flex-1 rounded px-3 py-2 text-sm font-medium " +
+            "flex-1 rounded border px-3 py-2 text-sm font-medium transition-colors " +
             (mode === "accept" && !isError
-              ? "bg-green-600 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+              ? "border-green-600 bg-green-50 text-green-700"
+              : "border-gray-200 bg-white text-gray-400 hover:bg-gray-50 hover:text-gray-600")
           }
         >
           ✓ 接受
         </button>
         <button
+          type="button"
           onClick={() => setMode("regen")}
-          disabled={disabled}
+          disabled={isDisabled}
           className={
-            "flex-1 rounded px-3 py-2 text-sm font-medium " +
+            "flex-1 rounded border px-3 py-2 text-sm font-medium transition-colors " +
             (mode === "regen"
-              ? "bg-blue-600 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+              ? "border-blue-600 bg-blue-50 text-blue-700"
+              : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50")
           }
         >
           🔄 按新方向重生成
         </button>
         <button
+          type="button"
           onClick={() => setMode("manual")}
-          disabled={disabled}
+          disabled={isDisabled}
           className={
-            "flex-1 rounded px-3 py-2 text-sm font-medium " +
+            "flex-1 rounded border px-3 py-2 text-sm font-medium transition-colors " +
             (mode === "manual"
-              ? "bg-amber-600 text-white"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+              ? "border-amber-600 bg-amber-50 text-amber-700"
+              : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50")
           }
         >
           ✏️ 手动替换
@@ -98,32 +107,34 @@ export function ArcConfirmForm({ payload, onSubmit, disabled }: Props) {
         <textarea
           value={regenText}
           onChange={(e) => setRegenText(e.target.value)}
-          disabled={disabled}
+          disabled={isDisabled}
           placeholder="输入新的调整方向，AI 会据此重新生成…"
           rows={3}
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
       )}
       {mode === "manual" && (
         <textarea
           value={manualText}
           onChange={(e) => setManualText(e.target.value)}
-          disabled={disabled}
+          disabled={isDisabled}
           rows={8}
-          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
       )}
 
+      {/* 提交按钮 - 单独一行，视觉突出 */}
       <button
-        onClick={submit}
+        type="button"
+        onClick={handleSubmit}
         disabled={
-          disabled ||
+          isDisabled ||
           (mode === "regen" && !regenText.trim()) ||
           (mode === "manual" && !manualText.trim())
         }
-        className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+        className="w-full rounded bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
       >
-        确认提交
+        {submitting ? "⏳ 提交中..." : "确认提交"}
       </button>
     </div>
   );

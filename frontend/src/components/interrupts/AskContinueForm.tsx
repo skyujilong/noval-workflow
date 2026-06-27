@@ -1,6 +1,7 @@
 // ask_continue 表单：是否继续写下一批 5 章。
 // resume 值："" / "yes" / "继续" = 继续；"no" = 停止。
 
+import { useState } from "react";
 import type { AskContinuePayload } from "../../lib/interruptTypes";
 
 interface Props {
@@ -10,6 +11,16 @@ interface Props {
 }
 
 export function AskContinueForm({ payload, onSubmit, disabled }: Props) {
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = (value: string) => {
+    setSubmitting(true);
+    onSubmit(value);
+  };
+
+  // 本地 submitting 优先于上层 disabled，确保点击后立即禁用
+  const isDisabled = disabled || submitting;
+
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-800">是否继续创作？</h3>
@@ -18,18 +29,18 @@ export function AskContinueForm({ payload, onSubmit, disabled }: Props) {
       </div>
       <div className="flex gap-2">
         <button
-          onClick={() => onSubmit("no")}
-          disabled={disabled}
-          className="flex-1 rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+          onClick={() => handleSubmit("no")}
+          disabled={isDisabled}
+          className="flex-1 rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          停止
+          {submitting ? "⏳" : "停止"}
         </button>
         <button
-          onClick={() => onSubmit("")}
-          disabled={disabled}
-          className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+          onClick={() => handleSubmit("")}
+          disabled={isDisabled}
+          className="flex-1 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
         >
-          继续写下 5 章
+          {submitting ? "⏳ 提交中..." : "继续写下 5 章"}
         </button>
       </div>
     </div>

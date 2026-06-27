@@ -28,12 +28,17 @@ export function UserInputsForm({ payload, onSubmit, disabled }: Props) {
     for (const k of fieldNames) init[k] = payload.current_values?.[k] ?? "";
     return init;
   });
+  const [submitting, setSubmitting] = useState(false);
 
-  const submit = () => {
+  const handleSubmit = () => {
+    setSubmitting(true);
     const result: Record<string, string> = {};
     for (const k of fieldNames) result[k] = values[k]?.trim() ?? "";
     onSubmit(result);
   };
+
+  // 本地 submitting 优先于上层 disabled，确保点击后立即禁用所有控件
+  const isDisabled = disabled || submitting;
 
   return (
     <div className="space-y-4">
@@ -52,18 +57,19 @@ export function UserInputsForm({ payload, onSubmit, disabled }: Props) {
               type="text"
               value={values[k] ?? ""}
               onChange={(e) => setValues({ ...values, [k]: e.target.value })}
-              disabled={disabled}
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+              disabled={isDisabled}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
           </div>
         ))}
       </div>
       <button
-        onClick={submit}
-        disabled={disabled || fieldNames.some((k) => !values[k]?.trim())}
-        className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
+        type="button"
+        onClick={handleSubmit}
+        disabled={isDisabled || fieldNames.some((k) => !values[k]?.trim())}
+        className="w-full rounded bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
       >
-        提交并开始创作
+        {submitting ? "⏳ 提交中..." : "提交并开始创作"}
       </button>
     </div>
   );
