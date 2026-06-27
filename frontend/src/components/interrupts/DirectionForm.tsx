@@ -4,20 +4,22 @@
 
 import { useState } from "react";
 import type { ArcDirectionPayload, MessageOnlyPayload } from "../../lib/interruptTypes";
+import { directionTitleOf } from "../../lib/interruptTypes";
 import ReactMarkdown from "react-markdown";
 
 interface Props {
   payload: MessageOnlyPayload | ArcDirectionPayload;
   onSubmit: (value: string) => void;
   disabled?: boolean;
-  title?: string;
 }
 
-export function DirectionForm({ payload, onSubmit, disabled, title }: Props) {
+export function DirectionForm({ payload, onSubmit, disabled }: Props) {
   const [direction, setDirection] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const arc = (payload as ArcDirectionPayload).current_arc_outline ?? "";
   const remaining = (payload as ArcDirectionPayload).remaining_titles ?? [];
+  // 标题由 payload.type 派生（type 自描述契约），无需外部传入
+  const title = directionTitleOf((payload as { type?: unknown }).type);
 
   const handleSubmit = (value: string) => {
     setSubmitting(true);
@@ -30,7 +32,7 @@ export function DirectionForm({ payload, onSubmit, disabled, title }: Props) {
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold text-gray-800">
-        {title ?? "调整方向"}
+        {title}
       </h3>
 
       {arc && (

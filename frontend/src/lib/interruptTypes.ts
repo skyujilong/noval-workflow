@@ -168,6 +168,23 @@ export function formKindOfPayload(payload: unknown): FormKind {
   return formKindFromType((payload as { type?: unknown }).type);
 }
 
+/**
+ * 各 direction_input 类型 → DirectionForm 标题（由 payload.type 派生，贯彻 type 自描述）。
+ * 未登记的回退到通用「调整方向」。新增 *_DIRECTION_INPUT 时在此登记即可，无需改组件。
+ */
+const DIRECTION_TITLE: Record<string, string> = {
+  [InterruptType.ARC_DIRECTION_INPUT]: "弧线大纲调整方向",
+  [InterruptType.STATUS_DIRECTION_INPUT]: "人物动态状态调整方向",
+  [InterruptType.RELATIONS_DIRECTION_INPUT]: "人物关系调整方向",
+  [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "伏笔台账调整方向",
+  [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "阶段固化数据调整方向",
+};
+
+/** 按 direction payload.type 查标题，未知 type 回退「调整方向」 */
+export function directionTitleOf(type: unknown): string {
+  return (typeof type === "string" && DIRECTION_TITLE[type]) || "调整方向";
+}
+
 // ── resume 值构造辅助 ─────────────────────────────────────────────────────────
 
 /** resume 时表示「执行」的值（后端 step_entry/arc_entry 用 _SKIP_WORDS 判定跳过，"yes" 非跳过词即执行） */

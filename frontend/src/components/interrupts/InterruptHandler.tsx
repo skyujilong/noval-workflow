@@ -66,7 +66,6 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
           payload={payload as Parameters<typeof DirectionForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
-          title={kind === "arc_direction" ? "弧线大纲调整方向" : "调整方向"}
         />
       );
 
