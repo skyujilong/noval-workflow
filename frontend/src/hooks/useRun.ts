@@ -30,6 +30,10 @@ export interface UseRunResult {
   subgraphState: SubgraphState | null;
   running: boolean;
   error: string | null;
+  /** LLM 流式输出的增量内容（打字机效果） */
+  streamingContent: string;
+  /** 当前正在输出内容的节点名 */
+  streamingNode: string;
   /** 拉取当前 thread state 并提取 interrupt */
   refresh: () => Promise<void>;
   /** 启动一次新 run（新 thread 会立刻在 collect_user_inputs 中断） */
@@ -49,8 +53,45 @@ export function useRun(threadId: string | null): UseRunResult {
   const [subgraphState, setSubgraphState] = useState<SubgraphState | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [streamingContent, setStreamingContent] = useState("");
+  const [streamingNode, setStreamingNode] = useState("");
   // 防止并发 run
   const runningRef = useRef(false);
+  // 用 ref 存储流式状态的最新值，避免闭包捕获过时状态（解决 P0 stale closure）
+  const streamingStateRef = useRef({ node: "", content: "" });
+
+  /**
+   * 共享的流式事件处理器（解决 P2 代码重复）
+   * 所有流式入口（start/resume/replay/join）都使用这个统一的处理器
+   * 使用 ref 读取最新值，避免闭包捕获问题
+   */
+  const handleStreamEvent = useCallback((e: StreamEvent) => {
+    if (e.event === "updates") {
+      setCurrentNode(e.node);
+      // 节点切换时清空流式内容
+      if (e.node && e.node !== streamingStateRef.current.node) {
+        streamingStateRef.current.node = e.node;
+        streamingStateRef.current.content = "";
+        setStreamingNode(e.node);
+        setStreamingContent("");
+      }
+    }
+    if (e.event === "message_chunk") {
+      // 如果节点变了，先清空再追加
+      if (e.node && e.node !== streamingStateRef.current.node) {
+        streamingStateRef.current.node = e.node;
+        streamingStateRef.current.content = e.data.content;
+        setStreamingNode(e.node);
+        setStreamingContent(e.data.content);
+      } else {
+        streamingStateRef.current.content += e.data.content;
+        setStreamingContent(streamingStateRef.current.content);
+      }
+    }
+    if (e.event === "error") {
+      setError(`运行错误：${JSON.stringify(e.data)}`);
+    }
+  }, []); // 无外部依赖 — 使用 ref 读取最新值，彻底解决 stale closure
 
   const refresh = useCallback(async () => {
     if (!threadId) return;
@@ -87,10 +128,7 @@ export function useRun(threadId: string | null): UseRunResult {
           setRunning(true);
           runningRef.current = true;
           try {
-            await joinRunStream(threadId, activeRuns[0].run_id, (e) => {
-              if (e.event === "updates") setCurrentNode(e.node);
-              if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
-            });
+            await joinRunStream(threadId, activeRuns[0].run_id, handleStreamEvent);
           } catch (e) {
             setError(`等待运行完成失败：${(e as Error).message}`);
           } finally {
@@ -115,6 +153,9 @@ export function useRun(threadId: string | null): UseRunResult {
     setInterrupt(null);
     setSubgraphState(null);
     setError(null);
+    streamingStateRef.current = { node: "", content: "" };
+    setStreamingContent("");
+    setStreamingNode("");
     if (threadId) void refresh();
   }, [threadId, refresh]);
 
@@ -123,16 +164,13 @@ export function useRun(threadId: string | null): UseRunResult {
     runningRef.current = true;
     setRunning(true);
     setError(null);
+    // 重置流式状态（包括 ref）
+    streamingStateRef.current = { node: "", content: "" };
+    setStreamingContent("");
+    setStreamingNode("");
     try {
       // 新 run 必须传非 null 的 input（{}），否则平台报 EmptyInputError
-      await runStream(
-        threadId,
-        (e) => {
-          if (e.event === "updates") setCurrentNode(e.node);
-          if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
-        },
-        { input: {} }
-      );
+      await runStream(threadId, handleStreamEvent, { input: {} });
       await refresh();
     } catch (e) {
       setError(`启动失败：${(e as Error).message}`);
@@ -140,7 +178,7 @@ export function useRun(threadId: string | null): UseRunResult {
       runningRef.current = false;
       setRunning(false);
     }
-  }, [threadId, refresh]);
+  }, [threadId, refresh, handleStreamEvent]);
 
   const resume = useCallback(
     async (value: unknown) => {
@@ -148,14 +186,15 @@ export function useRun(threadId: string | null): UseRunResult {
       runningRef.current = true;
       setRunning(true);
       setError(null);
+      // 重置流式状态（包括 ref）
+      streamingStateRef.current = { node: "", content: "" };
+      setStreamingContent("");
+      setStreamingNode("");
       // 不提前清空 interrupt/subgraphState：重复提交已由 runningRef + disabled={running} 防止，
       // 提前清空会导致 resume 失败时（catch 中 refresh() 还原前）UI 闪现「无中断」。
       // 运行期间保留旧中断（表单 disabled），成功后由 refresh() 更新或清空，失败时 refresh() 还原。
       try {
-        await runStream(threadId, (e) => {
-          if (e.event === "updates") setCurrentNode(e.node);
-          if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
-        }, { resumeValue: value });
+        await runStream(threadId, handleStreamEvent, { resumeValue: value });
         await refresh();
       } catch (e) {
         setError(`恢复失败：${(e as Error).message}`);
@@ -166,7 +205,7 @@ export function useRun(threadId: string | null): UseRunResult {
         setRunning(false);
       }
     },
-    [threadId, refresh]
+    [threadId, refresh, handleStreamEvent]
   );
 
   const replay = useCallback(
@@ -177,11 +216,12 @@ export function useRun(threadId: string | null): UseRunResult {
       setError(null);
       setInterrupt(null);
       setSubgraphState(null);
+      // 重置流式状态（包括 ref）
+      streamingStateRef.current = { node: "", content: "" };
+      setStreamingContent("");
+      setStreamingNode("");
       try {
-        await replayFromCheckpoint(threadId, checkpointId, (e) => {
-          if (e.event === "updates") setCurrentNode(e.node);
-          if (e.event === "error") setError(`运行错误：${JSON.stringify(e.data)}`);
-        });
+        await replayFromCheckpoint(threadId, checkpointId, handleStreamEvent);
         await refresh();
       } catch (e) {
         setError(`重跑失败：${(e as Error).message}`);
@@ -191,7 +231,7 @@ export function useRun(threadId: string | null): UseRunResult {
         setRunning(false);
       }
     },
-    [threadId, refresh]
+    [threadId, refresh, handleStreamEvent]
   );
 
   const reset = useCallback(() => {
@@ -200,7 +240,24 @@ export function useRun(threadId: string | null): UseRunResult {
     setInterrupt(null);
     setSubgraphState(null);
     setError(null);
+    streamingStateRef.current = { node: "", content: "" };
+    setStreamingContent("");
+    setStreamingNode("");
   }, []);
 
-  return { state, currentNode, interrupt, subgraphState, running, error, refresh, start, resume, replay, reset };
+  return {
+    state,
+    currentNode,
+    interrupt,
+    subgraphState,
+    running,
+    error,
+    streamingContent,
+    streamingNode,
+    refresh,
+    start,
+    resume,
+    replay,
+    reset,
+  };
 }

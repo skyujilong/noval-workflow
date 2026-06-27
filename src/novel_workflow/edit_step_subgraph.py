@@ -33,7 +33,7 @@ from noval_workflow.subgraph import (
 )
 
 # Shared with arc_edit_subgraph — imported there to avoid divergence.
-_SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "否", "不"}
+_SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "否", "不", "none", "null"}
 
 
 @dataclass
@@ -99,12 +99,17 @@ def make_edit_step_subgraph(
 
     def step_entry(state: EditStepSubState) -> dict:
         answer = interrupt({"message": entry_prompt})
-        execute = str(answer).strip().lower() not in _SKIP_WORDS
+        # 直接处理 None/falsy 值，避免 str(None) = "None" 的问题
+        if not answer:
+            execute = False
+        else:
+            execute = str(answer).strip().lower() not in _SKIP_WORDS
         return {"step_execute_gate": execute, "step_direction_input": ""}
 
     def step_direction(state: EditStepSubState) -> dict:
         direction = interrupt({"message": "请输入调整方向（直接回车使用默认提示词）："})
-        return {"step_direction_input": str(direction).strip()}
+        # 处理 None，避免 str(None) = "None"
+        return {"step_direction_input": str(direction or "").strip()}
 
     def step_prepare(state: EditStepSubState) -> dict:
         result = prepare_fn(state)

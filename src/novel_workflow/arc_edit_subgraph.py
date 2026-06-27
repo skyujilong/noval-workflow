@@ -200,8 +200,12 @@ def _arc_entry(entry_prompt: str):
         )
 
         answer = interrupt({"message": message})
-        raw = str(answer).strip().lower()
-        execute = raw not in _SKIP_WORDS
+        # 直接处理 None/falsy 值，避免 str(None) = "None" 的问题
+        if not answer:
+            execute = False
+        else:
+            raw = str(answer).strip().lower()
+            execute = raw not in _SKIP_WORDS
         return {
             "arc_execute_gate": execute,
             "system_context": build_foundation_context(state),
@@ -241,7 +245,8 @@ def arc_direction_node(state: ArcEditSubState) -> dict:
         "current_arc_outline": state.current_arc_outline,
         "remaining_titles": remaining_titles,
     })
-    return {"arc_direction": str(direction_raw).strip()}
+    # 处理 None，避免 str(None) = "None"
+    return {"arc_direction": str(direction_raw or "").strip()}
 
 
 def arc_rewrite_node(state: ArcEditSubState) -> dict:
@@ -272,7 +277,8 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
             ),
             "error": state.arc_error,
         })
-        final = str(raw).strip()
+        # 处理 None，避免 str(None) = "None"
+        final = str(raw or "").strip()
         result: dict = {"final_arc": final, "arc_needs_rewrite": False}
         if final:
             result["current_arc_outline"] = final
@@ -289,7 +295,8 @@ def arc_confirm_node(state: ArcEditSubState) -> dict:
         ),
         "ai_generated_arc": state.ai_arc,
     })
-    confirm = str(raw).strip()
+    # 处理 None，避免 str(None) = "None"
+    confirm = str(raw or "").strip()
 
     if not confirm:
         final = state.ai_arc
@@ -360,7 +367,8 @@ def arc_titles_confirm_node(state: ArcEditSubState) -> dict:
         "ai_generated_titles": ai_titles,
         "shortage": shortage,
     })
-    titles_confirm = str(titles_confirm_raw).strip()
+    # 处理 None，避免 str(None) = "None"
+    titles_confirm = str(titles_confirm_raw or "").strip()
 
     if not titles_confirm:
         final_titles = ai_titles

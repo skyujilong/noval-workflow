@@ -176,7 +176,9 @@ def ask_continue(state: NovelState) -> dict:
             "total_chapters_written": state.total_chapters_written,
         }
     )
-    return {"continue_writing": str(answer).strip().lower() in _CONTINUE_SIGNALS}
+    # 处理 None，避免 str(None) = "None" 导致停止
+    answer_str = str(answer or "").strip().lower()
+    return {"continue_writing": answer_str in _CONTINUE_SIGNALS}
 
 
 # ── routers ───────────────────────────────────────────────────────────────────

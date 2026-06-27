@@ -188,10 +188,14 @@ def human_review(state: ReviewSubState) -> dict:
         ),
     })
 
-    if str(feedback).strip().lower() in _APPROVE_SIGNALS:
+    # 处理 None/falsy 值，避免 str(None) = "None" 的问题
+    if not feedback:
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0}
+    feedback_str = str(feedback).strip().lower()
+    if feedback_str in _APPROVE_SIGNALS:
         return {"approved": True, "review_feedback": "", "llm_review_count": 0}
     else:
-        return {"approved": False, "review_feedback": str(feedback).strip(), "llm_review_count": 0}
+        return {"approved": False, "review_feedback": feedback_str, "llm_review_count": 0}
 
 
 def route_after_llm_review(state: ReviewSubState) -> str:

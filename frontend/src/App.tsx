@@ -23,7 +23,7 @@ export default function App() {
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
   const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
 
-  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, replay, refresh: refreshRun } =
+  const { state, currentNode, interrupt, subgraphState, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
     useRun(selectedId);
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
@@ -158,11 +158,24 @@ export default function App() {
               />
             </div>
           ) : running ? (
-            <div className="flex h-full items-center justify-center text-sm text-gray-400">
-              <div className="flex items-center gap-2">
-                <span className="inline-block h-3 w-3 animate-pulse rounded-full bg-blue-500" />
-                正在生成，请稍候…
+            <div className="h-full overflow-y-auto p-4">
+              {/* 头部：节点名 + 状态指示 */}
+              <div className="mb-3 flex items-center gap-2">
+                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+                <span className="text-sm font-medium text-gray-700">
+                  正在生成：{streamingNode || currentNode || "初始化中…"}
+                </span>
               </div>
+              {/* 流式内容展示区 - 纯文本 + 换行，简单高效 */}
+              {streamingContent ? (
+                <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono">
+                  {streamingContent}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center py-12 text-sm text-gray-400">
+                  正在初始化生成…
+                </div>
+              )}
             </div>
           ) : selectedId ? (
             <>
