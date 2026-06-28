@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol, Union
 
 from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
-from noval_workflow.prompts import _format_foreshadowing_for_context
+from noval_workflow.prompts import _format_foreshadowing_for_context, get_prompt_pack
 
 
 class _ContextState(Protocol):
@@ -87,7 +87,9 @@ def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = 
     """
     parts: list[str] = []
 
-    parts.append("你是一位擅长轻小说（ライトノベル）创作的资深作家与架构编辑，擅长以角色群像、对话关系与强主角视角推进故事。以下是本次作品的核心设定，请严格遵守：\n")
+    # 系统身份前缀按题材加载（提示词包不入 state，仅按 state.genre 取用）
+    pack = get_prompt_pack(state.genre)
+    parts.append(f"{pack.flavor.system_identity}\n以下是本次作品的核心设定，请严格遵守：\n")
 
     # User inputs
     if state.novel_name:

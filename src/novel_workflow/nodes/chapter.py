@@ -18,7 +18,7 @@ from noval_workflow.context import (
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
 from noval_workflow.nodes.chapter_edit import _clean_title
-from noval_workflow.prompts import SUMMARY_PROMPT, chapter_prompt, titles_prompt
+from noval_workflow.prompts import SUMMARY_PROMPT, get_prompt_pack
 from noval_workflow.state import NovelState, reset_review_fields
 
 _logger = logging.getLogger(__name__)
@@ -27,9 +27,10 @@ _logger = logging.getLogger(__name__)
 # ── titles ────────────────────────────────────────────────────────────────────
 
 def prepare_titles(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": titles_prompt(state.all_chapter_titles, build_chapter_context(state)),
+        "task_prompt": pack.titles_prompt(state.all_chapter_titles, build_chapter_context(state)),
         "review_type": "titles",
         **reset_review_fields(),
     }
@@ -67,9 +68,10 @@ def prepare_chapter(state: NovelState) -> dict:
     # current_batch_titles[current_chapter_index:] (the not-yet-written portion) avoids
     # duplicate entries in the numbered list rendered for the LLM.
     merged_titles = state.all_chapter_titles + state.current_batch_titles[state.current_chapter_index:]
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": chapter_prompt(title, chapter_num, merged_titles, chapter_context),
+        "task_prompt": pack.chapter_prompt(title, chapter_num, merged_titles, chapter_context),
         "review_type": "chapter",
         **reset_review_fields(),
     }

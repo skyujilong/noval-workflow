@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import type { UserInputsPayload } from "../../lib/interruptTypes";
+import { GENRE_OPTIONS } from "../../constants/genreOptions";
 
 interface Props {
   payload: UserInputsPayload;
@@ -62,13 +63,29 @@ export function UserInputsForm({ payload, onSubmit, disabled }: Props) {
                 {payload.fields[k]}
               </span>
             </label>
-            <input
-              type="text"
-              value={values[k] ?? ""}
-              onChange={(e) => setValues({ ...values, [k]: e.target.value })}
-              disabled={isDisabled}
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-            />
+            {k === "genre" ? (
+              <select
+                value={values[k] ?? ""}
+                onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+                disabled={isDisabled}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              >
+                <option value="">请选择小说类型</option>
+                {GENRE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={values[k] ?? ""}
+                onChange={(e) => setValues({ ...values, [k]: e.target.value })}
+                disabled={isDisabled}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+              />
+            )}
           </div>
         ))}
       </div>

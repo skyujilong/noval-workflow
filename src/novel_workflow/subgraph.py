@@ -22,6 +22,7 @@ from noval_workflow.prompts import (
     PHASE_SUMMARY_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
+    get_prompt_pack,
 )
 from noval_workflow.state import ReviewSubState
 
@@ -135,8 +136,17 @@ def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
     llm = get_llm(temperature=0.3, label=f"self_review:{state.review_type}")
 
-    review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
-    review_prompt = review_template.format(draft=state.current_draft)
+    # 章节审核的"文风合规"部分按题材注入：CHAPTER_REVIEW_PROMPT 含 {style_checklist}
+    # 占位，必须提供，否则 str.format 会 KeyError。其余审核类型走共享 _REVIEW_PROMPTS。
+    if state.review_type == "chapter":
+        pack = get_prompt_pack(state.genre)
+        review_prompt = CHAPTER_REVIEW_PROMPT.format(
+            draft=state.current_draft,
+            style_checklist=pack.flavor.chapter_review_checklist,
+        )
+    else:
+        review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
+        review_prompt = review_template.format(draft=state.current_draft)
 
     # For snapshot-type reviews, prepend the task_prompt (which contains the previous
     # snapshot via {prev}) so the reviewer has an explicit baseline for point 5

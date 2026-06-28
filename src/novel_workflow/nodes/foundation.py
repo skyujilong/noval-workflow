@@ -5,58 +5,57 @@ from __future__ import annotations
 import json
 
 from noval_workflow.context import build_foundation_context, get_output_dir
-from noval_workflow.prompts import (
-    CHARACTER_PROFILES_PROMPT,
-    CORE_CONFLICTS_PROMPT,
-    CORE_THEME_PROMPT,
-    WORLD_BUILDING_PROMPT,
-    overall_outline_prompt,
-)
+from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.state import NovelState, reset_review_fields
 
 
 # ── prepare nodes ─────────────────────────────────────────────────────────────
 
 def prepare_core_theme(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": CORE_THEME_PROMPT,
+        "task_prompt": pack.core_theme_prompt,
         "review_type": "core_theme",
         **reset_review_fields(),
     }
 
 
 def prepare_world_building(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": WORLD_BUILDING_PROMPT,
+        "task_prompt": pack.world_building_prompt,
         "review_type": "world_building",
         **reset_review_fields(),
     }
 
 
 def prepare_core_conflicts(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": CORE_CONFLICTS_PROMPT,
+        "task_prompt": pack.core_conflicts_prompt,
         "review_type": "core_conflicts",
         **reset_review_fields(),
     }
 
 
 def prepare_overall_outline(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": overall_outline_prompt(state.total_word_count),
+        "task_prompt": pack.overall_outline_prompt(state.total_word_count),
         "review_type": "overall_outline",
         **reset_review_fields(),
     }
 
 
 def prepare_character_profiles(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": CHARACTER_PROFILES_PROMPT,
+        "task_prompt": pack.character_profiles_prompt,
         "review_type": "character_profiles",
         **reset_review_fields(),
     }
