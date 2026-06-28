@@ -37,8 +37,46 @@ class _PerfLogHandler(BaseCallbackHandler):
     ) -> None:
         self._starts[run_id] = time.monotonic()
         # 估算输入规模（字符数），帮助判断慢是否由超长上下文导致
-        chars = sum(len(getattr(m, "content", "") or "") for batch in messages for m in batch)
-        self._log(f"→ 开始调用 [{self._label}]，输入约 {chars} 字符 …")
+        total_chars = 0
+        system_chars = 0
+        user_chars = 0
+        breakdown = []
+
+        for batch in messages:
+            for m in batch:
+                content = getattr(m, "content", "") or ""
+                chars = len(content)
+                total_chars += chars
+
+                # 按消息类型统计
+                msg_type = getattr(m, "type", "unknown")
+                if msg_type == "system":
+                    system_chars += chars
+                elif msg_type == "human":
+                    user_chars += chars
+
+                # 解析 system context 的组成结构（只统计第一个 system message）
+                if msg_type == "system" and not breakdown:
+                    text = content
+                    # 提取各 section 的长度
+                    sections = []
+                    import re
+                    for match in re.finditer(r"【(.+?)】", text):
+                        section_name = match.group(1)
+                        start = match.start()
+                        # 找下一个 section 或结尾
+                        next_match = re.search(r"\n【", text[start + 1:])
+                        end = start + 1 + (next_match.start() if next_match else len(text) - start - 1)
+                        section_len = end - start
+                        sections.append(f"{section_name}: ~{section_len} 字")
+                    if sections:
+                        breakdown = sections
+
+        # 打印详细组成
+        self._log(f"→ 开始调用 [{self._label}]")
+        self._log(f"  总计: {total_chars} 字符 (system: {system_chars}, user: {user_chars})")
+        if breakdown:
+            self._log(f"  System Context 组成: {', '.join(breakdown)}")
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         elapsed = time.monotonic() - self._starts.pop(run_id, time.monotonic())
