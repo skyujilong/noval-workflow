@@ -59,7 +59,7 @@ class ArcEditSubState:
     current_arc_outline: str = ""
     character_status: str = ""
     character_relations: str = ""
-    foreshadowing: str = ""
+    foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
 
     # Review bridge (needed by system_context used in arc_rewrite)

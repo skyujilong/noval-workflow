@@ -64,7 +64,7 @@ class EditStepSubState(ReviewSubState):
     current_arc_outline: str = ""
     character_status: str = ""
     character_relations: str = ""
-    foreshadowing: str = ""
+    foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
     review_history: list = field(default_factory=list)
 

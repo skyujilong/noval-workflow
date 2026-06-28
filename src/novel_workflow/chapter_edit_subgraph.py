@@ -20,12 +20,18 @@ from noval_workflow.context import build_chapter_context, build_foundation_conte
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
+import json
+import logging
+
 from noval_workflow.prompts import (
+    _migrate_legacy_foreshadowing,
     character_relations_prompt,
     character_status_prompt,
     foreshadowing_prompt,
     phase_summary_prompt,
 )
+
+_logger = logging.getLogger(__name__)
 
 # ── ChapterEditSubState ────────────────────────────────────────────────────────
 
@@ -127,7 +133,27 @@ def _prepare_foreshadowing(state) -> dict:
 
 
 def _save_foreshadowing(state) -> dict:
-    return {"foreshadowing": state.current_draft} if state.current_draft else {}
+    """保存 LLM 输出的伏笔台账，支持 JSON 格式和老旧字符串格式。"""
+    if not state.current_draft:
+        return {}
+
+    draft = state.current_draft.strip()
+
+    # 尝试解析 JSON
+    try:
+        foreshadowing = json.loads(draft)
+        _logger.info("伏笔台账 JSON 解析成功")
+        return {"foreshadowing": foreshadowing}
+    except json.JSONDecodeError as e:
+        _logger.warning(f"伏笔台账 JSON 解析失败，尝试迁移旧格式: {e}")
+        # fallback: 尝试用迁移函数解析老旧字符串格式
+        migrated = _migrate_legacy_foreshadowing(draft)
+        if migrated.get("pending") or migrated.get("collected"):
+            _logger.info("伏笔台账旧格式迁移成功")
+            return {"foreshadowing": migrated}
+        # 迁移也失败，原样返回（字符串），留待后续处理
+        _logger.error("伏笔台账迁移失败，保留原始字符串格式")
+        return {"foreshadowing": state.current_draft}
 
 
 def _prepare_phase(state) -> dict:

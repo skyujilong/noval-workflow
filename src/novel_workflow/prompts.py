@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Union
 
 if TYPE_CHECKING:
     from noval_workflow.state import NovelState
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 class _PromptState(Protocol):
     character_status: str
     character_relations: str
-    foreshadowing: str
+    foreshadowing: Union[str, dict]  # 支持旧格式（str）和新结构化格式（dict）
     phase_summary: str
     total_chapters_written: int
 
@@ -303,70 +303,228 @@ def character_relations_prompt(state: _PromptState, chapter_context: str = "") -
 _FORESHADOW_PRUNE_DISTANCE = 5  # 已收超过此章数后从上次台账中物理删除
 
 
-def _prune_collected_foreshadowing(ledger: str, current_chapter: int) -> str:
-    """Remove 【已收】entries whose 【回收章节】is more than _FORESHADOW_PRUNE_DISTANCE chapters back.
+def _migrate_legacy_foreshadowing(ledger: Union[str, dict]) -> dict:
+    """将老旧字符串格式的伏笔台账迁移为新的结构化 JSON 格式。
 
-    Each entry is delimited by the dashed separator line. Entries without a
-    【回收章节】field (older format or 【是否已回收】否) are kept as-is.
+    返回的结构：
+    {
+        "pending": [  # 悬置伏笔
+            {
+                "id": "F00",
+                "name": "伏笔名称",
+                "planted_batch": 1,
+                "current_appearance": "当前潜伏表现",
+                "core_purpose": "核心作用",
+                "planned_recovery_range": "预定回收区间",
+                "freedom": "高/中/低"
+            }
+        ],
+        "collected": [  # 已收伏笔
+            {
+                "id": "F00",
+                "name": "伏笔名称",
+                "planted_batch": 1,
+                "current_appearance": "当前潜伏表现",
+                "core_purpose": "核心作用",
+                "planned_recovery_range": "预定回收区间",
+                "freedom": "高/中/低",
+                "recovered_at_chapter": 5
+            }
+        ]
+    }
     """
+    # 如果已经是 dict（新格式），直接返回
+    if isinstance(ledger, dict):
+        return ledger
+
+    # 空字符串返回空结构
+    if not ledger or not ledger.strip():
+        return {"pending": [], "collected": []}
+
     import re
 
     separator = "-------------------------------------"
-    blocks = ledger.split(separator)
-    kept: list[str] = []
+    blocks = [b.strip() for b in ledger.split(separator) if b.strip()]
+
+    pending = []
+    collected = []
+
     for block in blocks:
-        # Check if this block is a collected entry
-        if "【是否已回收】是" in block:
-            m = re.search(r"【回收章节】第?(\d+)章?", block)
+        # 提取各字段
+        def extract_field(name: str) -> str:
+            m = re.search(rf"【{name}】(.*?)(?=\n【|$)", block, re.DOTALL)
+            return m.group(1).strip() if m else ""
+
+        entry_id = extract_field("伏笔编号")
+        if not entry_id:
+            continue  # 无效条目，跳过
+
+        entry = {
+            "id": entry_id,
+            "name": extract_field("伏笔名称"),
+            "planted_batch": 0,  # 默认值，后面尝试解析
+            "current_appearance": extract_field("当前潜伏表现"),
+            "core_purpose": extract_field("核心作用"),
+            "planned_recovery_range": extract_field("预定回收区间"),
+            "freedom": extract_field("自由度") or "中",
+        }
+
+        # 解析埋点批次（纯数字）
+        planted_batch_str = extract_field("埋点批次")
+        try:
+            m = re.search(r"(\d+)", planted_batch_str)
             if m:
-                collected_at = int(m.group(1))
-                if current_chapter - collected_at > _FORESHADOW_PRUNE_DISTANCE:
-                    continue  # physically drop this entry
-        kept.append(block)
-    return separator.join(kept)
+                entry["planted_batch"] = int(m.group(1))
+        except (ValueError, TypeError):
+            pass
+
+        # 判断是否已回收
+        is_collected = "是" in extract_field("是否已回收")
+        if is_collected:
+            recovered_at_str = extract_field("回收章节")
+            try:
+                m = re.search(r"第?(\d+)章?", recovered_at_str)
+                if m:
+                    entry["recovered_at_chapter"] = int(m.group(1))
+            except (ValueError, TypeError):
+                entry["recovered_at_chapter"] = 0
+            collected.append(entry)
+        else:
+            pending.append(entry)
+
+    return {"pending": pending, "collected": collected}
+
+
+def _prune_collected_foreshadowing(ledger: Union[str, dict], current_chapter: int) -> dict:
+    """【已弃用，仅迁移不删除】将老旧字符串格式迁移为结构化格式。
+
+    注意：不再物理删除旧的已收伏笔，数据层面永久保留全部历史。
+    只在上下文显示层面过滤近5章的已收伏笔，参见 _format_foreshadowing_for_context。
+    """
+    # 仅做迁移，不再过滤删除
+    return _migrate_legacy_foreshadowing(ledger)
+
+
+def _format_foreshadowing_for_context(ledger: dict, current_chapter: int = 0) -> str:
+    """将结构化的伏笔台账格式化为易读文本，供 LLM 上下文使用。
+
+    为了减少上下文体积，已收伏笔只显示最近 _FORESHADOW_PRUNE_DISTANCE 章内回收的。
+    数据层面仍然保留全部历史，不会丢失。
+    """
+    if not ledger or (not ledger.get("pending") and not ledger.get("collected")):
+        return ""
+
+    lines = []
+    separator = "-------------------------------------"
+
+    # pending 全部显示（因为这些还没回收，是活跃伏笔）
+    pending_count = len(ledger.get("pending", []))
+    if pending_count > 0:
+        lines.append("【悬置】")
+        for entry in ledger["pending"]:
+            lines.extend([
+                separator,
+                f"【伏笔编号】{entry.get('id', '')}",
+                f"【伏笔名称】{entry.get('name', '')}",
+                f"【埋点批次】{entry.get('planted_batch', '')}",
+                f"【当前潜伏表现】{entry.get('current_appearance', '')}",
+                f"【核心作用】{entry.get('core_purpose', '')}",
+                f"【预定回收区间】{entry.get('planned_recovery_range', '')}",
+                f"【自由度】{entry.get('freedom', '')}",
+            ])
+        lines.append("")
+
+    # collected 只显示近5章内回收的，但在标题处显示总数
+    total_collected = len(ledger.get("collected", []))
+    recent_collected = [
+        entry for entry in ledger.get("collected", [])
+        if current_chapter - entry.get("recovered_at_chapter", 0) <= _FORESHADOW_PRUNE_DISTANCE
+    ] if current_chapter > 0 else ledger.get("collected", [])
+
+    if recent_collected:
+        if total_collected > len(recent_collected):
+            lines.append(f"【已收】（共 {total_collected} 个，仅显示近 {_FORESHADOW_PRUNE_DISTANCE} 章内回收的 {len(recent_collected)} 个）")
+        else:
+            lines.append("【已收】")
+        for entry in recent_collected:
+            lines.extend([
+                separator,
+                f"【伏笔编号】{entry.get('id', '')}",
+                f"【伏笔名称】{entry.get('name', '')}",
+                f"【埋点批次】{entry.get('planted_batch', '')}",
+                f"【当前潜伏表现】{entry.get('current_appearance', '')}",
+                f"【核心作用】{entry.get('core_purpose', '')}",
+                f"【预定回收区间】{entry.get('planned_recovery_range', '')}",
+                f"【自由度】{entry.get('freedom', '')}",
+                f"【回收章节】第{entry.get('recovered_at_chapter', 0)}章",
+            ])
+
+    return "\n".join(lines)
 
 
 def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
-    """Build the prompt for updating the foreshadowing ledger."""
+    """构建更新伏笔台账的提示词。"""
     current_chapter = state.total_chapters_written  # chapters completed so far
     current_chapter_info = f"第{current_chapter}章" if current_chapter > 0 else "起始"
 
     prev = ""
     if state.foreshadowing:
-        pruned = _prune_collected_foreshadowing(state.foreshadowing, current_chapter)
-        prev = f"\n\n【上次伏笔台账】\n{pruned}"
+        # 迁移格式（不再物理删除旧伏笔）
+        structured = _prune_collected_foreshadowing(state.foreshadowing, current_chapter)
+        # 仅显示层面过滤近5章已收伏笔，数据保留完整
+        formatted = _format_foreshadowing_for_context(structured, current_chapter)
+        if formatted:
+            prev = f"\n\n【上次伏笔台账】\n{formatted}"
 
     chapter_section = ""
     if chapter_context:
         chapter_section = f"\n\n【近期章节内容（请据此核对伏笔）】\n{chapter_context}"
 
-    carry_over = "\n- 【悬置】列出当前所有仍待兑现的伏笔，必须包含上次台账中全部悬置项，本批无变化者原文保留" if prev else "\n- 【悬置】列出当前章节中出现的所有待兑现伏笔"
+    carry_over = "\n- pending（悬置）：列出当前所有仍待兑现的伏笔，必须包含上次台账中全部悬置项，本批无变化者原文保留" if prev else "\n- pending（悬置）：列出当前章节中出现的所有待兑现伏笔"
     return f"""请根据已完成的章节内容，更新【伏笔台账】。当前所处章节：{current_chapter_info}。{prev}{chapter_section}
 
 要求：{carry_over}
-- 【新增】标注本批章节中首次埋下的新伏笔
-- 【已收】标注本批被兑现或回收的伏笔（【是否已回收】"是"，并填写【回收章节】）
-  - 需要调整顺序到【悬置】下方
-  - 已回收的伏笔，在当前章节减去回收章节超过5章的，可以直接删除，用来节省上下文。
-- 【悬置】超过5章未回收的伏笔，判断是否还有回收价值，如果没有，可以直接删除，用来节省上下文。
+- 【新增】标注本批章节中首次埋下的新伏笔（放在 pending 数组）
+- 【已收】标注本批被兑现或回收的伏笔（从 pending 移动到 collected 数组，并填写 recovered_at_chapter）
+  - collected 数组中的条目，在当前章节减去回收章节超过5章的，可以直接删除，用来节省上下文。
+- pending 中超过5章未回收的伏笔，判断是否还有回收价值，如果没有，可以直接删除，用来节省上下文。
 
-**格式要求**
+**重要：输出格式要求（必须严格遵守）**
 
-## 单条伏笔固定结构（必须全覆盖）
--------------------------------------
-【伏笔编号】F00
-【伏笔名称】4-12字极简概括
-【埋点批次】当前创作批次 / 章节区间
-【当前潜伏表现】浅层、日常、隐蔽、不突兀的细节铺垫，读者看不出是伏笔
-【核心作用】支撑后期人设反转、剧情冲突、世界观闭环、势力博弈、情感弧光等
-【预定回收区间】仅锁定大阶段（卷/批次范围，不锁具体章节）
-【自由度】高 / 中 / 低
-【是否已回收】是 / 否
-【回收章节】第X章（仅【是否已回收】为"是"时填写，否则留空）
+请直接输出纯 JSON，不要包含任何 markdown 代码块标记、解释文字或额外内容。
+JSON 结构如下：
+{{
+    "pending": [  // 悬置伏笔（未回收）
+        {{
+            "id": "F00",              // 伏笔编号，字符串
+            "name": "伏笔名称",       // 4-12字极简概括
+            "planted_batch": 1,       // 埋点批次，纯数字
+            "current_appearance": "当前潜伏表现",  // 浅层、日常、隐蔽的细节铺垫
+            "core_purpose": "核心作用",  // 支撑剧情的作用
+            "planned_recovery_range": "预定回收区间",  // 大阶段范围
+            "freedom": "高"            // 高 / 中 / 低
+        }}
+    ],
+    "collected": [  // 已收伏笔（已兑现）
+        {{
+            "id": "F00",
+            "name": "伏笔名称",
+            "planted_batch": 1,
+            "current_appearance": "当前潜伏表现",
+            "core_purpose": "核心作用",
+            "planned_recovery_range": "预定回收区间",
+            "freedom": "高",
+            "recovered_at_chapter": 5  // 回收章节，纯数字，必填
+        }}
+    ]
+}}
 
+字段要求：
+- planted_batch：纯数字（不要写"第X批"、"批次X"等，只写数字）
+- recovered_at_chapter：纯数字（不要写"第X章"，只写数字；仅 collected 数组中的条目需要）
+- freedom：只能是 "高"、"中"、"低" 三者之一
 
-
-请直接输出更新后的伏笔台账，不需要标题。"""
+请只输出 JSON 字符串，不要有任何其他内容。"""
 
 
 def phase_summary_prompt(state: _PromptState, chapter_context: str = "") -> str:
@@ -590,30 +748,23 @@ CHARACTER_RELATIONS_REVIEW_PROMPT = """请审核以下人物关系/势力格局�
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""
 
-FORESHADOWING_REVIEW_PROMPT = """请审核以下伏笔台账更新：
+FORESHADOWING_REVIEW_PROMPT = """请审核以下伏笔台账更新（JSON 格式）：
 
 {draft}
 
 审核要点：
-1. 新增伏笔是否确实在最新章节中出现？
-2. 已收伏笔是否确实在最新章节中兑现？
-3. 悬置伏笔列表是否完整，无遗漏？
-4. 格式是否清晰（新增/已收/悬置标注）？
+1. JSON 格式是否有效，无语法错误？
+2. 新增伏笔是否确实在最新章节中出现？
+3. 已收伏笔是否确实在最新章节中兑现？
+4. pending（悬置）伏笔列表是否完整，无遗漏？
 5. 与上次快照相比，是否有条目被无故遗漏？（未变化的项目应在本次输出中保留）
 
-格式要求：
-
-## 单条伏笔固定结构（必须全覆盖）
--------------------------------------
-【伏笔编号】F00
-【伏笔名称】4-12字极简概括
-【埋点批次】当前创作批次 / 章节区间
-【当前潜伏表现】浅层、日常、隐蔽、不突兀的细节铺垫，读者看不出是伏笔
-【核心作用】支撑后期人设反转、剧情冲突、世界观闭环、势力博弈、情感弧光等
-【预定回收区间】仅锁定大阶段（卷/批次范围，不锁具体章节）
-【自由度】高 / 中 / 低
-【是否已回收】是 / 否
-
+JSON 字段规范：
+- pending 数组：悬置（未回收）的伏笔，每个对象包含：id, name, planted_batch, current_appearance, core_purpose, planned_recovery_range, freedom
+- collected 数组：已收（已兑现）的伏笔，每个对象除上述字段外还必须包含 recovered_at_chapter
+- planted_batch：必须是纯数字（不要有"第X批"等文字）
+- recovered_at_chapter：必须是纯数字（不要有"第X章"等文字）
+- freedom：只能是 "高"、"中"、"低" 三者之一
 
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""

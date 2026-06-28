@@ -6,9 +6,10 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Union
 
 from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
+from noval_workflow.prompts import _format_foreshadowing_for_context
 
 
 class _ContextState(Protocol):
@@ -35,7 +36,7 @@ class _ContextState(Protocol):
     current_arc_outline: str
     character_status: str
     character_relations: str
-    foreshadowing: str
+    foreshadowing: Union[str, dict]  # 支持旧格式（str）和新结构化格式（dict）
     phase_summary: str
     # Phase 2 — chapter progress
     total_chapters_written: int
@@ -126,7 +127,10 @@ def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = 
         if state.character_relations:
             parts.append(f"\n【人物关系/势力动态（最新）】\n{state.character_relations}")
         if state.foreshadowing:
-            parts.append(f"\n【伏笔台账（最新）】\n{state.foreshadowing}")
+            # 数据层面保留全部已收伏笔，上下文显示层面只过滤近5章
+            formatted = _format_foreshadowing_for_context(state.foreshadowing, state.total_chapters_written)
+            if formatted:
+                parts.append(f"\n【伏笔台账（最新）】\n{formatted}")
         if state.phase_summary:
             parts.append(f"\n【阶段固化数据（最新）】\n{state.phase_summary}")
 

@@ -73,8 +73,8 @@ class NovelState:
     character_relations: str = ""
     # 人物关系/势力格局（各方关系变化 + 势力强弱对比）
 
-    foreshadowing: str = ""
-    # 伏笔台账（新增/已收/悬置伏笔分类记录）
+    foreshadowing: dict = field(default_factory=dict)
+    # 伏笔台账（结构化 JSON：{"pending": [...], "collected": [...]}）
 
     phase_summary: str = ""
     # 阶段固化数据（主角等级/装备/技能/资源等硬性数值，后续创作必须遵守）
