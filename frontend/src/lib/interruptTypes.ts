@@ -36,6 +36,9 @@ export const InterruptType = {
   REVIEW_CHAPTER: "review_chapter",
   // 其他
   ASK_CONTINUE: "ask_continue",
+  // 伏笔台账精简流程
+  FORESHADOW_PRUNE_ASK: "foreshadow_prune_ask",
+  FORESHADOW_PRUNE_CONFIRM: "foreshadow_prune_confirm",
 } as const;
 
 export type InterruptTypeValue = (typeof InterruptType)[keyof typeof InterruptType];
@@ -103,6 +106,27 @@ export interface HumanReviewPayload {
   llm_review_max: number;
 }
 
+/**
+ * 伏笔精简确认表单 payload。
+ * 由 LLM 分析后生成建议，人工确认是否删除。
+ */
+export interface ForeshadowPruneConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  s_level_count: number; // S级核心伏笔数量
+  a_level_count: number; // A级次要伏笔数量
+  to_delete: Array<{
+    id: string;
+    name: string;
+    reason: string;
+    planted_batch?: number;
+    freedom?: string;
+  }>; // 建议删除的伏笔列表
+  suggestion: string; // 整体精简建议
+  pending_count: number; // 当前悬置伏笔总数
+  collected_count: number; // 当前已收伏笔总数
+}
+
 // ── type → 表单种类 分发 ───────────────────────────────────────────────────────
 
 export type FormKind =
@@ -114,6 +138,8 @@ export type FormKind =
   | "arc_direction"
   | "arc_confirm"
   | "arc_titles_confirm"
+  | "foreshadowing_review"
+  | "foreshadow_prune_confirm"
   | "unknown";
 
 /**
@@ -140,7 +166,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
 
   [InterruptType.STATUS_REVIEW]: "human_review",
   [InterruptType.RELATIONS_REVIEW]: "human_review",
-  [InterruptType.FORESHADOWING_REVIEW]: "human_review",
+  [InterruptType.FORESHADOWING_REVIEW]: "foreshadowing_review", // 伏笔专用表单
   [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
   [InterruptType.REVIEW_GENERIC]: "human_review",
   [InterruptType.REVIEW_CHAPTER]: "human_review",
@@ -150,6 +176,8 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.ARC_TITLES_CONFIRM]: "arc_titles_confirm",
 
   [InterruptType.ASK_CONTINUE]: "ask_continue",
+  [InterruptType.FORESHADOW_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
+  [InterruptType.FORESHADOW_PRUNE_CONFIRM]: "foreshadow_prune_confirm", // 专用确认表单
 };
 
 /**

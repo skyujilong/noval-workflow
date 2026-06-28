@@ -61,6 +61,12 @@ class InterruptType(str, Enum):
     REVIEW_CHAPTER = "review_chapter"  # 章节正文审核
 
     # ============================================================
+    # 伏笔台账精简流程
+    # ============================================================
+    FORESHADOW_PRUNE_ASK = "foreshadow_prune_ask"  # 询问是否精简
+    FORESHADOW_PRUNE_CONFIRM = "foreshadow_prune_confirm"  # 确认精简结果
+
+    # ============================================================
     # 其他中断
     # ============================================================
     ASK_CONTINUE = "ask_continue"  # 是否继续写下一批

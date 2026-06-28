@@ -204,6 +204,7 @@ _FORESHADOW_STEP = make_edit_step_subgraph(
     direction_type=InterruptType.FORESHADOWING_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
+    enable_prune=True,
 )
 
 _PHASE_STEP = make_edit_step_subgraph(

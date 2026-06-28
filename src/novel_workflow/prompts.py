@@ -769,6 +769,55 @@ JSON 字段规范：
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""
 
+# 伏笔精简分析提示词（仅在审核通过后调用）
+
+FORESHADOW_PRUNE_ANALYSIS_PROMPT = """请分析以下伏笔台账，给出精简建议。
+
+【参考上下文】
+近3章章节概要：{recent_summaries}
+
+全书章节标题（共{all_titles_count}章）：
+{all_titles}
+
+世界观设定：
+{world_building}
+
+人物档案：
+{character_profiles}
+
+【当前伏笔台账 JSON】
+{foreshadowing_json}
+
+【精简规则】
+1. S级核心伏笔（与主线/主角成长/核心谜团强相关）：必须全部保留，不标注删除
+2. A级次要伏笔（支线、配角相关）：最多保留最近10个，老的建议删除
+3. 已收伏笔（collected）：超过5章且非S级的，建议从列表中移除（已兑现无需跟踪）
+4. 同类型重复伏笔：建议合并或删除
+5. planted_batch 越小表示埋点批次，数值越小越老，优先建议删除老的
+
+【输出格式】
+请严格按以下JSON格式输出，不要包含任何额外说明文字：
+{{
+  "s_level_count": 3,
+  "a_level_count": 8,
+  "to_delete": [
+    {{
+      "id": "F01",
+      "name": "伏笔名称",
+      "reason": "已回收超过5章，非核心伏笔"
+    }}
+  ],
+  "suggestion": "整体精简建议（一句话）"
+}}
+
+【重要提醒】
+- to_delete 数组只包含建议删除的伏笔ID和名称
+- S级核心伏笔绝对不能出现在 to_delete 中
+- A级伏笔超过10个时，优先建议删除 planted_batch 最小（最老）的
+- 如果当前伏笔数量很少（≤5个），to_delete 可以为空数组
+- 只分析 pending 数组中的伏笔，collected 只在超过5章且非S级时才建议删除
+"""
+
 PHASE_SUMMARY_REVIEW_PROMPT = """请审核以下阶段固化数据更新：
 
 {draft}

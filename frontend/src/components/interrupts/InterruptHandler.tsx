@@ -8,6 +8,8 @@ import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
 import { DirectionForm } from "./DirectionForm";
 import { EntryGateForm } from "./EntryGateForm";
+import { ForeshadowingReviewForm } from "./ForeshadowingReviewForm";
+import { ForeshadowPruneConfirmForm } from "./ForeshadowPruneConfirmForm";
 import { HumanReviewForm } from "./HumanReviewForm";
 import { UserInputsForm } from "./UserInputsForm";
 
@@ -93,6 +95,26 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
         <ArcTitlesConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof ArcTitlesConfirmForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "foreshadowing_review":
+      return (
+        <ForeshadowingReviewForm
+          key={formKey}
+          payload={payload as Parameters<typeof ForeshadowingReviewForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "foreshadow_prune_confirm":
+      return (
+        <ForeshadowPruneConfirmForm
+          key={formKey}
+          payload={payload as Parameters<typeof ForeshadowPruneConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
         />
