@@ -139,7 +139,7 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # 章节审核的"文风合规"部分按题材注入：CHAPTER_REVIEW_PROMPT 含 {style_checklist}
     # 占位，必须提供，否则 str.format 会 KeyError。其余审核类型走共享 _REVIEW_PROMPTS。
     if state.review_type == "chapter":
-        pack = get_prompt_pack(state.genre)
+        pack = get_prompt_pack(state.genre, state.novel_name)
         review_prompt = CHAPTER_REVIEW_PROMPT.format(
             draft=state.current_draft,
             style_checklist=pack.flavor.chapter_review_checklist,

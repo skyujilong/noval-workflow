@@ -22,6 +22,11 @@ from noval_workflow.prompts.ledger import (
     foreshadowing_prompt,
     phase_summary_prompt,
 )
+from noval_workflow.prompts.overrides import (
+    apply_overrides,
+    load_overrides,
+    save_overrides,
+)
 from noval_workflow.prompts.registry import available_genres, get_prompt_pack
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
@@ -46,6 +51,10 @@ __all__ = [
     "available_genres",
     "PromptPack",
     "GenreFlavor",
+    # 按小说提示词覆盖
+    "load_overrides",
+    "apply_overrides",
+    "save_overrides",
     # 共享常量
     "SUMMARY_PROMPT",
     "ARC_CHAPTER_FORMAT",

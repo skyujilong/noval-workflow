@@ -99,6 +99,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    resolve: {
+      // shadcn/ui 约定的路径别名：@ → src
+      alias: {
+        "@": path.resolve(__dirname, "./src"),
+      },
+    },
     // 把 env 变量注入给前端代码（import.meta.env.*）
     define: {
       "import.meta.env.VITE_LANGGRAPH_PORT": JSON.stringify(env.LANGGRAPH_PORT),

@@ -10,6 +10,7 @@ interface Props {
   onSelect: (threadId: string) => void;
   onCreate: () => void;
   onRefresh: () => void;
+  onConfig: (thread: ThreadInfo) => void;
 }
 
 export function NovelList({
@@ -20,6 +21,7 @@ export function NovelList({
   onSelect,
   onCreate,
   onRefresh,
+  onConfig,
 }: Props) {
   return (
     <div className="flex h-full flex-col">
@@ -56,30 +58,48 @@ export function NovelList({
           </div>
         )}
         {threads.map((t) => {
-          const name =
+          const realName =
             t.metadata?.novel_name ||
             (t.values?.novel_name as string | undefined) ||
-            `未命名 ${t.thread_id.slice(0, 6)}`;
+            "";
+          const name = realName || `未命名 ${t.thread_id.slice(0, 6)}`;
+          const hasName = !!realName;
           const chapters = t.values?.total_chapters_written ?? 0;
           const isActive = t.thread_id === selectedId;
           return (
-            <button
+            <div
               key={t.thread_id}
-              onClick={() => onSelect(t.thread_id)}
               className={
-                "block w-full border-b px-3 py-2 text-left hover:bg-gray-50 " +
+                "flex items-stretch border-b hover:bg-gray-50 " +
                 (isActive ? "bg-blue-50 border-l-4 border-l-blue-600" : "")
               }
             >
-              <div className="truncate text-sm font-medium text-gray-800">
-                {name}
-              </div>
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
-                <span>{chapters > 0 ? `已写 ${chapters} 章` : "未开始"}</span>
-                <span>·</span>
-                <span>{t.status}</span>
-              </div>
-            </button>
+              <button
+                onClick={() => onSelect(t.thread_id)}
+                className="min-w-0 flex-1 px-3 py-2 text-left"
+              >
+                <div className="truncate text-sm font-medium text-gray-800">
+                  {name}
+                </div>
+                <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-400">
+                  <span>{chapters > 0 ? `已写 ${chapters} 章` : "未开始"}</span>
+                  <span>·</span>
+                  <span>{t.status}</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                disabled={!hasName}
+                title={hasName ? "提示词配置" : "请先完成基础信息后再配置"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onConfig(t);
+                }}
+                className="shrink-0 px-2.5 text-base text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:text-gray-200 disabled:hover:text-gray-200"
+              >
+                ✱
+              </button>
+            </div>
           );
         })}
       </div>

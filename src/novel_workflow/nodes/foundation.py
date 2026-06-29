@@ -12,7 +12,7 @@ from noval_workflow.state import NovelState, reset_review_fields
 # ── prepare nodes ─────────────────────────────────────────────────────────────
 
 def prepare_core_theme(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.core_theme_prompt,
@@ -22,7 +22,7 @@ def prepare_core_theme(state: NovelState) -> dict:
 
 
 def prepare_world_building(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.world_building_prompt,
@@ -32,7 +32,7 @@ def prepare_world_building(state: NovelState) -> dict:
 
 
 def prepare_core_conflicts(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.core_conflicts_prompt,
@@ -42,7 +42,7 @@ def prepare_core_conflicts(state: NovelState) -> dict:
 
 
 def prepare_overall_outline(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.overall_outline_prompt(state.total_word_count),
@@ -52,7 +52,7 @@ def prepare_overall_outline(state: NovelState) -> dict:
 
 
 def prepare_character_profiles(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.character_profiles_prompt,

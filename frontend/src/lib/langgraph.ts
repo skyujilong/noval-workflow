@@ -146,6 +146,46 @@ export async function forkThread(
   };
 }
 
+// ── 提示词覆盖（按小说，覆盖题材风味字段）────────────────────────────────────
+// 走自定义 HTTP 路由（src/http_app.py），直连 API_URL（与 forkThread/章节静态读取一致）。
+// 存储不入 langgraph state，编辑后即时生效、对历史回放也生效。
+
+export interface PromptOverridesResponse {
+  defaults: Record<string, string>; // 题材默认值（用于预填）
+  overrides: Record<string, string>; // 已存覆盖（仅含与默认不同的字段）
+}
+
+/** 拉取某小说的题材默认值（供预填）与已存覆盖。 */
+export async function getPromptOverrides(
+  novelName: string,
+  genre: string
+): Promise<PromptOverridesResponse> {
+  const url = `${API_URL}/prompt-overrides?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`读取提示词覆盖失败 (${res.status})：${await res.text()}`);
+  }
+  return (await res.json()) as PromptOverridesResponse;
+}
+
+/** 保存某小说的提示词覆盖（仅传与默认不同的字段；空对象=全部回退默认）。 */
+export async function savePromptOverrides(
+  novelName: string,
+  overrides: Record<string, string>
+): Promise<void> {
+  const url = `${API_URL}/prompt-overrides?novel=${encodeURIComponent(novelName)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ overrides }),
+  });
+  if (!res.ok) {
+    throw new Error(`保存提示词覆盖失败 (${res.status})：${await res.text()}`);
+  }
+}
+
 // ── Run（执行 / 恢复）─────────────────────────────────────────────────────────
 
 export type StreamEvent =

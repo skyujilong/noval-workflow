@@ -27,7 +27,7 @@ _logger = logging.getLogger(__name__)
 # ── titles ────────────────────────────────────────────────────────────────────
 
 def prepare_titles(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.titles_prompt(state.all_chapter_titles, build_chapter_context(state)),
@@ -68,7 +68,7 @@ def prepare_chapter(state: NovelState) -> dict:
     # current_batch_titles[current_chapter_index:] (the not-yet-written portion) avoids
     # duplicate entries in the numbered list rendered for the LLM.
     merged_titles = state.all_chapter_titles + state.current_batch_titles[state.current_chapter_index:]
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.chapter_prompt(title, chapter_num, merged_titles, chapter_context),

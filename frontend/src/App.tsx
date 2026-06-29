@@ -7,10 +7,12 @@ import { InterruptHandler } from "./components/interrupts/InterruptHandler";
 import { ChapterReader } from "./components/novel/ChapterReader";
 import { NovelDetail } from "./components/novel/NovelDetail";
 import { NovelList } from "./components/novel/NovelList";
+import { PromptOverrideModal } from "./components/novel/PromptOverrideModal";
 import { useGraphSchema } from "./hooks/useGraphSchema";
 import { useRun } from "./hooks/useRun";
 import { useThreads } from "./hooks/useThreads";
 import { updateThreadMeta } from "./lib/langgraph";
+import type { ThreadInfo } from "./lib/langgraph";
 
 type LeftTab = "novels" | "history";
 
@@ -22,6 +24,7 @@ export default function App() {
   const [autoStart, setAutoStart] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
   const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
+  const [configThread, setConfigThread] = useState<ThreadInfo | null>(null);
 
   const { state, currentNode, interrupt, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
     useRun(selectedId);
@@ -131,6 +134,7 @@ export default function App() {
               }}
               onCreate={handleCreate}
               onRefresh={refresh}
+              onConfig={setConfigThread}
             />
           ) : (
             <CheckpointTimeline threadId={selectedId} onReplay={handleReplay} />
@@ -237,6 +241,17 @@ export default function App() {
           )}
         </aside>
       </div>
+
+      <PromptOverrideModal
+        open={!!configThread}
+        novelName={
+          configThread?.metadata?.novel_name ||
+          (configThread?.values?.novel_name as string | undefined) ||
+          ""
+        }
+        genre={(configThread?.values?.genre as string | undefined) || "通用"}
+        onClose={() => setConfigThread(null)}
+      />
     </div>
   );
 }
