@@ -1,6 +1,7 @@
 // 历史回溯面板：列出 thread 的 checkpoint，点击查看快照，支持从此点重跑。
 
-import { useEffect, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getThreadHistory } from "../../lib/langgraph";
 import { EMPTY_NOVEL_STATE, type NovelState } from "../../lib/types";
 
@@ -44,16 +45,10 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CpItem | null>(null);
 
-  useEffect(() => {
-    // 🔒 历史状态隔离：只要 threadId 变化（不管是不是 null），先清空旧状态
-    // 防止从小说 A 切换到小说 B 时，短暂显示小说 A 的历史快照
-    setItems([]);
-    setSelected(null);
-
-    if (!threadId) {
-      return;
-    }
-
+  // 拉取（或重新拉取）当前 thread 的 checkpoint 历史。
+  // useEffect（threadId 变化时）与「刷新」按钮共用这一份逻辑。
+  const load = useCallback(() => {
+    if (!threadId) return;
     setLoading(true);
     setError(null);
     getThreadHistory(threadId, 30)
@@ -73,6 +68,14 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
       .finally(() => setLoading(false));
   }, [threadId]);
 
+  useEffect(() => {
+    // 🔒 历史状态隔离：只要 threadId 变化（不管是不是 null），先清空旧状态
+    // 防止从小说 A 切换到小说 B 时，短暂显示小说 A 的历史快照
+    setItems([]);
+    setSelected(null);
+    load();
+  }, [threadId, load]);
+
   // 选中点的实际重跑目标：审稿步骤自动回退到上游 prepare_X，其余按原点。
   const replayTarget = useMemo(
     () => (selected ? resolveReplayTarget(selected, items) : null),
@@ -83,8 +86,16 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b p-3">
+      <div className="flex items-center justify-between border-b p-3">
         <h3 className="text-sm font-semibold text-gray-700">历史回溯</h3>
+        <button
+          onClick={load}
+          disabled={loading}
+          title="刷新"
+          className="flex items-center justify-center rounded px-2 py-1 text-gray-500 transition-colors hover:bg-gray-100 disabled:opacity-50"
+        >
+          <RefreshCw size={16} strokeWidth={2} className={loading ? "animate-spin" : undefined} />
+        </button>
       </div>
       {error && (
         <div className="m-2 rounded bg-red-50 p-2 text-xs text-red-600">{error}</div>

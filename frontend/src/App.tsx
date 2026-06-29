@@ -1,20 +1,24 @@
-// 顶层布局：左侧小说列表/历史，中部节点图，右侧中断表单或小说详情。
+// 顶层外壳：左侧小说列表/历史 + 整体布局 + header。每本小说的运行时（节点图 + 右侧
+// 中断/流式/详情）下放到 <NovelWorkspace key={selectedId}>，切换小说即整树重挂载，
+// 跨小说隔离由 React 协调天然保证；App 自身不再持有 useRun。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GraphView } from "./components/graph/GraphView";
 import { CheckpointTimeline } from "./components/history/CheckpointTimeline";
-import { InterruptHandler } from "./components/interrupts/InterruptHandler";
-import { ChapterReader } from "./components/novel/ChapterReader";
-import { NovelDetail } from "./components/novel/NovelDetail";
 import { NovelList } from "./components/novel/NovelList";
 import { PromptOverrideModal } from "./components/novel/PromptOverrideModal";
+import {
+  NovelWorkspace,
+  type NovelWorkspaceHandle,
+  type RunStatus,
+} from "./components/NovelWorkspace";
 import { useGraphSchema } from "./hooks/useGraphSchema";
-import { useRun } from "./hooks/useRun";
 import { useThreads } from "./hooks/useThreads";
-import { updateThreadMeta } from "./lib/langgraph";
 import type { ThreadInfo } from "./lib/langgraph";
 
 type LeftTab = "novels" | "history";
+
+const EMPTY_STATUS: RunStatus = { threadId: "", currentNode: "", running: false, error: null };
 
 export default function App() {
   const { threads, loading, error, refresh, create, delete: deleteThread } = useThreads();
@@ -23,13 +27,35 @@ export default function App() {
   );
   const [autoStart, setAutoStart] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
-  const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
   const [configThread, setConfigThread] = useState<ThreadInfo | null>(null);
-
-  const { state, stateThreadId, currentNode, interrupt, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
-    useRun(selectedId);
+  // 当前小说的运行状态（由 NovelWorkspace 上报），供 header / 错误条渲染
+  const [status, setStatus] = useState<RunStatus>(EMPTY_STATUS);
+  const workspaceRef = useRef<NovelWorkspaceHandle>(null);
+  // 最新选中的 threadId（render 期赋值），供状态上报回调按归属过滤
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
+
+  // 状态上报：按 threadId 丢弃非当前选中小说的上报（切换瞬间的陈旧上报），
+  // 再做值比较去抖（值未变则复用旧引用，避免无谓重渲染）。
+  const handleStatusChange = useCallback((s: RunStatus) => {
+    if (s.threadId !== selectedIdRef.current) return;
+    setStatus((prev) =>
+      prev.currentNode === s.currentNode &&
+      prev.running === s.running &&
+      prev.error === s.error
+        ? prev
+        : s
+    );
+  }, []);
+
+  // 选中已有小说：切换并复位运行状态（新 workspace 挂载后会重新上报）
+  const handleSelect = useCallback((id: string) => {
+    setSelectedId(id);
+    setAutoStart(false);
+    setStatus(EMPTY_STATUS);
+  }, []);
 
   // 新建小说：创建 thread → 选中 → 自动启动 run
   const handleCreate = useCallback(async () => {
@@ -37,8 +63,13 @@ export default function App() {
     if (t) {
       setSelectedId(t.thread_id);
       setAutoStart(true);
+      setStatus(EMPTY_STATUS);
     }
   }, [create]);
+
+  const handleReplay = useCallback((checkpointId: string) => {
+    workspaceRef.current?.replay(checkpointId);
+  }, []);
 
   // 持久化 selectedId，页面刷新后恢复
   useEffect(() => {
@@ -46,44 +77,14 @@ export default function App() {
     else localStorage.removeItem("selectedThreadId");
   }, [selectedId]);
 
-  // 自动启动：新创建的空 thread 立刻启动，停在 collect_user_inputs
-  useEffect(() => {
-    if (autoStart && selectedId && !interrupt && !running && !state.novel_name) {
-      setAutoStart(false);
-      void start();
-    }
-  }, [autoStart, selectedId, interrupt, running, state.novel_name, start]);
-
-  // collect_user_inputs 完成后，把 novel_name 回填到 thread metadata
-  useEffect(() => {
-    // 仅当 state 确实属于当前选中的小说时才回填，避免后台 run 完成把 A 的名字写进 B
-    if (!selectedId || !state.novel_name || stateThreadId !== selectedId) return;
-    const t = threads.find((x) => x.thread_id === selectedId);
-    if (t && !t.metadata?.novel_name) {
-      void updateThreadMeta(selectedId, { ...t.metadata, novel_name: state.novel_name });
-      void refresh();
-    }
-  }, [selectedId, stateThreadId, state.novel_name, threads, refresh]);
-
-  const handleSubmit = useCallback(
-    (value: unknown) => {
-      void resume(value);
-    },
-    [resume]
-  );
-
-  const handleReplay = useCallback((checkpointId: string) => {
-    void replay(checkpointId);
-  }, [replay]);
-
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
       <header className="flex items-center justify-between border-b bg-white px-4 py-2">
         <h1 className="text-base font-semibold text-gray-800">小说创作工作台</h1>
         <div className="flex items-center gap-3 text-xs text-gray-400">
-          <span>当前节点：{currentNode || "—"}</span>
-          {running && (
+          <span>当前节点：{status.currentNode || "—"}</span>
+          {status.running && (
             <span className="flex items-center gap-1 text-blue-500">
               <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
               运行中
@@ -92,8 +93,8 @@ export default function App() {
         </div>
       </header>
 
-      {runError && (
-        <div className="bg-red-50 px-4 py-1 text-xs text-red-600">{runError}</div>
+      {status.error && (
+        <div className="bg-red-50 px-4 py-1 text-xs text-red-600">{status.error}</div>
       )}
 
       <div className="flex flex-1 overflow-hidden">
@@ -129,10 +130,7 @@ export default function App() {
               loading={loading}
               error={error}
               selectedId={selectedId}
-              onSelect={(id) => {
-                setSelectedId(id);
-                setRightTab("detail");
-              }}
+              onSelect={handleSelect}
               onCreate={handleCreate}
               onRefresh={refresh}
               onConfig={setConfigThread}
@@ -140,6 +138,7 @@ export default function App() {
                 const success = await deleteThread(id);
                 if (success && id === selectedId) {
                   setSelectedId(null);
+                  setStatus(EMPTY_STATUS);
                 }
                 return success;
               }}
@@ -149,105 +148,31 @@ export default function App() {
           )}
         </aside>
 
-        {/* 中部：节点图 */}
-        <main className="flex-1 bg-gray-50">
-          <GraphView
-            schemaNodes={graphNodes}
-            schemaEdges={graphEdges}
-            currentNode={currentNode}
+        {/* 中部 + 右侧：单本小说运行时；key 切换即整树重挂载 */}
+        {selectedId ? (
+          <NovelWorkspace
+            key={selectedId}
+            ref={workspaceRef}
+            threadId={selectedId}
+            graphNodes={graphNodes}
+            graphEdges={graphEdges}
+            autoStart={autoStart}
+            threadMeta={threads.find((t) => t.thread_id === selectedId)?.metadata}
+            onRefreshThreads={refresh}
+            onStatusChange={handleStatusChange}
           />
-        </main>
-
-        {/* 右侧：中断表单 / 小说详情（与中部节点图各占剩余宽度一半） */}
-        <aside className="relative flex-1 overflow-y-auto border-l bg-white">
-          {interrupt ? (
-            <div className="p-4">
-              <InterruptHandler
-                payload={interrupt.payload}
-                onSubmit={handleSubmit}
-                disabled={running}
-              />
-            </div>
-          ) : running ? (
-            <div className="h-full overflow-y-auto p-4">
-              {/* 头部：节点名 + 状态指示 */}
-              <div className="mb-3 flex items-center gap-2">
-                <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-                <span className="text-sm font-medium text-gray-700">
-                  正在生成：{streamingNode || currentNode || "初始化中…"}
-                </span>
+        ) : (
+          <>
+            <main className="flex-1 bg-gray-50">
+              <GraphView schemaNodes={graphNodes} schemaEdges={graphEdges} currentNode="" />
+            </main>
+            <aside className="relative flex-1 overflow-y-auto border-l bg-white">
+              <div className="flex h-full items-center justify-center p-4 text-center text-sm text-gray-400">
+                从左侧选择一个小说，或点击「新建」开始创作。
               </div>
-              {/* 流式内容展示区 - 纯文本 + 换行，简单高效 */}
-              {streamingContent ? (
-                <div className="rounded-lg bg-gray-50 p-4 text-sm text-gray-700 whitespace-pre-wrap font-mono">
-                  {streamingContent}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center py-12 text-sm text-gray-400">
-                  正在初始化生成…
-                </div>
-              )}
-            </div>
-          ) : selectedId ? (
-            <>
-              <div className="flex border-b text-xs">
-                <button
-                  onClick={() => setRightTab("detail")}
-                  className={
-                    "flex-1 py-2 " +
-                    (rightTab === "detail"
-                      ? "border-b-2 border-blue-600 font-medium text-blue-600"
-                      : "text-gray-500")
-                  }
-                >
-                  小说详情
-                </button>
-                <button
-                  onClick={() => setRightTab("reader")}
-                  disabled={!state.novel_name}
-                  className={
-                    "flex-1 py-2 disabled:text-gray-300 " +
-                    (rightTab === "reader"
-                      ? "border-b-2 border-blue-600 font-medium text-blue-600"
-                      : "text-gray-500")
-                  }
-                >
-                  阅读章节
-                </button>
-              </div>
-              {rightTab === "detail" ? (
-                <>
-                  <NovelDetail state={state} />
-                  {!state.novel_name && (
-                    <div className="px-4 pb-4">
-                      <button
-                        onClick={() => void start()}
-                        disabled={running}
-                        className="w-full rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300"
-                      >
-                        开始创作
-                      </button>
-                    </div>
-                  )}
-                  <div className="px-4 pb-4">
-                    <button
-                      onClick={() => void refreshRun()}
-                      className="w-full rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
-                    >
-                      刷新状态
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <ChapterReader state={state} />
-              )}
-            </>
-          ) : (
-            <div className="flex h-full items-center justify-center p-4 text-center text-sm text-gray-400">
-              从左侧选择一个小说，或点击「新建」开始创作。
-            </div>
-          )}
-        </aside>
+            </aside>
+          </>
+        )}
       </div>
 
       <PromptOverrideModal

@@ -19,4 +19,7 @@ if [ -f .env.local ]; then
 fi
 
 PORT="${LANGGRAPH_PORT:-28123}"
-exec .venv/bin/langgraph dev --port "$PORT" "$@"
+# 并发运行数：langgraph dev 默认 N_JOBS_PER_WORKER=1（单 run 串行），多本小说同时跑时
+# 后台 run 会排队，新建/切换的小说卡在「初始化中」直到前一个 run 跑完。设为 >1 允许并发。
+JOBS="${LANGGRAPH_N_JOBS:-10}"
+exec .venv/bin/langgraph dev --port "$PORT" --n-jobs-per-worker "$JOBS" "$@"
