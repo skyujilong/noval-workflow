@@ -87,12 +87,19 @@ class GenreFlavor:
 
     # ── 可选：各创作步骤的题材聚焦补充（默认空串）──────────────────────────
     core_theme_focus: str = ""
+    """核心主题步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     world_building_focus: str = ""
+    """世界观构建步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     core_conflicts_focus: str = ""
+    """核心冲突步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     character_profiles_focus: str = ""
+    """角色档案步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     overall_outline_focus: str = ""
+    """总大纲步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     titles_focus: str = ""
+    """标题生成步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     arc_focus: str = ""
+    """故事弧步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
 
 
 # ── PromptPack：通用脚手架 + 风味组装 ─────────────────────────────────────────

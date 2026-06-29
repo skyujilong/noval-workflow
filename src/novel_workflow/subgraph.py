@@ -148,6 +148,24 @@ def llm_self_review(state: ReviewSubState) -> dict:
         review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
         review_prompt = review_template.format(draft=state.current_draft)
 
+    # ========================================================================
+    # 【重要】如果有人工审核意见，必须在 prompt 中突出强调！
+    # 人工审核意见优先级高于 AI 自检，LLM 必须重点检查这些意见是否已落实
+    # ========================================================================
+    human_feedback_prefix = ""
+    if state.review_feedback and not state.review_feedback.startswith("[AI审稿意见]"):
+        human_feedback_prefix = (
+            "═══════════════════════════════════════════════════════════════\n"
+            "⚠️ 【最高优先级：人工审核意见】\n"
+            "以下是人类审核员提出的修改意见，你必须重点检查草稿是否已完全落实：\n"
+            f"{state.review_feedback}\n"
+            "\n审核要求：\n"
+            "1. 逐条核对上述人工意见，确认每一条都已在草稿中落实\n"
+            "2. 如有任何一条未落实，必须明确指出并说明原因\n"
+            "3. 只有全部落实后，才能给出「无问题/通过」的结论\n"
+            "═══════════════════════════════════════════════════════════════\n\n"
+        )
+
     # For snapshot-type reviews, prepend the task_prompt (which contains the previous
     # snapshot via {prev}) so the reviewer has an explicit baseline for point 5
     # ("no entries dropped vs last snapshot") rather than having to find it buried
@@ -156,10 +174,11 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # 注意：snapshot review 不依赖完整 system_context，避免 token 爆炸
     # system_context 只传给非 snapshot 类型（如章节正文、整体大纲等需要上下文连贯的内容）
     if state.review_type in _SNAPSHOT_REVIEW_TYPES and state.task_prompt:
-        review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{review_prompt}"
+        review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{human_feedback_prefix}{review_prompt}"
         # snapshot review 只用极简系统提示，不塞完整 system_context
         system_msg = SystemMessage(content="你是严谨的小说数据审核员，负责审核各类快照数据的完整性与一致性。")
     else:
+        review_prompt = f"{human_feedback_prefix}{review_prompt}"
         system_msg = SystemMessage(content=state.system_context)
 
     messages = [
