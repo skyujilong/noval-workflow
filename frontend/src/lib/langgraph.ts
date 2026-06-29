@@ -373,7 +373,10 @@ export async function replayFromCheckpoint(
   const assistantId = await getAssistantId();
   const streamRes = client.runs.stream(threadId, assistantId, {
     input: null,
-    checkpointId,
+    // SDK 1.9.25 的 runs.stream 只映射 payload.checkpoint，不映射顶层 checkpointId
+    // （checkpointId 仍在类型里但运行时被静默丢弃，导致请求体缺 checkpoint_id → 退化成
+    // 从最新检查点恢复，历史节点重跑不生效）。必须传 checkpoint 对象；顶层命名空间为 ""。
+    checkpoint: { checkpoint_ns: "", checkpoint_id: checkpointId },
     streamMode: STREAM_MODES,
   });
 
