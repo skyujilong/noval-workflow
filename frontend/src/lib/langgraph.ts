@@ -97,6 +97,11 @@ export async function updateThreadMeta(
   await client.threads.update(threadId, { metadata });
 }
 
+/** 删除小说（thread）。 */
+export async function deleteThread(threadId: string): Promise<void> {
+  await client.threads.delete(threadId);
+}
+
 /** 获取 thread 当前 state（含 values 与 tasks/interrupts）。 */
 export async function getThreadState(threadId: string) {
   return client.threads.getState(threadId);

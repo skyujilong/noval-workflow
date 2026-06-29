@@ -17,7 +17,7 @@ import type { ThreadInfo } from "./lib/langgraph";
 type LeftTab = "novels" | "history";
 
 export default function App() {
-  const { threads, loading, error, refresh, create } = useThreads();
+  const { threads, loading, error, refresh, create, delete: deleteThread } = useThreads();
   const [selectedId, setSelectedId] = useState<string | null>(
     () => localStorage.getItem("selectedThreadId")
   );
@@ -135,6 +135,13 @@ export default function App() {
               onCreate={handleCreate}
               onRefresh={refresh}
               onConfig={setConfigThread}
+              onDelete={async (id) => {
+                const success = await deleteThread(id);
+                if (success && id === selectedId) {
+                  setSelectedId(null);
+                }
+                return success;
+              }}
             />
           ) : (
             <CheckpointTimeline threadId={selectedId} onReplay={handleReplay} />

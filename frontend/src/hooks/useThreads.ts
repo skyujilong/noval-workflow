@@ -1,7 +1,7 @@
-// 小说（thread）列表管理：列出 / 新建 / 选择。
+// 小说（thread）列表管理：列出 / 新建 / 选择 / 删除。
 
 import { useCallback, useEffect, useState } from "react";
-import { createThread, listThreads, type ThreadInfo } from "../lib/langgraph";
+import { createThread, deleteThread, listThreads, type ThreadInfo } from "../lib/langgraph";
 
 export function useThreads() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
@@ -38,5 +38,16 @@ export function useThreads() {
     }
   }, [refresh]);
 
-  return { threads, loading, error, refresh, create };
+  const delete_ = useCallback(async (threadId: string): Promise<boolean> => {
+    try {
+      await deleteThread(threadId);
+      await refresh();
+      return true;
+    } catch (e) {
+      setError(`删除小说失败：${(e as Error).message}`);
+      return false;
+    }
+  }, [refresh]);
+
+  return { threads, loading, error, refresh, create, delete: delete_ };
 }
