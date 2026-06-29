@@ -1,4 +1,5 @@
-// 按小说的提示词覆盖弹窗：用题材默认值预填每个编辑框，仅保存与默认不同的字段。
+// 按小说的提示词覆盖抽屉：用题材默认值预填每个编辑框，仅保存与默认不同的字段。
+// 字段较多，故用右侧抽屉（占满视口高度、内容区纵向滚动），头/脚固定。
 // 始终提供「还原默认」，防止改崩。存储不入 langgraph state，改完即时生效、对历史回放也生效。
 
 import { useCallback, useEffect, useState } from "react";
@@ -8,13 +9,13 @@ import {
 } from "../../lib/langgraph";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -112,24 +113,31 @@ export function PromptOverrideModal({ open, novelName, genre, onClose }: Props) 
   }, [values, defaults, novelName, onClose]);
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>提示词配置 · {novelName || "未命名"}</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-xl"
+      >
+        <SheetHeader className="border-b px-6 py-4">
+          <SheetTitle>提示词配置 · {novelName || "未命名"}</SheetTitle>
+          <SheetDescription>
             题材【{genre || "通用"}】默认提示词已预填。仅保存与默认不同的内容；留空或点「还原」即用默认。
             修改即时生效，对该小说后续生成（含历史回放）均生效。
-          </DialogDescription>
-        </DialogHeader>
+          </SheetDescription>
+        </SheetHeader>
 
         {error && (
-          <div className="rounded bg-red-50 p-2 text-xs text-red-600">{error}</div>
+          <div className="mx-6 mt-4 rounded bg-red-50 p-2 text-xs text-red-600">
+            {error}
+          </div>
         )}
 
         {loading ? (
-          <div className="py-10 text-center text-sm text-gray-400">加载中…</div>
+          <div className="flex-1 py-10 text-center text-sm text-gray-400">
+            加载中…
+          </div>
         ) : (
-          <div className="space-y-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
             {FIELDS.map((f) => {
               const isCustom =
                 (values[f.key] ?? "").trim() !== (defaults[f.key] ?? "").trim() &&
@@ -165,7 +173,7 @@ export function PromptOverrideModal({ open, novelName, genre, onClose }: Props) 
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:gap-2">
+        <SheetFooter className="gap-2 border-t px-6 py-4 sm:gap-2">
           <Button
             variant="outline"
             onClick={restoreAll}
@@ -180,8 +188,8 @@ export function PromptOverrideModal({ open, novelName, genre, onClose }: Props) 
           <Button onClick={handleSave} disabled={loading || saving}>
             {saving ? "保存中…" : "保存"}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
