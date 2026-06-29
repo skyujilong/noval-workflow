@@ -6,7 +6,7 @@
 // - assistant 通过 graph_id === "noval_workflow" 选取（langgraph.json 配置）。
 // - interrupt 检测：run 结束后查 threads.getState().tasks[].interrupts，非空即处于中断。
 
-import { Client } from "@langchain/langgraph-sdk";
+import { Client, type Checkpoint } from "@langchain/langgraph-sdk";
 import type { NovelState } from "./types";
 
 // 平台 API 地址：优先用环境变量，默认直连本地 langgraph dev（端口与 dev-backend.sh 一致）。
@@ -112,10 +112,12 @@ export async function getThreadState(threadId: string) {
  *  子图（chapter_edit、arc_edit 等）的历史会被隐藏，导致历史列表不完整。
  */
 export async function getThreadHistory(threadId: string, limit = 100) {
+  // include_subgraphs：平台运行时 API 支持，但 SDK 类型未声明该字段，
+  // 断言到 SDK 选项类型以绕过多余属性检查（值在运行时仍会被发送）。
   return client.threads.getHistory(threadId, {
     limit,
     include_subgraphs: true,  // 🔐 必须！包含子图 checkpoint，否则子图历史看不到
-  });
+  } as Parameters<typeof client.threads.getHistory>[1]);
 }
 
 /**
@@ -341,7 +343,7 @@ export async function runStream(
   const streamRes = client.runs.stream(threadId, assistantId, {
     input: opts?.input ?? null,
     command: opts?.resumeValue !== undefined ? { resume: opts.resumeValue } : undefined,
-    streamMode: STREAM_MODES,
+    streamMode: [...STREAM_MODES],
   });
 
   for await (const chunk of streamRes) {
@@ -363,7 +365,7 @@ export async function joinRunStream(
   onEvent: (e: StreamEvent) => void
 ): Promise<void> {
   const stream = client.runs.joinStream(threadId, runId, {
-    streamMode: STREAM_MODES,
+    streamMode: [...STREAM_MODES],
     cancelOnDisconnect: false,
   });
   for await (const chunk of stream) {
@@ -387,8 +389,12 @@ export async function replayFromCheckpoint(
     // SDK 1.9.25 的 runs.stream 只映射 payload.checkpoint，不映射顶层 checkpointId
     // （checkpointId 仍在类型里但运行时被静默丢弃，导致请求体缺 checkpoint_id → 退化成
     // 从最新检查点恢复，历史节点重跑不生效）。必须传 checkpoint 对象；顶层命名空间为 ""。
-    checkpoint: { checkpoint_ns: "", checkpoint_id: checkpointId },
-    streamMode: STREAM_MODES,
+    // SDK 类型要求 checkpoint_map 等字段，运行时只需 ns + id；断言到 SDK 类型，运行时不变。
+    checkpoint: { checkpoint_ns: "", checkpoint_id: checkpointId } as Omit<
+      Checkpoint,
+      "thread_id"
+    >,
+    streamMode: [...STREAM_MODES],
   });
 
   for await (const chunk of streamRes) {

@@ -26,7 +26,7 @@ export default function App() {
   const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
   const [configThread, setConfigThread] = useState<ThreadInfo | null>(null);
 
-  const { state, currentNode, interrupt, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
+  const { state, stateThreadId, currentNode, interrupt, running, error: runError, start, resume, replay, refresh: refreshRun, streamingContent, streamingNode } =
     useRun(selectedId);
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
@@ -56,13 +56,14 @@ export default function App() {
 
   // collect_user_inputs 完成后，把 novel_name 回填到 thread metadata
   useEffect(() => {
-    if (!selectedId || !state.novel_name) return;
+    // 仅当 state 确实属于当前选中的小说时才回填，避免后台 run 完成把 A 的名字写进 B
+    if (!selectedId || !state.novel_name || stateThreadId !== selectedId) return;
     const t = threads.find((x) => x.thread_id === selectedId);
     if (t && !t.metadata?.novel_name) {
       void updateThreadMeta(selectedId, { ...t.metadata, novel_name: state.novel_name });
       void refresh();
     }
-  }, [selectedId, state.novel_name, threads, refresh]);
+  }, [selectedId, stateThreadId, state.novel_name, threads, refresh]);
 
   const handleSubmit = useCallback(
     (value: unknown) => {
