@@ -26,13 +26,22 @@ _REGISTRY: dict[str, GenreFlavor] = {
 _DEFAULT_KEY = "通用"
 
 
-def get_prompt_pack(genre: str) -> PromptPack:
+def get_prompt_pack(genre: str, novel_name: str = "") -> PromptPack:
     """按题材获取提示词包。
 
     精确匹配注册表；未命中时回退到通用包。返回的 PromptPack.genre 保留传入的
     genre 原值（便于排查），但 flavor 使用实际命中的题材包。
+
+    当传入 novel_name 时，读取该小说的 prompt_overrides.json 并把覆盖项合并进 flavor
+    （局部覆盖，留空字段回退题材默认）。覆盖项不入 langgraph state，每次调用新鲜读取，
+    故编辑后即时生效、对历史回放也生效。novel_name 默认为空时保持原行为（向后兼容）。
     """
     flavor = _REGISTRY.get(genre or "", _REGISTRY[_DEFAULT_KEY])
+    if novel_name:
+        # 惰性 import：overrides -> context -> prompts.__init__ -> registry 会成环
+        from noval_workflow.prompts.overrides import apply_overrides, load_overrides
+
+        flavor = apply_overrides(flavor, load_overrides(novel_name))
     return PromptPack(genre, flavor)
 
 

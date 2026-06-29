@@ -5,6 +5,7 @@ from typing import Annotated
 
 @dataclass
 class ReviewSubState:
+    novel_name: str = ""        # 小说名称（桥接字段：按小说加载提示词覆盖；由父图 NovelState.novel_name 自动映射）
     genre: str = ""             # 小说类型（桥接字段：按题材加载提示词包；由父图 NovelState.genre 自动映射）
     system_context: str = ""    # 系统提示词（来自 build_foundation_context）
     task_prompt: str = ""       # 本次生成任务的具体指令（由父图 prepare 节点写入）

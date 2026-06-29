@@ -1,6 +1,6 @@
 // 历史回溯面板：列出 thread 的 checkpoint，点击查看快照，支持从此点重跑。
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getThreadHistory } from "../../lib/langgraph";
 import { EMPTY_NOVEL_STATE, type NovelState } from "../../lib/types";
 
@@ -14,6 +14,28 @@ interface CpItem {
   createdAt: string;
   next: string[];
   state: NovelState;
+}
+
+// 审稿步骤(review_X)重跑时，回退到其上游 prepare_X 检查点再重跑。
+// 原因：prepare_* 才是读取「按小说提示词覆盖」的唯一入口（registry.get_prompt_pack），
+// 它把解析后的 task_prompt/system_context 烤进 checkpoint 状态，审稿子图只消费这两个
+// 烤好的字段。若直接从 review_X 重跑会复用旧烤死值，改了提示词配置也不生效；
+// 回退到 prepare_X 重跑 → prepare 重新读盘 → 新提示词即时生效。
+function resolveReplayTarget(
+  sel: CpItem,
+  items: CpItem[]
+): { checkpointId: string; viaPrepare?: string } {
+  const reviewNode = sel.next.find((n) => n.startsWith("review_"));
+  if (!reviewNode) return { checkpointId: sel.checkpointId };
+  const prepareNode = "prepare_" + reviewNode.slice("review_".length);
+  // items 按时间倒序（index 0 最新）；prepare_X 早于 review_X → 索引更大，向后找最近的一个。
+  const selIdx = items.findIndex((it) => it.checkpointId === sel.checkpointId);
+  for (let i = selIdx + 1; i < items.length; i++) {
+    if (items[i].next.includes(prepareNode)) {
+      return { checkpointId: items[i].checkpointId, viaPrepare: prepareNode };
+    }
+  }
+  return { checkpointId: sel.checkpointId }; // 兜底：历史被截断找不到 prepare 时按原点重跑
 }
 
 export function CheckpointTimeline({ threadId, onReplay }: Props) {
@@ -47,9 +69,11 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
       .finally(() => setLoading(false));
   }, [threadId]);
 
-  const replay = (cp: CpItem) => {
-    onReplay(cp.checkpointId);
-  };
+  // 选中点的实际重跑目标：审稿步骤自动回退到上游 prepare_X，其余按原点。
+  const replayTarget = useMemo(
+    () => (selected ? resolveReplayTarget(selected, items) : null),
+    [selected, items]
+  );
 
   if (!threadId) return null;
 
@@ -91,12 +115,17 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-600">快照预览</span>
             <button
-              onClick={() => replay(selected)}
+              onClick={() => replayTarget && onReplay(replayTarget.checkpointId)}
               className="rounded bg-blue-600 px-2 py-0.5 text-xs text-white hover:bg-blue-700"
             >
               从此点重跑
             </button>
           </div>
+          {replayTarget?.viaPrepare && (
+            <div className="mb-1 rounded bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-700">
+              审稿步骤：重跑将从上游 <b>{replayTarget.viaPrepare}</b> 开始，以重新读取该小说的提示词配置。
+            </div>
+          )}
           <div className="max-h-40 overflow-y-auto rounded bg-white p-2 text-xs text-gray-700">
             <div>
               <b>小说：</b>

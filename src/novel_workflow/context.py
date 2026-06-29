@@ -88,7 +88,7 @@ def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = 
     parts: list[str] = []
 
     # 系统身份前缀按题材加载（提示词包不入 state，仅按 state.genre 取用）
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     parts.append(f"{pack.flavor.system_identity}\n以下是本次作品的核心设定，请严格遵守：\n")
 
     # User inputs

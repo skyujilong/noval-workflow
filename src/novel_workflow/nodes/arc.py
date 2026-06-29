@@ -10,7 +10,7 @@ from noval_workflow.state import NovelState, reset_review_fields
 # ── arc outline ───────────────────────────────────────────────────────────────
 
 def prepare_arc_outline(state: NovelState) -> dict:
-    pack = get_prompt_pack(state.genre)
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
         "task_prompt": pack.arc_outline_prompt(state),
