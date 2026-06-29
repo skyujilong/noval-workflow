@@ -49,6 +49,9 @@ export function useRun(threadId: string | null): UseRunResult {
   const [error, setError] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState("");
   const [streamingNode, setStreamingNode] = useState("");
+  // 🔒 运行状态隔离：记录当前正在运行的 threadId
+  // 防止小说 A 在运行时，切换到小说 B 却显示 running 状态
+  const runningThreadIdRef = useRef<string | null>(null);
   // 防止并发 run
   const runningRef = useRef(false);
   // 用 ref 存储流式状态的最新值，避免闭包捕获过时状态（解决 P0 stale closure）
@@ -106,12 +109,14 @@ export function useRun(threadId: string | null): UseRunResult {
         if (activeRuns.length > 0) {
           setRunning(true);
           runningRef.current = true;
+          runningThreadIdRef.current = threadId;
           try {
             await joinRunStream(threadId, activeRuns[0].run_id, handleStreamEvent);
           } catch (e) {
             setError(`等待运行完成失败：${(e as Error).message}`);
           } finally {
             runningRef.current = false;
+            runningThreadIdRef.current = null;
             setRunning(false);
           }
           // run 结束后重新拉取状态（可能已产生新中断）
@@ -123,9 +128,9 @@ export function useRun(threadId: string | null): UseRunResult {
     } catch (e) {
       setError(`获取状态失败：${(e as Error).message}`);
     }
-  }, [threadId]);
+  }, [threadId, handleStreamEvent]);
 
-  // 切换 thread 时刷新
+  // 切换 thread 时刷新并重置运行状态
   useEffect(() => {
     setState(EMPTY_NOVEL_STATE);
     setCurrentNode("");
@@ -134,12 +139,19 @@ export function useRun(threadId: string | null): UseRunResult {
     streamingStateRef.current = { node: "", content: "" };
     setStreamingContent("");
     setStreamingNode("");
+    // 🔒 运行状态隔离：切换小说时，如果当前不是正在运行此 thread，则重置 running
+    // 防止小说 A 运行时，切换到小说 B 却显示"正在生成"
+    if (threadId !== runningThreadIdRef.current) {
+      setRunning(false);
+      runningRef.current = false;
+    }
     if (threadId) void refresh();
   }, [threadId, refresh]);
 
   const start = useCallback(async () => {
     if (!threadId || runningRef.current) return;
     runningRef.current = true;
+    runningThreadIdRef.current = threadId;
     setRunning(true);
     setError(null);
     // 重置流式状态（包括 ref）
@@ -154,6 +166,7 @@ export function useRun(threadId: string | null): UseRunResult {
       setError(`启动失败：${(e as Error).message}`);
     } finally {
       runningRef.current = false;
+      runningThreadIdRef.current = null;
       setRunning(false);
     }
   }, [threadId, refresh, handleStreamEvent]);
@@ -162,6 +175,7 @@ export function useRun(threadId: string | null): UseRunResult {
     async (value: unknown) => {
       if (!threadId || runningRef.current) return;
       runningRef.current = true;
+      runningThreadIdRef.current = threadId;
       setRunning(true);
       setError(null);
       // 重置流式状态（包括 ref）
@@ -180,6 +194,7 @@ export function useRun(threadId: string | null): UseRunResult {
         await refresh();
       } finally {
         runningRef.current = false;
+        runningThreadIdRef.current = null;
         setRunning(false);
       }
     },
@@ -190,6 +205,7 @@ export function useRun(threadId: string | null): UseRunResult {
     async (checkpointId: string) => {
       if (!threadId || runningRef.current) return;
       runningRef.current = true;
+      runningThreadIdRef.current = threadId;
       setRunning(true);
       setError(null);
       setInterrupt(null);
@@ -205,6 +221,7 @@ export function useRun(threadId: string | null): UseRunResult {
         await refresh();
       } finally {
         runningRef.current = false;
+        runningThreadIdRef.current = null;
         setRunning(false);
       }
     },
@@ -219,6 +236,9 @@ export function useRun(threadId: string | null): UseRunResult {
     streamingStateRef.current = { node: "", content: "" };
     setStreamingContent("");
     setStreamingNode("");
+    setRunning(false);
+    runningRef.current = false;
+    runningThreadIdRef.current = null;
   }, []);
 
   return {

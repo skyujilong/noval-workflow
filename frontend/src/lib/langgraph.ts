@@ -107,9 +107,15 @@ export async function getThreadState(threadId: string) {
   return client.threads.getState(threadId);
 }
 
-/** 获取 thread 的 checkpoint 历史（用于回溯）。 */
+/** 获取 thread 的 checkpoint 历史（用于回溯）。
+ *  🔍 关键参数：include_subgraphs = true —— 必须加，否则只返回主图 checkpoint，
+ *  子图（chapter_edit、arc_edit 等）的历史会被隐藏，导致历史列表不完整。
+ */
 export async function getThreadHistory(threadId: string, limit = 100) {
-  return client.threads.getHistory(threadId, { limit });
+  return client.threads.getHistory(threadId, {
+    limit,
+    include_subgraphs: true,  // 🔐 必须！包含子图 checkpoint，否则子图历史看不到
+  });
 }
 
 /**

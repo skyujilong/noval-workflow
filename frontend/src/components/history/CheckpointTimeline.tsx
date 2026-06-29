@@ -45,14 +45,18 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
   const [selected, setSelected] = useState<CpItem | null>(null);
 
   useEffect(() => {
+    // 🔒 历史状态隔离：只要 threadId 变化（不管是不是 null），先清空旧状态
+    // 防止从小说 A 切换到小说 B 时，短暂显示小说 A 的历史快照
+    setItems([]);
+    setSelected(null);
+
     if (!threadId) {
-      setItems([]);
-      setSelected(null);
       return;
     }
+
     setLoading(true);
     setError(null);
-    getThreadHistory(threadId, 100)
+    getThreadHistory(threadId, 30)
       .then((hist) => {
         const list: CpItem[] = hist.map((h) => ({
           checkpointId:
