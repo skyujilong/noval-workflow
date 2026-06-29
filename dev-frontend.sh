@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# 启动前端：Vite dev server，默认端口 15173（偏僻端口），可用 VITE_PORT 覆盖。
-# 默认直连后端 http://127.0.0.1:28123；如后端端口非默认，设置 VITE_LANGGRAPH_API_URL。
+# 启动前端：Vite dev server，默认端口 15173（偏僻端口）。
+# 端口优先从 .env / .env.local 的 VITE_PORT 读取，也可命令行 VITE_PORT=xxx 覆盖。
+# 后端 API 地址：VITE_LANGGRAPH_API_URL，.env 中支持 ${LANGGRAPH_PORT} 变量插值自动同步。
 # 首次运行前请先在 frontend/ 下 npm install。
 set -euo pipefail
 
-cd "$(dirname "$0")/frontend"
+cd "$(dirname "$0")"
+
+# 加载根目录 .env（如存在）；命令行显式设置的优先级更高
+if [ -f .env ]; then
+  set -a; . .env; set +a
+fi
+if [ -f .env.local ]; then
+  set -a; . .env.local; set +a
+fi
+
+cd frontend
 
 # 依赖未安装时给出明确提示，而非 vite 报一堆错
 if [ ! -d node_modules ]; then

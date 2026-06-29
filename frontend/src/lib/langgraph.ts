@@ -11,9 +11,11 @@ import type { NovelState } from "./types";
 
 // 平台 API 地址：优先用环境变量，默认直连本地 langgraph dev（端口与 dev-backend.sh 一致）。
 // （直连而非走 vite 代理，避免 SSE 流在代理层出问题；langgraph dev 默认允许 localhost 跨域。）
+// VITE_LANGGRAPH_PORT 和 VITE_LANGGRAPH_API_URL 由 vite.config.ts 从 .env/.env.local 读取并注入。
+const langgraphPort = (import.meta.env.VITE_LANGGRAPH_PORT as string | undefined) ?? "28123";
+const defaultApiUrl = `http://127.0.0.1:${langgraphPort}`;
 export const API_URL =
-  (import.meta.env.VITE_LANGGRAPH_API_URL as string | undefined) ??
-  "http://127.0.0.1:28123";
+  (import.meta.env.VITE_LANGGRAPH_API_URL as string | undefined) ?? defaultApiUrl;
 
 // langgraph.json 中配置的 graph 名
 const GRAPH_ID = "noval_workflow";
