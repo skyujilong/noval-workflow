@@ -13,6 +13,14 @@ class InterruptType(str, Enum):
     """中断类型枚举，作为前后端 API 契约的一部分。"""
 
     # ============================================================
+    # Phase -1：灵感脑爆（可选，入口分叉）
+    # ============================================================
+    BRAINSTORM_GATE = "brainstorm_gate"  # 入口门：进脑爆 / 直接填表
+    BRAINSTORM_CHAT = "brainstorm_chat"  # 多轮聊天等待用户消息
+    BRAINSTORM_CORE_THEME_CONFIRM = "brainstorm_core_theme_confirm"  # 核心主题轻量确认
+    BRAINSTORM_WORLD_BUILDING_CONFIRM = "brainstorm_world_building_confirm"  # 世界观轻量确认
+
+    # ============================================================
     # 用户输入阶段（新建小说）
     # ============================================================
     USER_INPUTS = "user_inputs"  # 基础参数输入

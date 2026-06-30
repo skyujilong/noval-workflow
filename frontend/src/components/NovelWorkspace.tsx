@@ -14,11 +14,13 @@ import {
 } from "react";
 import { GraphView } from "./graph/GraphView";
 import { InterruptHandler } from "./interrupts/InterruptHandler";
+import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
 import { useRun } from "../hooks/useRun";
 import { updateThreadMeta } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
+import { BRAINSTORM_END, InterruptType } from "../lib/interruptTypes";
 
 export interface NovelWorkspaceHandle {
   replay: (checkpointId: string) => void;
@@ -75,6 +77,31 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     } = useRun(threadId);
     const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
 
+    // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond）
+    // 两态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
+    const interruptType =
+      interrupt && typeof interrupt.payload === "object" && interrupt.payload
+        ? (interrupt.payload as { type?: string }).type
+        : undefined;
+    // 仅聊天循环（chat/respond/extract）命中连续视图；gate 与 confirm 走普通表单，故排除。
+    const inBrainstorm =
+      interruptType === InterruptType.BRAINSTORM_CHAT ||
+      (running &&
+        (currentNode === "brainstorm_chat" ||
+          currentNode === "brainstorm_respond" ||
+          currentNode === "brainstorm_extract" ||
+          streamingNode === "brainstorm_respond"));
+
+    // 脑爆 AI 回复的流式打字机门控：只要在脑爆运行中、有流式增量内容，就显示。
+    // 不强绑 streamingNode === "brainstorm_respond" 精确匹配——回复期间 streamingNode 常被
+    // 上一拍 brainstorm_chat 的 updates 事件占着，精确匹配会一直 false，导致 token 在
+    // streamingContent 里累积却从不渲染（最终只在 refresh 后以历史气泡整段出现）。
+    // 改为「有增量即流」，并用 streamingNode 显式排除 extract（其产出是 JSON，不该进聊天气泡）。
+    const brainstormStreaming =
+      running &&
+      streamingContent.length > 0 &&
+      streamingNode !== "brainstorm_extract";
+
     // 暴露 replay 给 App（左侧「历史」面板「从此点重跑」）
     useImperativeHandle(ref, () => ({ replay }), [replay]);
 
@@ -111,7 +138,18 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
 
         {/* 右侧：中断表单 / 流式 / 小说详情（顺序刻意保留：resume 期保留旧中断表单） */}
         <aside className="relative flex-1 overflow-y-auto border-l bg-white">
-          {interrupt ? (
+          {inBrainstorm ? (
+            <BrainstormChat
+              summary={state.brainstorm_summary ?? ""}
+              history={state.brainstorm_history ?? []}
+              streaming={brainstormStreaming}
+              streamingContent={streamingContent}
+              awaitingInput={interruptType === InterruptType.BRAINSTORM_CHAT}
+              onSend={(m) => void resume(m)}
+              onEnd={() => void resume(BRAINSTORM_END)}
+              disabled={running}
+            />
+          ) : interrupt ? (
             <div className="p-4">
               <InterruptHandler
                 payload={interrupt.payload}

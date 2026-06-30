@@ -6,6 +6,11 @@
 // ── InterruptType 枚举（镜像 src/novel_workflow/interrupt_types.py）──────────────
 // 作为前后端 API 契约：每个 interrupt 点的"唯一标识"。新增 interrupt 时需同步两边。
 export const InterruptType = {
+  // Phase -1：灵感脑爆（可选，入口分叉）
+  BRAINSTORM_GATE: "brainstorm_gate",
+  BRAINSTORM_CHAT: "brainstorm_chat",
+  BRAINSTORM_CORE_THEME_CONFIRM: "brainstorm_core_theme_confirm",
+  BRAINSTORM_WORLD_BUILDING_CONFIRM: "brainstorm_world_building_confirm",
   // 用户输入阶段
   USER_INPUTS: "user_inputs",
   USER_INPUTS_ERROR: "user_inputs_error",
@@ -61,6 +66,22 @@ export interface UserInputsErrorPayload {
 export interface MessageOnlyPayload {
   type: InterruptTypeValue;
   message: string;
+}
+
+/** 脑爆多轮聊天 payload（brainstorm_chat）：携带概要 + 完整近期历史，前端直接渲染。 */
+export interface BrainstormChatPayload {
+  type: InterruptTypeValue;
+  message: string;
+  brainstorm_summary: string;
+  brainstorm_history: Array<{ role: "human" | "ai"; content: string }>;
+}
+
+/** 脑爆产物轻量确认 payload（core_theme / world_building）：展示内容供确认或编辑。 */
+export interface BrainstormConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  field: string;
+  content: string;
 }
 export interface AskContinuePayload {
   type: InterruptTypeValue;
@@ -130,6 +151,9 @@ export interface ForeshadowPruneConfirmPayload {
 // ── type → 表单种类 分发 ───────────────────────────────────────────────────────
 
 export type FormKind =
+  | "brainstorm_gate"
+  | "brainstorm_chat"
+  | "brainstorm_confirm"
   | "user_inputs"
   | "human_review"
   | "ask_continue"
@@ -148,6 +172,11 @@ export type FormKind =
  * 新增 interrupt 类型时必须在此登记，否则落到 unknown 显式暴露。
  */
 const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
+  [InterruptType.BRAINSTORM_GATE]: "brainstorm_gate",
+  [InterruptType.BRAINSTORM_CHAT]: "brainstorm_chat",
+  [InterruptType.BRAINSTORM_CORE_THEME_CONFIRM]: "brainstorm_confirm",
+  [InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM]: "brainstorm_confirm",
+
   [InterruptType.USER_INPUTS]: "user_inputs",
   [InterruptType.USER_INPUTS_ERROR]: "user_inputs",
 
@@ -214,6 +243,13 @@ export function directionTitleOf(type: unknown): string {
 }
 
 // ── resume 值构造辅助 ─────────────────────────────────────────────────────────
+
+/** 脑爆 gate：进入脑爆（须 ∈ 后端 _ENTER_SIGNALS） */
+export const BRAINSTORM_ENTER = "脑爆";
+/** 脑爆 gate：直接走普通流程（非 enter 信号即可） */
+export const BRAINSTORM_DIRECT = "直接";
+/** 脑爆聊天：结束信号（须 ∈ 后端 _END_SIGNALS） */
+export const BRAINSTORM_END = "结束脑爆";
 
 /** resume 时表示「执行」的值（后端 step_entry/arc_entry 用 _SKIP_WORDS 判定跳过，"yes" 非跳过词即执行） */
 export const EXECUTE_VALUE = "yes";

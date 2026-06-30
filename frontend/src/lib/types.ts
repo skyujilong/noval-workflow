@@ -9,6 +9,12 @@ export interface ReviewHistoryEntry {
 
 /** NovelState（state.py）— 平台 thread state 的 values 结构 */
 export interface NovelState {
+  // Phase -1：灵感脑爆（可选，入口分叉）
+  brainstorm_history: ReviewHistoryEntry[];
+  brainstorm_summary: string;
+  brainstorm_done: boolean;
+  from_brainstorm: boolean;
+
   // Phase 0：用户输入
   novel_name: string;
   genre: string;
@@ -56,6 +62,10 @@ export interface NovelState {
 
 /** 空状态，用于初始展示 */
 export const EMPTY_NOVEL_STATE: NovelState = {
+  brainstorm_history: [],
+  brainstorm_summary: "",
+  brainstorm_done: false,
+  from_brainstorm: false,
   novel_name: "",
   genre: "",
   writing_style: "",

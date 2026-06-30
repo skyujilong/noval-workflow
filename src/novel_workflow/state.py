@@ -24,6 +24,14 @@ class ReviewSubState:
 
 @dataclass
 class NovelState:
+    # ── Phase -1：灵感脑爆（可选，入口分叉）──────────────────────────────────────
+    brainstorm_history: list = field(default_factory=list)
+    # 脑爆多轮对话历史，格式 [{"role": "human"|"ai", "content": str}]。
+    # 覆盖语义（节点每次返回完整新 list）——切勿加 operator.add，否则压缩无法移除旧条目。
+    brainstorm_summary: str = ""    # 早期对话轮次的 LLM 压缩概要（滑出保留窗口的部分并入此处）
+    brainstorm_done: bool = False   # 用户已结束脑爆（brainstorm_chat 路由用）
+    from_brainstorm: bool = False   # 入口分叉标志：True=经脑爆而来。破除 collect 跳过短路 + collect 后路由。全程不重置。
+
     # ── Phase 0：用户输入 ────────────────────────────────────────────────────────
     novel_name: str = ""            # 小说名称
     genre: str = ""                 # 小说类型（玄幻/都市/科幻等）

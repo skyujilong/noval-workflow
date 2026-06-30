@@ -63,14 +63,19 @@ export function useRun(threadId: string): UseRunResult {
   const [error, setError] = useState<string | null>(null);
   // 防止同一小说并发 run
   const runningRef = useRef(false);
-  // 实例存活标记：卸载后丢弃后台 run 仍在产生的流式回调
+  // 实例存活标记：卸载后丢弃后台 run 仍在产生的流式回调。
+  // ⚠️ 必须在 setup 里把它重新置 true（root-cause fix）：
+  // React 18 StrictMode（dev）挂载会跑 setup→cleanup→setup，cleanup 把它置 false 后，
+  // 若 setup 不重置，remount 后它将**永远**是 false → onEvent 的 `if (!aliveRef.current) return`
+  // 丢弃所有流式事件 → 打字机永不更新，内容只在末尾 refresh 整段冒出。生产环境无此双调用，
+  // 但仍应对称地在 setup 置位，保证语义正确、且 dev 行为与生产一致。
   const aliveRef = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
       aliveRef.current = false;
-    },
-    []
-  );
+    };
+  }, []);
 
   // 统一流式入口：实例已卸载则丢弃；error 事件转 error 态，其余交给展示层翻译。
   const onEvent = useCallback(

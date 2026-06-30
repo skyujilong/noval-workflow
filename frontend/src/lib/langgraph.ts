@@ -238,14 +238,24 @@ export function processStreamChunk(
   chunk: unknown,
   onEvent: (e: StreamEvent) => void
 ): void {
-  // 防御式编程：处理 null/undefined/非数组 chunk（避免 "chunk is not iterable" 崩溃）
-  // LangGraph SDK 在网络波动、连接重置、特殊控制帧时可能返回异常 chunk
-  if (!chunk || !Array.isArray(chunk) || chunk.length < 2) {
+  // ⚠️ 形态归一化（root-cause fix）：
+  // @langchain/langgraph-sdk 1.9.25 的 runs.stream()/replay 产出的是 SSE StreamPart 对象
+  //   { id, event, data }（与 joinStream 同形），**不是** 旧版的 [event, data] 元组。
+  // 旧代码用 `!Array.isArray(chunk)` 当非法 chunk 直接丢弃 → 每一个流式块都被吞掉，
+  // message_chunk 事件永不发出，前端打字机自然永不更新（内容只在末尾靠快照 refresh 整段冒出）。
+  // 这里两种形态都接：对象取 .event/.data，数组取 [0]/[1]，跨 SDK 版本都稳。
+  let event: string | undefined;
+  let data: unknown;
+  if (Array.isArray(chunk) && chunk.length >= 2) {
+    [event, data] = chunk as [string, unknown];
+  } else if (chunk && typeof chunk === "object" && "event" in chunk) {
+    event = (chunk as { event?: string }).event;
+    data = (chunk as { data?: unknown }).data;
+  } else {
     onEvent({ event: "metadata", data: { invalidChunk: chunk } });
     return;
   }
 
-  const [event, data] = chunk as [string, unknown];
   if (event === "updates") {
     const d = data as Record<string, unknown>;
     const node = Object.keys(d ?? {})[0] ?? "";
@@ -265,7 +275,11 @@ export function processStreamChunk(
     }
     const [msg, meta] = data as [Record<string, unknown>, Record<string, unknown>];
     const content = extractMessageContent(msg);
-    const node = (meta?.node as string) || "";
+    // 节点名取自 messages-tuple metadata 的 `langgraph_node`（LangGraph 标准字段）。
+    // 旧代码误读不存在的 `meta.node`，导致每个 message_chunk 的 node 恒为 ""，
+    // 依赖精确节点匹配的流式视图（如脑爆 brainstorm_respond 打字机）因此永不激活。
+    // 保留 meta.node 作兜底，兼容潜在的非平台来源。
+    const node = (meta?.langgraph_node as string) || (meta?.node as string) || "";
     if (content.length > 0) {
       onEvent({ event: "message_chunk", data: { content }, node });
     }
@@ -317,7 +331,8 @@ export function processJoinStreamChunk(
     }
     const [msg, meta] = data as [Record<string, unknown>, Record<string, unknown>];
     const content = extractMessageContent(msg);
-    const node = (meta?.node as string) || "";
+    // 同 processStreamChunk：节点名取 `langgraph_node`，而非不存在的 `meta.node`。
+    const node = (meta?.langgraph_node as string) || (meta?.node as string) || "";
     if (content.length > 0) {
       onEvent({ event: "message_chunk", data: { content }, node });
     }

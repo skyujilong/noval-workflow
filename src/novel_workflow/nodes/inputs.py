@@ -10,9 +10,12 @@ from noval_workflow.state import NovelState
 
 def collect_user_inputs(state: NovelState) -> dict:
     """Interrupt to collect the 6 basic novel parameters from the user."""
-    # Allow pre-populated values via thread input (langgraph dev API)
+    # Allow pre-populated values via thread input (langgraph dev API).
+    # 脑爆来源（from_brainstorm）即使字段全填也不短路——强制弹表单让用户复核/编辑
+    # 脑爆抽取的基础信息（已预填进 current_values）。
     if (
-        state.novel_name
+        not state.from_brainstorm
+        and state.novel_name
         and state.genre
         and state.writing_style
         and state.target_audience

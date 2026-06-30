@@ -4,6 +4,8 @@
 import { useRef } from "react";
 import { formKindOfPayload } from "../../lib/interruptTypes";
 import { ArcConfirmForm } from "./ArcConfirmForm";
+import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
+import { BrainstormGateForm } from "./BrainstormGateForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
 import { DirectionForm } from "./DirectionForm";
@@ -29,6 +31,27 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
   const formKey = String((payload as { type?: unknown })?.type ?? "unknown");
 
   switch (kind) {
+    // brainstorm_chat 不在此处渲染——由 NovelWorkspace 接管为连续聊天视图。
+    case "brainstorm_gate":
+      return (
+        <BrainstormGateForm
+          key={formKey}
+          payload={payload as Parameters<typeof BrainstormGateForm>[0]["payload"]}
+          onSubmit={(v) => onSubmit(v)}
+          disabled={disabled}
+        />
+      );
+
+    case "brainstorm_confirm":
+      return (
+        <BrainstormConfirmForm
+          key={formKey}
+          payload={payload as Parameters<typeof BrainstormConfirmForm>[0]["payload"]}
+          onSubmit={(v) => onSubmit(v)}
+          disabled={disabled}
+        />
+      );
+
     case "user_inputs":
       return (
         <UserInputsForm

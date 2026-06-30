@@ -144,7 +144,12 @@ class _PerfLogHandler(BaseCallbackHandler):
         return None
 
 
-def get_llm(temperature: float = 0.8, label: str = "llm", max_tokens: int | None = None) -> ChatOpenAI:
+def get_llm(
+    temperature: float = 0.8,
+    label: str = "llm",
+    max_tokens: int | None = None,
+    thinking: str | None = None,
+) -> ChatOpenAI:
     """Create a ChatOpenAI instance from environment configuration.
 
     ChatOpenAI has built-in retry logic (max_retries=2 by default via tenacity),
@@ -152,12 +157,21 @@ def get_llm(temperature: float = 0.8, label: str = "llm", max_tokens: int | None
 
     ``label`` 标识调用方（节点名），会出现在性能日志里，便于区分是哪个步骤在跑。
     ``max_tokens`` 显式设置最大输出 token 数，避免长文本生成被截断。
+    ``thinking`` 控制豆包推理模型的「深度思考」：
+        - None（默认）：保持模型默认（Doubao-Seed-2.0-pro 默认会先输出 ~10-20s 的
+          reasoning_content 再给正文，长文生成可接受、质量更好）。
+        - "disabled"：关闭思考，模型立即输出正文 token（实测首 token <1s）。交互式场景
+          （如灵感脑爆聊天）必须关，否则每轮要空等十几秒、流式打字机迟迟不出。
+        - "enabled"：显式开启。
+      经 Ark 透传 extra_body={"thinking": {"type": ...}}；该模型不支持 "auto"。
     """
     api_key = os.environ.get("ARK_API_KEY")
     if not api_key:
         raise ValueError("ARK_API_KEY environment variable is required")
     if max_tokens is None:
         max_tokens = int(os.environ.get("ARK_MAX_TOKENS", "16384"))
+    # extra_body 直接合并进请求体根部，把豆包专有的 thinking 开关透传给 Ark；None 时不影响默认行为。
+    extra_body = {"thinking": {"type": thinking}} if thinking is not None else None
     return ChatOpenAI(
         model=os.environ.get("ARK_MODEL", "doubao-seed-2.0-lite"),
         temperature=temperature,
@@ -168,5 +182,6 @@ def get_llm(temperature: float = 0.8, label: str = "llm", max_tokens: int | None
         ),
         timeout=900,  # 超时 15 分钟，适应长文本生成避免中途截断
         max_retries=2,  # 减少重试次数，平衡总等待时长
+        extra_body=extra_body,
         callbacks=[_PerfLogHandler(label)],
     )

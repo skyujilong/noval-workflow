@@ -31,12 +31,31 @@ from noval_workflow.nodes.foundation import (
     save_overall_outline,
     save_world_building,
 )
+from noval_workflow.nodes.brainstorm import (
+    brainstorm_chat,
+    brainstorm_extract,
+    brainstorm_gate,
+    brainstorm_respond,
+    confirm_brainstorm_core_theme,
+    confirm_brainstorm_world_building,
+    route_after_chat,
+    route_after_collect,
+    route_after_gate,
+)
 from noval_workflow.nodes.inputs import collect_user_inputs
 from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
 from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
 
 builder = StateGraph(NovelState)
+
+# Phase -1 — 灵感脑爆（可选，入口分叉）
+builder.add_node("brainstorm_gate", brainstorm_gate)
+builder.add_node("brainstorm_chat", brainstorm_chat)
+builder.add_node("brainstorm_respond", brainstorm_respond)
+builder.add_node("brainstorm_extract", brainstorm_extract)
+builder.add_node("confirm_brainstorm_core_theme", confirm_brainstorm_core_theme)
+builder.add_node("confirm_brainstorm_world_building", confirm_brainstorm_world_building)
 
 # Phase 0
 builder.add_node("collect_user_inputs", collect_user_inputs)
@@ -85,8 +104,34 @@ builder.add_node("chapter_edit_subgraph", chapter_edit_subgraph)
 
 # ── edges ──────────────────────────────────────────────────────────────────────
 
-builder.set_entry_point("collect_user_inputs")
-builder.add_edge("collect_user_inputs", "prepare_core_theme")
+# Phase -1 — 脑爆入口分叉
+builder.set_entry_point("brainstorm_gate")
+builder.add_conditional_edges(
+    "brainstorm_gate",
+    route_after_gate,
+    {"brainstorm_chat": "brainstorm_chat", "collect_user_inputs": "collect_user_inputs"},
+)
+# 聊天循环：chat 等输入 → respond 流式回复 → 自循环回 chat；结束信号 → extract
+builder.add_conditional_edges(
+    "brainstorm_chat",
+    route_after_chat,
+    {"brainstorm_respond": "brainstorm_respond", "brainstorm_extract": "brainstorm_extract"},
+)
+builder.add_edge("brainstorm_respond", "brainstorm_chat")
+builder.add_edge("brainstorm_extract", "collect_user_inputs")
+
+# collect 之后条件路由：脑爆来源走轻量确认（整段跳过 Phase 1 主题/世界观生成），否则走原流程
+builder.add_conditional_edges(
+    "collect_user_inputs",
+    route_after_collect,
+    {
+        "confirm_brainstorm_core_theme": "confirm_brainstorm_core_theme",
+        "prepare_core_theme": "prepare_core_theme",
+    },
+)
+# 轻量确认链 → 汇合到「世界观后边的环节」prepare_core_conflicts
+builder.add_edge("confirm_brainstorm_core_theme", "confirm_brainstorm_world_building")
+builder.add_edge("confirm_brainstorm_world_building", "prepare_core_conflicts")
 
 # Phase 1 chain
 builder.add_edge("prepare_core_theme", "review_core_theme")
