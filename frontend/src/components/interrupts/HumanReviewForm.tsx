@@ -5,18 +5,23 @@
 
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import type { HumanReviewPayload } from "../../lib/interruptTypes";
+import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
+import { buildReviewResume } from "../../lib/interruptTypes";
 import { reviewTypeLabel } from "../../lib/types";
+import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
   payload: HumanReviewPayload;
-  onSubmit: (value: string) => void;
+  // 统一结构化 resume：approve → feedback=""，revise → feedback=修改意见；thinking 始终携带。
+  onSubmit: (value: ReviewResume) => void;
   disabled?: boolean;
 }
 
 export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
+  // 深度思考开关初值跟随后端给的默认值（创作类开 / 快照类关），未带则按开处理
+  const [thinkingOn, setThinkingOn] = useState(payload.default_thinking !== "disabled");
   const [submitting, setSubmitting] = useState(false);
 
   // 全部上下文直接取自 payload（用 ?? 兜底缺失，空字符串是有效草稿状态）
@@ -33,11 +38,12 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
     setSubmitting(false);
     setFeedback("");
     setMode("approve");
+    setThinkingOn(payload.default_thinking !== "disabled");
   }, [disabled, payload]);
 
   const handleSubmit = () => {
     setSubmitting(true);
-    onSubmit(mode === "approve" ? "" : feedback.trim());
+    onSubmit(buildReviewResume(mode === "approve" ? "" : feedback, thinkingOn));
   };
 
   // 本地 submitting 优先于上层 disabled，确保点击后立即禁用所有控件
@@ -142,14 +148,17 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
         </div>
 
         {mode === "revise" && (
-          <textarea
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={isDisabled}
-            placeholder="输入修改意见，AI 会据此重新生成…"
-            rows={4}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-          />
+          <>
+            <textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              disabled={isDisabled}
+              placeholder="输入修改意见，AI 会据此重新生成…"
+              rows={4}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+            />
+            <ThinkingSwitch checked={thinkingOn} onChange={setThinkingOn} disabled={isDisabled} />
+          </>
         )}
 
         {/* 提交按钮 - 单独一行，视觉突出，是唯一的「最终确认」按钮 */}

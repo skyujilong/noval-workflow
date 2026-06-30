@@ -1,8 +1,10 @@
 // 伏笔台账审核专用表单，将 JSON 格式的伏笔转为卡片展示。
-// resume 值："" = 通过，非空文本 = 修改意见（驱动重新生成）。
+// resume 值：结构化 {feedback, thinking}（与 human_review 统一）；feedback 空 = 通过。
 
 import { useEffect, useState } from "react";
-import type { HumanReviewPayload } from "../../lib/interruptTypes";
+import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
+import { buildReviewResume } from "../../lib/interruptTypes";
+import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface ForeshadowEntry {
   id: string;
@@ -37,7 +39,7 @@ function parseForeshadowDraft(draft: string): ForeshadowData | null {
 
 interface Props {
   payload: HumanReviewPayload;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: ReviewResume) => void;
   disabled?: boolean;
 }
 
@@ -48,6 +50,8 @@ export function ForeshadowingReviewForm({
 }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
+  // 深度思考开关初值跟随后端默认（伏笔属快照类 → 默认关），可在打回时手动开启求质量
+  const [thinkingOn, setThinkingOn] = useState(payload.default_thinking !== "disabled");
   const [submitting, setSubmitting] = useState(false);
 
   const draft = payload.current_draft ?? "";
@@ -63,11 +67,12 @@ export function ForeshadowingReviewForm({
     setSubmitting(false);
     setFeedback("");
     setMode("approve");
+    setThinkingOn(payload.default_thinking !== "disabled");
   }, [disabled, payload]);
 
   const handleSubmit = () => {
     setSubmitting(true);
-    onSubmit(mode === "approve" ? "" : feedback.trim());
+    onSubmit(buildReviewResume(mode === "approve" ? "" : feedback, thinkingOn));
   };
 
   const isDisabled = disabled || submitting;
@@ -268,14 +273,17 @@ export function ForeshadowingReviewForm({
         </div>
 
         {mode === "revise" && (
-          <textarea
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-            disabled={isDisabled}
-            placeholder="输入修改意见，AI 会据此重新生成…"
-            rows={4}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
-          />
+          <>
+            <textarea
+              value={feedback}
+              onChange={(e) => setFeedback(e.target.value)}
+              disabled={isDisabled}
+              placeholder="输入修改意见，AI 会据此重新生成…"
+              rows={4}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+            />
+            <ThinkingSwitch checked={thinkingOn} onChange={setThinkingOn} disabled={isDisabled} />
+          </>
         )}
 
         <button

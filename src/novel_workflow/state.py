@@ -20,6 +20,10 @@ class ReviewSubState:
     # LLM 自审累计轮数；达到上限后强制转人工，human_review 节点重置为 0
     llm_review_max: int = 3
     # LLM 自审轮数上限（可由子图工厂覆写）
+    thinking_override: str | None = None
+    # 人工审核打回时用户对「深度思考」的显式选择："enabled"|"disabled"|None。
+    # None = 不覆盖，generate 按 review_type 走默认策略（创作类开思考 / 快照类关思考）。
+    # 仅在子图内 human_review→generate 循环里流转，不桥接到 NovelState，故每次进子图自动归零。
 
 
 @dataclass

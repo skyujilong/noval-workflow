@@ -86,10 +86,17 @@ def generate(state: ReviewSubState) -> dict:
     # 非创作正文：关闭深度思考以加速、降本；创作类（正文/设定/大纲等）保留思考以保证质量。
     # ⚠️ 若发现台账一致性变差，这里是第一个该回退（去掉 thinking）的地方。
     is_snapshot = state.review_type in _SNAPSHOT_REVIEW_TYPES
+    # thinking 决策优先级：用户在人工审核打回时的显式选择 > 按 review_type 的默认策略。
+    # thinking_override 仅由 human_review 写入，作用于本轮打回触发的重新生成（含其后的 AI 自审
+    # 循环）；为 None 时退回默认（快照类关思考加速 / 创作类保留思考保质量）。
+    if state.thinking_override is not None:
+        thinking = state.thinking_override
+    else:
+        thinking = "disabled" if is_snapshot else None
     llm = get_llm(
         temperature=0.8,
         label=f"generate:{state.review_type}",
-        thinking="disabled" if is_snapshot else None,
+        thinking=thinking,
     )
 
     # snapshot 类型的生成只依赖 task_prompt（已包含上次快照 + 当前章节内容），无需完整 system_context
@@ -230,18 +237,36 @@ def human_review(state: ReviewSubState) -> dict:
         "review_history": state.review_history,
         "llm_review_count": state.llm_review_count,
         "llm_review_max": state.llm_review_max,
+        # 当前 review_type 的默认深度思考状态，供前端初始化「深度思考」开关，使其默认位置
+        # 与不覆盖时的实际行为一致（创作类开、快照台账类关）。
+        "default_thinking": "disabled" if state.review_type in _SNAPSHOT_REVIEW_TYPES else "enabled",
         # message 仅放操作提示；草稿正文走 current_draft 字段，前端单独渲染，避免重复存储。
         "message": "· 直接回车 → 通过\n· 输入修改意见 → 重新生成",
     })
 
+    # resume 值规范形态为结构化 dict（human_review / foreshadowing_review 两个表单统一发送）：
+    #   {"feedback": str, "thinking": "enabled"|"disabled"}
+    #   - feedback 空串 = 通过；非空 = 修改意见。
+    #   - thinking = 本轮重生成是否深度思考；缺失/空 → None（generate 走 review_type 默认策略）。
+    # 仍兜底纯字符串（langgraph dev 手动 resume / 历史中断 / 通用兜底表单），"" = 通过。
+    thinking_override: str | None = None
+    if isinstance(feedback, dict):
+        thinking_override = feedback.get("thinking") or None  # "" / 缺失 → None
+        feedback = feedback.get("feedback", "")
+
     # 处理 None/falsy 值，避免 str(None) = "None" 的问题
     if not feedback:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0}
-    feedback_str = str(feedback).strip().lower()
-    if feedback_str in _APPROVE_SIGNALS:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0}
-    else:
-        return {"approved": False, "review_feedback": feedback_str, "llm_review_count": 0}
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None}
+    # 仅用小写副本比对审批信号；review_feedback 保留原始大小写，避免英文意见被压成小写后喂给 LLM。
+    feedback_str = str(feedback).strip()
+    if feedback_str.lower() in _APPROVE_SIGNALS:
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None}
+    return {
+        "approved": False,
+        "review_feedback": feedback_str,
+        "llm_review_count": 0,
+        "thinking_override": thinking_override,
+    }
 
 
 def route_after_llm_review(state: ReviewSubState) -> str:

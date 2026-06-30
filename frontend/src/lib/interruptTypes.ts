@@ -125,6 +125,8 @@ export interface HumanReviewPayload {
   review_history: Array<{ role: "human" | "ai"; content: string }>;
   llm_review_count: number;
   llm_review_max: number;
+  // 当前 review_type 的默认深度思考状态，用于初始化「深度思考」开关位置
+  default_thinking?: "enabled" | "disabled";
 }
 
 /**
@@ -268,4 +270,22 @@ export function buildManualReplaceValue(content: string): string {
 const CONTINUE_VALUES = new Set(["", "yes", "y", "是", "继续"]);
 export function isContinueValue(v: string): boolean {
   return CONTINUE_VALUES.has(v.trim().toLowerCase());
+}
+
+/** 审核表单（human_review / foreshadowing_review）深度思考选择 */
+export type ThinkingChoice = "enabled" | "disabled";
+
+/**
+ * human_review 节点的结构化 resume 值，所有走该节点的审核表单统一发送此形态。
+ * - feedback：空串 = 通过；非空 = 修改意见（驱动重新生成）。
+ * - thinking：本轮重生成是否深度思考（开关位置，通过场景下后端忽略）。
+ */
+export interface ReviewResume {
+  feedback: string;
+  thinking: ThinkingChoice;
+}
+
+/** 构造审核表单的结构化 resume 值（approve 传空 feedback，revise 传修改意见）。 */
+export function buildReviewResume(feedback: string, thinkingOn: boolean): ReviewResume {
+  return { feedback: feedback.trim(), thinking: thinkingOn ? "enabled" : "disabled" };
 }
