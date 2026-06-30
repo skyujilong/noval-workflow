@@ -61,10 +61,25 @@ export async function getAssistantId(): Promise<string> {
 
 // ── Thread CRUD ───────────────────────────────────────────────────────────────
 
-/** 列出所有小说（thread），按更新时间倒序。 */
+/** 列出所有小说（thread）。
+ *  走自定义轻量接口 GET /novels/summary 而非平台 POST /threads/search：
+ *  后者会为每个 thread 返回完整 values（整个 NovelState），3s 轮询下 payload 达数百 KB；
+ *  /novels/summary 在服务端把 values 裁成摘要白名单（novel_name/genre/total_chapters_written），
+ *  形状与 search 一致，故下面映射逻辑保持不变，仅 values 变小。 */
 export async function listThreads(): Promise<ThreadInfo[]> {
-  const threads = await client.threads.search({ limit: 200 });
-  return threads.map((t) => ({
+  const res = await fetch(`${API_URL}/novels/summary?limit=200`);
+  if (!res.ok) {
+    throw new Error(`加载小说列表失败 (${res.status})：${await res.text()}`);
+  }
+  const rows = (await res.json()) as Array<{
+    thread_id: string;
+    metadata?: ThreadMeta;
+    created_at: string;
+    updated_at: string;
+    status: string;
+    values?: Partial<NovelState>;
+  }>;
+  return rows.map((t) => ({
     thread_id: t.thread_id,
     metadata: (t.metadata ?? {}) as ThreadMeta,
     created_at: t.created_at,

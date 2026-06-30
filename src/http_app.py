@@ -79,11 +79,72 @@ async def put_prompt_overrides(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "overrides": saved})
 
 
+# ── 小说列表摘要接口（轻量化轮询） ───────────────────────────────────────────────
+# 平台 POST /threads/search 会为每个 thread 返回完整 values（整个 NovelState，含正文/大纲
+# /人物档案等大字段）。前端列表 3s 轮询只需 novel_name / total_chapters_written / status，
+# 全量拉取使单次 payload 达数百 KB。此接口在服务端自调用平台 search 后把 values 裁成白名单，
+# 结构与 search 一致（仅 values 变小），前端可零成本映射，payload 降到几 KB。
+
+# 列表/配置抽屉实际读到的 values 字段（均为 state.py 里的小标量），其余大字段一律不返回。
+_SUMMARY_VALUE_FIELDS = ("novel_name", "genre", "total_chapters_written")
+
+_lg_client = None  # 模块级懒缓存：langgraph 平台 SDK 客户端（自调用本机平台 API）
+
+
+def _get_lg_client():
+    global _lg_client
+    if _lg_client is None:
+        # 惰性 import：langgraph_sdk 是平台依赖，dev 运行时必装
+        from langgraph_sdk import get_client
+
+        # 自调用同进程的平台 API；端口与 dev-backend.sh 一致（.env.local 的 LANGGRAPH_PORT）
+        port = os.environ.get("LANGGRAPH_PORT", "28123")
+        _lg_client = get_client(url=f"http://127.0.0.1:{port}")
+    return _lg_client
+
+
+async def get_novels_summary(request: Request) -> JSONResponse:
+    """小说（thread）列表摘要：与 /threads/search 同形状，但 values 仅含摘要白名单字段。
+
+    query: limit=<最多返回数，默认 200>
+    resp:  [{ thread_id, status, created_at, updated_at, metadata, values: {白名单字段} }, ...]
+    """
+    try:
+        limit = int(request.query_params.get("limit", "200"))
+    except ValueError:
+        limit = 200
+
+    try:
+        threads = await _get_lg_client().threads.search(limit=limit)
+    except Exception as e:  # 自调用失败时回清晰错误，前端 useThreads 会捕获展示
+        return JSONResponse({"error": f"threads.search failed: {e}"}, status_code=502)
+
+    out = []
+    for t in threads:
+        values = t.get("values") or {}
+        # 只挑白名单标量；total_chapters_written 缺省安全取 0（全新未运行的 thread）
+        summary = {k: values.get(k) for k in _SUMMARY_VALUE_FIELDS}
+        summary["total_chapters_written"] = values.get("total_chapters_written", 0)
+        out.append(
+            {
+                "thread_id": t["thread_id"],
+                "status": t.get("status"),
+                "created_at": t.get("created_at"),
+                "updated_at": t.get("updated_at"),
+                "metadata": t.get("metadata") or {},
+                "values": summary,
+            }
+        )
+    return JSONResponse(out)
+
+
 # ── 应用组装 ─────────────────────────────────────────────────────────────────────
 # 前端直连 langgraph dev（跨域），写接口（PUT）会触发预检，故挂 CORS 中间件放行。
 routes = [
     Route("/prompt-overrides", get_prompt_overrides, methods=["GET"]),
     Route("/prompt-overrides", put_prompt_overrides, methods=["PUT"]),
+    # 小说列表轻量摘要（替代前端对 /threads/search 的全量轮询）
+    Route("/novels/summary", get_novels_summary, methods=["GET"]),
     # 不挂 html 索引：仅按文件名访问，避免暴露所有小说的文件清单
     Mount("/output", StaticFiles(directory=_output_dir), name="output"),
 ]
