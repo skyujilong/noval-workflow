@@ -37,6 +37,11 @@ export default function App() {
 
   const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
 
+  // 当前选中小说在 /novels/summary 轮询里的那条（含权威 status：idle/busy/interrupted/error）。
+  const selectedThread = selectedId
+    ? threads.find((t) => t.thread_id === selectedId)
+    : undefined;
+
   // 状态上报：按 threadId 丢弃非当前选中小说的上报（切换瞬间的陈旧上报），
   // 再做值比较去抖（值未变则复用旧引用，避免无谓重渲染）。
   const handleStatusChange = useCallback((s: RunStatus) => {
@@ -171,7 +176,8 @@ export default function App() {
             graphNodes={graphNodes}
             graphEdges={graphEdges}
             autoStart={autoStart}
-            threadMeta={threads.find((t) => t.thread_id === selectedId)?.metadata}
+            threadMeta={selectedThread?.metadata}
+            summaryBusy={selectedThread?.status === "busy"}
             onRefreshThreads={refresh}
             onStatusChange={handleStatusChange}
           />

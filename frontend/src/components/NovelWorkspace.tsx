@@ -42,6 +42,10 @@ interface Props {
   autoStart: boolean;
   /** 当前 thread 的 metadata（用于把 novel_name 回填进去） */
   threadMeta?: ThreadMeta;
+  /** 该 thread 在 /novels/summary 轮询里的 status 是否为 busy（后端正有 run 在执行）。
+   *  权威的「同 thread_id 正忙」信号——本地 running 之外再加这道闸，挡掉陈旧 UI / 后台 run
+   *  导致的对同一 thread 的重复 resume（否则同一 thread_id 触发两次不同的东西 → 混乱）。 */
+  summaryBusy?: boolean;
   /** 回填后刷新左侧小说列表 */
   onRefreshThreads: () => void;
   /** 把运行状态上报给 App 渲染 header / 错误条 */
@@ -56,6 +60,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       graphEdges,
       autoStart,
       threadMeta,
+      summaryBusy,
       onRefreshThreads,
       onStatusChange,
     },
@@ -102,6 +107,12 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       streamingContent.length > 0 &&
       streamingNode !== "brainstorm_extract";
 
+    // 所有「会 resume 本 thread」的输入（中断表单的确认通过 / 脑爆发送）统一的禁用闸：
+    // 本地 running 之外，再叠加 summary 轮询的 busy（同 thread_id 后端正忙）。本地 running 只
+    // 覆盖「本实例发起的 run」，挡不住后台 run 或陈旧 UI；summaryBusy 是权威的服务端信号，
+    // 二者取或，避免对同一 thread_id 重复触发导致混乱。busy 轮询有 ≤3s 滞后，宁可多禁一会儿。
+    const inputDisabled = running || !!summaryBusy;
+
     // 暴露 replay 给 App（左侧「历史」面板「从此点重跑」）
     useImperativeHandle(ref, () => ({ replay }), [replay]);
 
@@ -147,14 +158,22 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               awaitingInput={interruptType === InterruptType.BRAINSTORM_CHAT}
               onSend={(m) => void resume(m)}
               onEnd={() => void resume(BRAINSTORM_END)}
-              disabled={running}
+              disabled={inputDisabled}
             />
           ) : interrupt ? (
             <div className="p-4">
+              {/* 闸由 summary busy 触发、而非本地运行：陈旧 UI / 后台 run 正在跑同一 thread，
+                  解释为何「确认通过」等被锁，避免看上去像坏掉。本地 running 期另有流式提示，不重复。 */}
+              {summaryBusy && !running && (
+                <div className="mb-3 flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+                  该小说后台正在处理中，操作已暂时锁定，请稍候…
+                </div>
+              )}
               <InterruptHandler
                 payload={interrupt.payload}
                 onSubmit={(value) => void resume(value)}
-                disabled={running}
+                disabled={inputDisabled}
               />
             </div>
           ) : running ? (
