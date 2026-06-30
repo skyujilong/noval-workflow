@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Union
 
@@ -47,6 +48,23 @@ ARC_CHAPTER_FORMAT = """\
 5. 伏笔&线索：本章新增伏笔、回收前文伏笔、遗留待解线索
 6. 创作锚点：为章节标题、正文细节描写提供关键词/方向指引
 7. 下章衔接指引：本章收尾状态，明确下一章开篇切入方向"""
+
+
+def _extract_arc_chapter_block(arc_outline: str, batch_pos: int) -> str:
+    """从「本批弧线大纲」中抽取第 batch_pos 章（1-based，按批内出现顺序）的固定字段块。
+
+    弧线大纲按 ARC_CHAPTER_FORMAT 以【章节X】分隔；X 既可能是批内序号也可能是全书序号，
+    故按「出现顺序」定位而非字面数字匹配，对两种编号方式都鲁棒。无法切分（格式异常或
+    章节段落数不足 batch_pos）时返回空串，调用方回退到系统提示中的整批大纲。
+    """
+    if not arc_outline or batch_pos < 1:
+        return ""
+    headers = list(re.finditer(r"【\s*章节[^】]*】", arc_outline))
+    if len(headers) < batch_pos:
+        return ""
+    start = headers[batch_pos - 1].start()
+    end = headers[batch_pos].start() if batch_pos < len(headers) else len(arc_outline)
+    return arc_outline[start:end].strip()
 
 
 class _PromptState(Protocol):
@@ -203,8 +221,13 @@ class PromptPack:
 整体硬性标准：四卷节奏层层递进，主角视角清晰，角色群像关系闭环，逻辑自洽，框架具备强延展性。{focus}
 输出要求：直接输出纯大纲正文，无需开场白、解释、标题，四卷内容分段清晰。"""
 
-    def titles_prompt(self, all_titles: list[str], chapter_context: str = "") -> str:
-        """生成下 BATCH_SIZE 章的章节标题。"""
+    def titles_prompt(self, all_titles: list[str], chapter_context: str = "", arc_outline: str = "") -> str:
+        """生成下 BATCH_SIZE 章的章节标题。
+
+        arc_outline 为本批弧线大纲（含 BATCH_SIZE 个【章节X】分段）。提供时，要求生成的
+        BATCH_SIZE 个标题与弧线大纲的章节分段按出现顺序一一对应——因为正文创作时会把标题与
+        对应分章大纲同时注入（见 chapter_prompt），标题与分章大纲对齐才能避免二者打架。
+        """
         from noval_workflow.config import BATCH_SIZE
 
         existing = ""
@@ -217,9 +240,22 @@ class PromptPack:
         if chapter_context:
             context_section = f"\n\n【前文故事进展（请据此规划后续走向）】\n{chapter_context}"
 
+        # 弧线大纲对齐：把整批分章大纲塞进任务提示，并要求标题与分段按顺序一一对应。
+        arc_section = ""
+        arc_rule = ""
+        if arc_outline:
+            arc_section = (
+                f"\n\n【本批章节弧线大纲（每个标题对应其中一个章节分段，按顺序一一对应）】\n{arc_outline}"
+            )
+            arc_rule = (
+                f"\n- {BATCH_SIZE}个标题须与上方【本批章节弧线大纲】的章节分段**按出现顺序一一对应**："
+                "第1个标题对应第1个章节分段，依此类推；每个标题须精准概括其对应章节的核心事件，"
+                "不得错位、合并或遗漏（正文创作会以标题+对应分章大纲共同作为依据）"
+            )
+
         focus = f"\n- {self.flavor.titles_focus}" if self.flavor.titles_focus else ""
 
-        return f"""请为本小说生成下{BATCH_SIZE}章的章节标题。{existing}{context_section}
+        return f"""请为本小说生成下{BATCH_SIZE}章的章节标题。{existing}{context_section}{arc_section}
 
 要求：
 - 每行一个标题，共{BATCH_SIZE}行
@@ -228,12 +264,26 @@ class PromptPack:
 - 标题不得与已有章节重复
 - 标题须符合系统提示中的整体大纲方向，体现故事在当前阶段应有的发展走向
 - 标题须与前文章节保持时间线与情节的连贯，不得跳跃或产生矛盾
-- {BATCH_SIZE}个标题之间应形成自然的叙事流，层层递进，避免互不相关的孤立命名{focus}
+- {BATCH_SIZE}个标题之间应形成自然的叙事流，层层递进，避免互不相关的孤立命名{arc_rule}{focus}
 
 请直接输出{BATCH_SIZE}个标题，每行一个。"""
 
-    def chapter_prompt(self, title: str, chapter_num: int, all_titles: list[str], chapter_context: str = "") -> str:
-        """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。"""
+    def chapter_prompt(
+        self,
+        title: str,
+        chapter_num: int,
+        all_titles: list[str],
+        chapter_context: str = "",
+        arc_outline: str = "",
+        batch_pos: int = 0,
+        batch_total: int = 0,
+    ) -> str:
+        """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。
+
+        arc_outline/batch_pos/batch_total 用于把「本批弧线大纲」中专属本章的那一段
+        显式锚定到任务提示词里：batch_pos 为本章在当前批次内的序号（1-based），
+        batch_total 为本批章节数。整批弧线大纲仍在 system_context 中，供铺垫参考。
+        """
         all_titles_text = "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
         )
@@ -242,12 +292,35 @@ class PromptPack:
         if chapter_context:
             context_section = f"\n\n【前文内容参考】\n{chapter_context}"
 
+        # 弧线大纲锚点：显式告知 LLM 当前是本批第几章，并把对应分章大纲抽出作为首要依据。
+        arc_section = ""
+        arc_rule = ""
+        if arc_outline and batch_pos:
+            pos_desc = f"本批第 {batch_pos}" + (f"/{batch_total}" if batch_total else "") + " 章"
+            block = _extract_arc_chapter_block(arc_outline, batch_pos)
+            if block:
+                arc_section = (
+                    f"\n\n【本章对应弧线大纲锚点（{pos_desc}）】\n{block}\n"
+                    "（以上是本批弧线大纲中专属本章的设计，为本章创作的首要依据；本批其余章节"
+                    "大纲见系统提示【本批章节弧线大纲】，用于把握整体走向并为后续章节做铺垫。）"
+                )
+            else:
+                arc_section = (
+                    f"\n\n【本章定位】{pos_desc}。本章对应的分章弧线大纲见系统提示中的"
+                    "【本批章节弧线大纲】，请定位到对应章节并据此创作。"
+                )
+            arc_rule = (
+                "\n6. 弧线大纲对齐：严格落实【本章对应弧线大纲锚点】中的核心事件、人物行动、"
+                "情节转折、节奏情绪与伏笔线索，本章只推进属于本章的进度，不抢写后续章节内容；"
+                "同时为本批后续章节所需的人物、关系、线索与伏笔做好必要的前置铺垫，让分章之间自然咬合。"
+            )
+
         return f"""{self.flavor.system_identity}
 
 请撰写第{chapter_num}章：《{title}》
 
 全书章节目录（供参考）：
-{all_titles_text}{context_section}
+{all_titles_text}{context_section}{arc_section}
 
 ### 核心创作强制规则
 1. 人设严格合规：100%遵循全书官方人物档案，守住角色性格、行事底线、核心动机，**严禁OOC、人设崩坏、性格前后矛盾**；人物关系、阵营、立场保持连贯统一。专属小动作、外形标识、口头禅等标志特征，仅在情绪转折或剧情关键点自然露出，普通场景中禁止高频复读。
@@ -255,7 +328,7 @@ class PromptPack:
 3. 文体风格：
 {self.flavor.chapter_style_rules}
 4. 章节节奏：单章结构完整，中段设置小冲突/悬念/情绪波动，**章节结尾预留剧情钩子**，引导下一章内容；全章字数贴近预设单章标准字数。
-5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。
+5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}
 
 ### 【关键去机械化：人物动作克制规则】
 角色专属癖好、标志性小动作、口头禅、信物特征，**禁止高频、机械、重复性刷人设**。

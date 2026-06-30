@@ -30,7 +30,11 @@ def prepare_titles(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": pack.titles_prompt(state.all_chapter_titles, build_chapter_context(state)),
+        "task_prompt": pack.titles_prompt(
+            state.all_chapter_titles,
+            build_chapter_context(state),
+            arc_outline=state.current_arc_outline,
+        ),
         "review_type": "titles",
         **reset_review_fields(),
     }
@@ -68,10 +72,22 @@ def prepare_chapter(state: NovelState) -> dict:
     # current_batch_titles[current_chapter_index:] (the not-yet-written portion) avoids
     # duplicate entries in the numbered list rendered for the LLM.
     merged_titles = state.all_chapter_titles + state.current_batch_titles[state.current_chapter_index:]
+    # 批内定位：current_chapter_index 为本章在当前批次内的 0-based 序号（save_chapter 写完才自增），
+    # 故 batch_pos = index + 1；据此把「本批弧线大纲」中对应本章的那一段锚定到提示词。
+    batch_pos = state.current_chapter_index + 1
+    batch_total = len(state.current_batch_titles)
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
-        "task_prompt": pack.chapter_prompt(title, chapter_num, merged_titles, chapter_context),
+        "task_prompt": pack.chapter_prompt(
+            title,
+            chapter_num,
+            merged_titles,
+            chapter_context,
+            arc_outline=state.current_arc_outline,
+            batch_pos=batch_pos,
+            batch_total=batch_total,
+        ),
         "review_type": "chapter",
         **reset_review_fields(),
     }
