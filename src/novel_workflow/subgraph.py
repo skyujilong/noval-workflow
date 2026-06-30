@@ -82,10 +82,18 @@ def _is_pass(feedback: str) -> bool:
 
 def generate(state: ReviewSubState) -> dict:
     """Generate or regenerate content based on task_prompt and any feedback."""
-    llm = get_llm(temperature=0.8, label=f"generate:{state.review_type}")
+    # 快照台账类（character_status/relations/foreshadowing/phase_summary）是结构化数据维护，
+    # 非创作正文：关闭深度思考以加速、降本；创作类（正文/设定/大纲等）保留思考以保证质量。
+    # ⚠️ 若发现台账一致性变差，这里是第一个该回退（去掉 thinking）的地方。
+    is_snapshot = state.review_type in _SNAPSHOT_REVIEW_TYPES
+    llm = get_llm(
+        temperature=0.8,
+        label=f"generate:{state.review_type}",
+        thinking="disabled" if is_snapshot else None,
+    )
 
     # snapshot 类型的生成只依赖 task_prompt（已包含上次快照 + 当前章节内容），无需完整 system_context
-    if state.review_type in _SNAPSHOT_REVIEW_TYPES:
+    if is_snapshot:
         messages: list = [SystemMessage(content="你是严谨的小说数据维护员，负责根据任务要求生成或更新各类快照台账数据。")]
     else:
         messages: list = [SystemMessage(content=state.system_context)]

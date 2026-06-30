@@ -187,7 +187,9 @@ def make_edit_step_subgraph(
                 foreshadowing_json=json.dumps(foreshadow_data, ensure_ascii=False, indent=2),
             )
 
-            llm = get_llm(temperature=0.3, label="foreshadow_prune")
+            # 伏笔精简是结构化分类（输出 JSON 删除建议），且结果还要经 foreshadow_prune_confirm
+            # 让用户勾选确认兜底：关闭深度思考加速，即便建议略糙也有人工把关。
+            llm = get_llm(temperature=0.3, label="foreshadow_prune", thinking="disabled")
             messages = [
                 SystemMessage(content="你是专业的小说伏笔管理专家，擅长识别核心伏笔与次要伏笔，帮助作者精简上下文。"),
                 HumanMessage(content=prompt),

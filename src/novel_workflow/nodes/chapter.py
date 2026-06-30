@@ -130,7 +130,9 @@ def generate_summary(state: NovelState) -> dict:
 
     summary = ""
     try:
-        llm = get_llm(temperature=0.3, label="chapter_summary")
+        # 章节概要是对已定稿正文的压缩提炼（摘要任务），非创作：关闭深度思考加速。
+        # 每章生成一次，累积加速明显；摘要质量对思考不敏感，风险低。
+        llm = get_llm(temperature=0.3, label="chapter_summary", thinking="disabled")
         messages = [
             SystemMessage(content=state.system_context),
             HumanMessage(content=SUMMARY_PROMPT.format(title=title, content=state.current_draft)),
