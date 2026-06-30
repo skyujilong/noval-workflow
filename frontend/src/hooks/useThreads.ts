@@ -1,14 +1,22 @@
 // 小说（thread）列表管理：列出 / 新建 / 选择 / 删除。
+// 3s 自动轮询更新列表状态，页面后台时暂停。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createThread, deleteThread, listThreads, type ThreadInfo } from "../lib/langgraph";
+
+const POLL_INTERVAL = 3000;
 
 export function useThreads() {
   const [threads, setThreads] = useState<ThreadInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fetchingRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    // 竞态防护：防止并发请求
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+
     setLoading(true);
     setError(null);
     try {
@@ -20,11 +28,35 @@ export function useThreads() {
       setError(`加载小说列表失败：${(e as Error).message}`);
     } finally {
       setLoading(false);
+      fetchingRef.current = false;
     }
   }, []);
 
+  // 首次加载
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // 自动轮询：3s 一次，页面后台时暂停 + 竞态防护
+  useEffect(() => {
+    const doRefresh = () => {
+      // 页面后台或正在请求中跳过
+      if (document.hidden || fetchingRef.current) return;
+      void refresh();
+    };
+
+    const timer = setInterval(doRefresh, POLL_INTERVAL);
+    const onVisibilityChange = () => {
+      // 切回前台时立即刷新一次
+      if (!document.hidden) void refresh();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refresh]);
 
   const create = useCallback(async (): Promise<ThreadInfo | null> => {

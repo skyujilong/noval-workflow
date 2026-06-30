@@ -51,11 +51,25 @@ export default function App() {
   }, []);
 
   // 选中已有小说：切换并复位运行状态（新 workspace 挂载后会重新上报）
-  const handleSelect = useCallback((id: string) => {
-    setSelectedId(id);
-    setAutoStart(false);
-    setStatus(EMPTY_STATUS);
-  }, []);
+  // 若小说是 busy 状态，乐观设为 running，避免切换后短暂显示详情再跳运行中
+  const handleSelect = useCallback(
+    (id: string) => {
+      const t = threads.find((x) => x.thread_id === id);
+      if (t?.status === "busy") {
+        setStatus({
+          threadId: id,
+          currentNode: "",
+          running: true,
+          error: null,
+        });
+      } else {
+        setStatus(EMPTY_STATUS);
+      }
+      setSelectedId(id);
+      setAutoStart(false);
+    },
+    [threads]
+  );
 
   // 新建小说：创建 thread → 选中 → 自动启动 run
   const handleCreate = useCallback(async () => {
