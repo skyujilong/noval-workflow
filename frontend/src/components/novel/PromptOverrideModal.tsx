@@ -116,7 +116,7 @@ export function PromptOverrideModal({ open, novelName, genre, onClose }: Props) 
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent
         side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-xl"
+        className="flex w-full flex-col gap-0 p-0"
       >
         <SheetHeader className="border-b px-6 py-4">
           <SheetTitle>提示词配置 · {novelName || "未命名"}</SheetTitle>
@@ -164,7 +164,7 @@ export function PromptOverrideModal({ open, novelName, genre, onClose }: Props) 
                   <Textarea
                     value={values[f.key] ?? ""}
                     onChange={(e) => setField(f.key, e.target.value)}
-                    rows={f.long ? 8 : 3}
+                    rows={f.long ? 10 : 4}
                     className="font-mono text-xs"
                   />
                 </div>
