@@ -202,7 +202,7 @@ export function ForeshadowingReviewForm({
         /* JSON 解析失败时兜底显示原始内容 */
         <div className="rounded border border-gray-200 bg-white p-3">
           <div className="mb-2 text-xs font-medium text-gray-500">当前草稿（原始格式）</div>
-          <div className="prose prose-sm max-w-none overflow-x-auto whitespace-pre-wrap text-sm text-gray-700">
+          <div className="max-w-none overflow-x-auto whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
             {draft || "（无草稿内容）"}
           </div>
         </div>

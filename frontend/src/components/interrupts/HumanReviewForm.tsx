@@ -73,7 +73,7 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
       {/* 当前草稿 */}
       <div className="rounded border border-gray-200 bg-white p-3">
         <div className="mb-2 text-xs font-medium text-gray-500">当前草稿</div>
-        <div className="prose prose-sm max-w-none overflow-y-auto max-h-96 [&_p]:text-indent-[2em] [&_p]:whitespace-pre-wrap">
+        <div className="max-w-none overflow-y-auto max-h-[70vh] text-sm leading-relaxed text-gray-800 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
           <ReactMarkdown>{draft || "（无草稿内容）"}</ReactMarkdown>
         </div>
       </div>
