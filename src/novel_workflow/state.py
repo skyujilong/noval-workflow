@@ -24,6 +24,13 @@ class ReviewSubState:
     # 人工审核打回时用户对「深度思考」的显式选择："enabled"|"disabled"|None。
     # None = 不覆盖，generate 按 review_type 走默认策略（创作类开思考 / 快照类关思考）。
     # 仅在子图内 human_review→generate 循环里流转，不桥接到 NovelState，故每次进子图自动归零。
+    human_feedback: str = ""
+    # 最近一次人工审核打回的原始意见（持久保留）。与瞬时的 review_feedback 区分：
+    #   - review_feedback 是「本轮待处理反馈」通道，被 generate 消费后立即清空为 ""；
+    #   - human_feedback 在整个 human_review→generate→llm_self_review 循环里持续保留，
+    #     供 llm_self_review 核对人工意见是否已落实（generate 清空 review_feedback 后，
+    #     自审若仍读 review_feedback 就会拿到空串 → 人工意见丢失，故必须单独存一份）。
+    # 由 human_review 写入（打回时置为原始意见，通过时重置为 ""）；不桥接到 NovelState，每次进子图自动归零。
 
 
 @dataclass

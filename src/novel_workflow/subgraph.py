@@ -167,13 +167,17 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # 【重要】如果有人工审核意见，必须在 prompt 中突出强调！
     # 人工审核意见优先级高于 AI 自检，LLM 必须重点检查这些意见是否已落实
     # ========================================================================
+    # 读 human_feedback（持久字段）而非 review_feedback：进入本节点前，generate 必定已把
+    # review_feedback 清空为 ""（它消费人工意见重写草稿后即清零），若在此读 review_feedback
+    # 会恒为空 → 下面这段强调块变成死代码、人工意见丢失。human_feedback 由 human_review 写入并
+    # 贯穿整个打回→重写→自审循环，故自审能持续核对人工意见是否已落实。
     human_feedback_prefix = ""
-    if state.review_feedback and not state.review_feedback.startswith("[AI审稿意见]"):
+    if state.human_feedback:
         human_feedback_prefix = (
             "═══════════════════════════════════════════════════════════════\n"
             "⚠️ 【最高优先级：人工审核意见】\n"
             "以下是人类审核员提出的修改意见，你必须重点检查草稿是否已完全落实：\n"
-            f"{state.review_feedback}\n"
+            f"{state.human_feedback}\n"
             "\n审核要求：\n"
             "1. 逐条核对上述人工意见，确认每一条都已在草稿中落实\n"
             "2. 如有任何一条未落实，必须明确指出并说明原因\n"
@@ -255,17 +259,21 @@ def human_review(state: ReviewSubState) -> dict:
         feedback = feedback.get("feedback", "")
 
     # 处理 None/falsy 值，避免 str(None) = "None" 的问题
+    # 通过分支重置 human_feedback：本轮人工意见已落实，避免残留意见污染下一轮自审。
     if not feedback:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None}
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None, "human_feedback": ""}
     # 仅用小写副本比对审批信号；review_feedback 保留原始大小写，避免英文意见被压成小写后喂给 LLM。
     feedback_str = str(feedback).strip()
     if feedback_str.lower() in _APPROVE_SIGNALS:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None}
+        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None, "human_feedback": ""}
+    # 打回：feedback_str 同时写入 review_feedback（供 generate 本轮消费）与 human_feedback
+    # （持久保留，供其后 llm_self_review 核对是否已落实——generate 会清空 review_feedback）。
     return {
         "approved": False,
         "review_feedback": feedback_str,
         "llm_review_count": 0,
         "thinking_override": thinking_override,
+        "human_feedback": feedback_str,
     }
 
 
