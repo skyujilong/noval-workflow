@@ -8,7 +8,9 @@ import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
+import type { NovelState } from "../../lib/types";
 import { reviewTypeLabel } from "../../lib/types";
+import { ChapterReviewReference } from "./ChapterReviewReference";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
@@ -16,9 +18,11 @@ interface Props {
   // 统一结构化 resume：approve → feedback=""，revise → feedback=修改意见；thinking 始终携带。
   onSubmit: (value: ReviewResume) => void;
   disabled?: boolean;
+  // 父图 NovelState 快照：章节正文审核时用于展示上一章 / 近期弧线大纲等参考资料。
+  novelState?: NovelState;
 }
 
-export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
+export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
   // 深度思考开关初值跟随后端给的默认值（创作类开 / 快照类关），未带则按开处理
@@ -108,6 +112,11 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
           <ReactMarkdown>{draft || "（无草稿内容）"}</ReactMarkdown>
         </div>
       </div>
+
+      {/* 参考资料（仅章节正文审核）：近期弧线大纲 + 上一章正文 */}
+      {reviewType === "chapter" && novelState && (
+        <ChapterReviewReference novelState={novelState} />
+      )}
 
       {/* 修改历史 */}
       {history.length > 0 && (

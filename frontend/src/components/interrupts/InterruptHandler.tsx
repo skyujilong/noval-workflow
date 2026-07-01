@@ -3,6 +3,7 @@
 
 import { useRef } from "react";
 import { formKindOfPayload } from "../../lib/interruptTypes";
+import type { NovelState } from "../../lib/types";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
 import { BrainstormGateForm } from "./BrainstormGateForm";
@@ -19,9 +20,11 @@ interface Props {
   payload: unknown;
   onSubmit: (value: unknown) => void;
   disabled?: boolean;
+  // 父图 NovelState 快照：仅 human_review（章节正文审核）用于展示参考资料，其余表单忽略。
+  novelState?: NovelState;
 }
 
-export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
+export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Props) {
   const kind = formKindOfPayload(payload);
   // fallback 场景的 textarea 引用，避免脆弱的 DOM 遍历
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -69,6 +72,7 @@ export function InterruptHandler({ payload, onSubmit, disabled }: Props) {
           payload={payload as Parameters<typeof HumanReviewForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
+          novelState={novelState}
         />
       );
 

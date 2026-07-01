@@ -232,6 +232,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                 payload={interrupt.payload}
                 onSubmit={(value) => void resume(value)}
                 disabled={inputDisabled}
+                novelState={state}
               />
             </div>
           ) : running ? (
