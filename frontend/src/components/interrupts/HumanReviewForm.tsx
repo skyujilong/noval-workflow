@@ -4,6 +4,7 @@
 // resume 值："" = 通过，非空文本 = 修改意见（驱动重新生成）。
 
 import { useEffect, useState } from "react";
+import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
@@ -23,6 +24,8 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
   // 深度思考开关初值跟随后端给的默认值（创作类开 / 快照类关），未带则按开处理
   const [thinkingOn, setThinkingOn] = useState(payload.default_thinking !== "disabled");
   const [submitting, setSubmitting] = useState(false);
+  // 复制草稿到剪贴板后短暂显示「已复制」反馈
+  const [copied, setCopied] = useState(false);
 
   // 全部上下文直接取自 payload（用 ?? 兜底缺失，空字符串是有效草稿状态）
   const draft = payload.current_draft ?? "";
@@ -44,6 +47,18 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
   const handleSubmit = () => {
     setSubmitting(true);
     onSubmit(buildReviewResume(mode === "approve" ? "" : feedback, thinkingOn));
+  };
+
+  // 把当前草稿正文复制到剪贴板；剪贴板不可用时静默降级
+  const handleCopyDraft = async () => {
+    if (!draft) return;
+    try {
+      await navigator.clipboard.writeText(draft);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // 忽略：部分环境（非 https / 无权限）无法访问剪贴板
+    }
   };
 
   // 本地 submitting 优先于上层 disabled，确保点击后立即禁用所有控件
@@ -72,7 +87,23 @@ export function HumanReviewForm({ payload, onSubmit, disabled }: Props) {
 
       {/* 当前草稿 */}
       <div className="rounded border border-gray-200 bg-white p-3">
-        <div className="mb-2 text-xs font-medium text-gray-500">当前草稿</div>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-xs font-medium text-gray-500">当前草稿</div>
+          <button
+            type="button"
+            onClick={handleCopyDraft}
+            disabled={!draft}
+            title="复制草稿到剪贴板"
+            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-green-600" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+            {copied ? "已复制" : "复制"}
+          </button>
+        </div>
         <div className="max-w-none overflow-y-auto max-h-[70vh] text-sm leading-relaxed text-gray-800 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
           <ReactMarkdown>{draft || "（无草稿内容）"}</ReactMarkdown>
         </div>
