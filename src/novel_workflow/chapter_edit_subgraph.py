@@ -102,7 +102,7 @@ class ChapterEditSubState:
 
 def _prepare_status(state) -> dict:
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True),
+        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
         "task_prompt": character_status_prompt(state, build_chapter_context(state)),
         "review_type": "character_status",
     }
@@ -114,7 +114,7 @@ def _save_status(state) -> dict:
 
 def _prepare_relations(state) -> dict:
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True),
+        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
         "task_prompt": character_relations_prompt(state, build_chapter_context(state)),
         "review_type": "character_relations",
     }
@@ -126,7 +126,7 @@ def _save_relations(state) -> dict:
 
 def _prepare_foreshadowing(state) -> dict:
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True),
+        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
         "task_prompt": foreshadowing_prompt(state, build_chapter_context(state)),
         "review_type": "foreshadowing",
     }
@@ -158,7 +158,7 @@ def _save_foreshadowing(state) -> dict:
 
 def _prepare_phase(state) -> dict:
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True),
+        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
         "task_prompt": phase_summary_prompt(state, build_chapter_context(state)),
         "review_type": "phase_summary",
     }

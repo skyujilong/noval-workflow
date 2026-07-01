@@ -73,7 +73,12 @@ def chapter_filename(chapter_num: int, title: str) -> str:
 
 # ── foundation context ─────────────────────────────────────────────────────────
 
-def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = False) -> str:
+def build_foundation_context(
+    state: _ContextState,
+    *,
+    exclude_snapshots: bool = False,
+    include_identity: bool = True,
+) -> str:
     """Serialize approved foundation fields into a structured system prompt string.
 
     Only includes non-empty fields, so the context grows as Phase 1 progresses.
@@ -84,12 +89,19 @@ def build_foundation_context(state: _ContextState, *, exclude_snapshots: bool = 
             for the tracking-update prepare steps where the previous snapshot is
             already injected into task_prompt via {prev}, so including it here
             would only dilute the reviewer's attention.
+        include_identity: When True (default), prepend the genre-specific creative
+            writer identity ("你是一位资深…作家") before the settings block. Snapshot
+            台账 steps (character_status/relations/foreshadowing/phase_summary) pass
+            False so they get a bare settings block, then splice on their own
+            "数据维护员/审核员" identity in generate()/llm_self_review() — keeping the
+            strict data-maintenance framing while still injecting full settings.
     """
     parts: list[str] = []
 
     # 系统身份前缀按题材加载（提示词包不入 state，仅按 state.genre 取用）
-    pack = get_prompt_pack(state.genre, state.novel_name)
-    parts.append(f"{pack.flavor.system_identity}\n以下是本次作品的核心设定，请严格遵守：\n")
+    if include_identity:
+        pack = get_prompt_pack(state.genre, state.novel_name)
+        parts.append(f"{pack.flavor.system_identity}\n以下是本次作品的核心设定，请严格遵守：\n")
 
     # User inputs
     if state.novel_name:

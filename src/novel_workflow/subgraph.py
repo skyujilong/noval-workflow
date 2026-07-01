@@ -99,9 +99,17 @@ def generate(state: ReviewSubState) -> dict:
         thinking=thinking,
     )
 
-    # snapshot 类型的生成只依赖 task_prompt（已包含上次快照 + 当前章节内容），无需完整 system_context
+    # snapshot 类型的生成：拼「数据维护员身份 + 完整基础设定（去创作身份的 system_context）」，
+    # 使等级/装备/技能/资源等硬性数值与世界观、力量/等级体系保持一致；
+    # system_context 由 _prepare_* 以 include_identity=False 传入（纯设定块，无创作者口吻）。
     if is_snapshot:
-        messages: list = [SystemMessage(content="你是严谨的小说数据维护员，负责根据任务要求生成或更新各类快照台账数据。")]
+        system_content = "你是严谨的小说数据维护员，负责根据任务要求生成或更新各类快照台账数据。"
+        if state.system_context:
+            system_content += (
+                "\n\n以下是本作品的核心设定（含世界观），"
+                "维护台账数据时须与之保持一致：\n" + state.system_context
+            )
+        messages: list = [SystemMessage(content=system_content)]
     else:
         messages: list = [SystemMessage(content=state.system_context)]
 
@@ -190,12 +198,18 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # ("no entries dropped vs last snapshot") rather than having to find it buried
     # in the long system_context.
     #
-    # 注意：snapshot review 不依赖完整 system_context，避免 token 爆炸
-    # system_context 只传给非 snapshot 类型（如章节正文、整体大纲等需要上下文连贯的内容）
+    # snapshot 自审同样注入完整基础设定（拼「审核员身份 + system_context」），据世界观 / 力量体系 /
+    # 人物档案核对硬性数据一致性；仍前置 task_prompt 提供上次快照基线，供「不得漏条目」检查。
+    # system_context 由 _prepare_* 以 include_identity=False 传入（纯设定块，无创作者口吻）。
     if state.review_type in _SNAPSHOT_REVIEW_TYPES and state.task_prompt:
         review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{human_feedback_prefix}{review_prompt}"
-        # snapshot review 只用极简系统提示，不塞完整 system_context
-        system_msg = SystemMessage(content="你是严谨的小说数据审核员，负责审核各类快照数据的完整性与一致性。")
+        system_content = "你是严谨的小说数据审核员，负责审核各类快照数据的完整性与一致性。"
+        if state.system_context:
+            system_content += (
+                "\n\n以下是本作品的核心设定（含世界观），"
+                "请据此核对数据是否与世界观 / 力量体系 / 人物档案一致：\n" + state.system_context
+            )
+        system_msg = SystemMessage(content=system_content)
     else:
         review_prompt = f"{human_feedback_prefix}{review_prompt}"
         system_msg = SystemMessage(content=state.system_context)
