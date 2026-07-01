@@ -24,6 +24,8 @@ import { BRAINSTORM_END, InterruptType } from "../lib/interruptTypes";
 
 export interface NovelWorkspaceHandle {
   replay: (checkpointId: string) => void;
+  /** 显式触发「继续执行」——列表卡片的 ▶ 按钮用它，无需进入详情面板 */
+  continueRun: () => void;
 }
 
 export interface RunStatus {
@@ -40,6 +42,11 @@ interface Props {
   graphEdges: GraphEdge[];
   /** 本组件因「新建」而挂载时为 true：自动启动 run，停在 collect_user_inputs */
   autoStart: boolean;
+  /** 因列表「▶」进入 pending thread 时为 true：等首次快照拉回后自动触发一次 continueRun。
+   *  与 autoStart 语义并行；两者互斥（App 层保证）。触发后由 onAutoContinueConsumed 回调复位。 */
+  autoContinue?: boolean;
+  /** autoContinue 消费回调：workspace 触发后通知 App 把标记清掉，避免 refresh 抖动重复触发。 */
+  onAutoContinueConsumed?: () => void;
   /** 当前 thread 的 metadata（用于把 novel_name 回填进去） */
   threadMeta?: ThreadMeta;
   /** 该 thread 在 /novels/summary 轮询里的 status 是否为 busy（后端正有 run 在执行）。
@@ -59,6 +66,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       graphNodes,
       graphEdges,
       autoStart,
+      autoContinue,
+      onAutoContinueConsumed,
       threadMeta,
       summaryBusy,
       onRefreshThreads,
@@ -73,8 +82,10 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       running,
       loading,
       error,
+      pendingResume,
       start,
       resume,
+      continueRun,
       replay,
       refresh,
       streamingContent,
@@ -113,8 +124,12 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     // 二者取或，避免对同一 thread_id 重复触发导致混乱。busy 轮询有 ≤3s 滞后，宁可多禁一会儿。
     const inputDisabled = running || !!summaryBusy;
 
-    // 暴露 replay 给 App（左侧「历史」面板「从此点重跑」）
-    useImperativeHandle(ref, () => ({ replay }), [replay]);
+    // 暴露 replay / continueRun 给 App（左侧「历史」面板「从此点重跑」、小说列表「▶」）
+    useImperativeHandle(
+      ref,
+      () => ({ replay, continueRun }),
+      [replay, continueRun]
+    );
 
     // 运行状态上报（带 threadId 供 App 校验归属）；header / 错误条由 App 渲染，
     // App 内按 threadId 丢弃非当前小说的上报，并做值比较去抖。
@@ -128,6 +143,31 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
         void start();
       }
     }, [autoStart, interrupt, running, state.novel_name, start]);
+
+    // 自动继续（列表「▶」入口）：等 pendingResume 出现（首次快照拉回 & 判定为 pending）后触发一次。
+    // 命中条件确保不会跟真中断/正在跑冲突；触发后立即通知 App consume 标记，避免 refresh 抖动重复触发。
+    useEffect(() => {
+      if (
+        autoContinue &&
+        pendingResume &&
+        !interrupt &&
+        !running &&
+        !loading &&
+        !summaryBusy
+      ) {
+        onAutoContinueConsumed?.();
+        void continueRun();
+      }
+    }, [
+      autoContinue,
+      pendingResume,
+      interrupt,
+      running,
+      loading,
+      summaryBusy,
+      continueRun,
+      onAutoContinueConsumed,
+    ]);
 
     // collect_user_inputs 完成后，把 novel_name 回填到 thread metadata
     useEffect(() => {
@@ -243,6 +283,30 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               </div>
               {rightTab === "detail" ? (
                 <>
+                  {/* pending 提示条：无 interrupt + 无活跃 run + next 非空（重启后卡住）。
+                      不自动 continue，显式按钮，避免刷新即消耗算力，也便于用户看清「下一步是啥」。 */}
+                  {pendingResume && (
+                    <div className="mx-4 mt-3 flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+                        <span>
+                          上次运行在
+                          <code className="mx-1 rounded bg-amber-100 px-1 py-0.5 font-mono text-[11px]">
+                            {pendingResume}
+                          </code>
+                          处中断，可能是服务重启造成的。
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void continueRun()}
+                        disabled={inputDisabled}
+                        className="self-start rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:bg-amber-300"
+                      >
+                        继续执行
+                      </button>
+                    </div>
+                  )}
                   <NovelDetail state={state} />
                   {!state.novel_name && (
                     <div className="px-4 pb-4">

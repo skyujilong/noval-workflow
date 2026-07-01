@@ -39,6 +39,9 @@ export interface ThreadInfo {
   updated_at: string;
   status: string; // idle | busy | error | interrupted 等
   values: Partial<NovelState>;
+  /** 服务端判定的「等待继续」标记：status=interrupted 但无真中断（interrupts dict 为空），
+   *  常见于 langgraph dev 重启后 pending 卡住的场景。前端据此在列表卡片显示「▶」按钮。 */
+  pending_resume?: boolean;
 }
 
 // ── Assistant ─────────────────────────────────────────────────────────────────
@@ -78,6 +81,7 @@ export async function listThreads(): Promise<ThreadInfo[]> {
     updated_at: string;
     status: string;
     values?: Partial<NovelState>;
+    pending_resume?: boolean;
   }>;
   return rows.map((t) => ({
     thread_id: t.thread_id,
@@ -86,6 +90,7 @@ export async function listThreads(): Promise<ThreadInfo[]> {
     updated_at: t.updated_at,
     status: t.status as string,
     values: (t.values ?? {}) as Partial<NovelState>,
+    pending_resume: t.pending_resume ?? false,
   }));
 }
 
@@ -442,26 +447,71 @@ export interface CurrentInterrupt {
   nodeName: string;
 }
 
+/** 中断条目最小形状（覆盖 tasks[].interrupts 与 threads.get() 顶层 interrupts 两处来源） */
+interface RawInterrupt {
+  value?: unknown;
+  resumable?: boolean;
+}
+
+/** getThread 返回的 interrupts 字段形状：{ [task_id]: RawInterrupt[] } */
+export type ThreadInterruptsMap = Record<string, RawInterrupt[]>;
+
 /**
- * 从 thread state 的 tasks 中提取当前待处理的中断。
- * LangGraph 在 interrupt() 处暂停后，getState().tasks[].interrupts 非空。
- * 返回第一个可恢复的中断；无中断返回 null（表示流程已结束或正在运行）。
+ * 从 thread 快照中提取当前待处理的中断。
  *
- * payload 自描述（带 type + 业务上下文），前端无需再读嵌套子图 state。
+ * 双数据源合并（root-cause fix）：
+ * - 主源 `state.tasks[i].interrupts`：来自 GET /threads/{tid}/state。运行中或刚 pause 时最新。
+ * - 兜底 `threadInterrupts`：来自 GET /threads/{tid} 的顶层 interrupts dict（按 task_id 键控）。
+ *   在 langgraph dev 进程重启后观察到：state 的 tasks[].interrupts 是空数组，但 thread 表上
+ *   的 denormalized interrupts 仍保有完整 payload。仅读主源会误判为「无中断」，导致 UI 卡在
+ *   无按钮的空态。用主源的 task.id 反查 dict 兜底，可恢复真中断。
+ *
+ * 严格用 `task.id → dict[task.id]` 关联；不做 dict.values() 遍历取任意值的模糊兜底，
+ * 避免在 task 与 dict 不齐时给出错误的中断（宁可 null 让上层显式处理，也不静默伪装成功）。
+ *
+ * 返回第一个可恢复的中断；无则返回 null（真正流程结束或运行中）。
  */
-export function extractInterrupt(state: {
-  tasks?: Array<{ name?: string; interrupts?: Array<{ value?: unknown; resumable?: boolean }> }>;
-}): CurrentInterrupt | null {
+export function extractInterrupt(
+  state: {
+    tasks?: Array<{
+      id?: string;
+      name?: string;
+      interrupts?: RawInterrupt[];
+    }>;
+  },
+  threadInterrupts?: ThreadInterruptsMap | null
+): CurrentInterrupt | null {
   const tasks = state.tasks ?? [];
   for (const t of tasks) {
-    const interrupts = t.interrupts ?? [];
-    for (const it of interrupts) {
+    // 主源：tasks[i].interrupts
+    for (const it of t.interrupts ?? []) {
       if (it.resumable !== false) {
         return { payload: it.value, nodeName: t.name ?? "" };
       }
     }
+    // 兜底：threadInterrupts[task.id]（重启后主源为空，但顶层 dict 仍在）
+    if (t.id && threadInterrupts && Array.isArray(threadInterrupts[t.id])) {
+      for (const it of threadInterrupts[t.id]) {
+        if (it.resumable !== false) {
+          return { payload: it.value, nodeName: t.name ?? "" };
+        }
+      }
+    }
   }
   return null;
+}
+
+/**
+ * 拉取 thread 的顶层 interrupts 兜底源（对 getState 的补充）。
+ * SDK 的 threads.get 返回 { interrupts: { [task_id]: [...] } }。这里显式类型化。
+ */
+export async function getThreadInterrupts(
+  threadId: string
+): Promise<ThreadInterruptsMap> {
+  const t = (await client.threads.get(threadId)) as {
+    interrupts?: ThreadInterruptsMap;
+  };
+  return t.interrupts ?? {};
 }
 
 // ── Graph 结构（节点图可视化）──────────────────────────────────────────────────

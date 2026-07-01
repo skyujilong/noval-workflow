@@ -107,7 +107,13 @@ async def get_novels_summary(request: Request) -> JSONResponse:
     """小说（thread）列表摘要：与 /threads/search 同形状，但 values 仅含摘要白名单字段。
 
     query: limit=<最多返回数，默认 200>
-    resp:  [{ thread_id, status, created_at, updated_at, metadata, values: {白名单字段} }, ...]
+    resp:  [{ thread_id, status, created_at, updated_at, metadata,
+             values: {白名单字段}, pending_resume: bool }, ...]
+
+    pending_resume 语义：thread 处于 status=interrupted，且平台去归一后的 interrupts dict
+    为空（即：不是真正的 human-in-the-loop 中断，而是上一次 run 未正常收尾，checkpoint 里
+    还有 pending task 但没有活跃 run 在推）。前端据此在列表卡片渲染「▶」按钮，一键继续。
+    典型触发场景：langgraph dev 服务重启、后端进程被 kill、网络断开导致 run 挂起。
     """
     try:
         limit = int(request.query_params.get("limit", "200"))
@@ -125,6 +131,11 @@ async def get_novels_summary(request: Request) -> JSONResponse:
         # 只挑白名单标量；total_chapters_written 缺省安全取 0（全新未运行的 thread）
         summary = {k: values.get(k) for k in _SUMMARY_VALUE_FIELDS}
         summary["total_chapters_written"] = values.get("total_chapters_written", 0)
+        # pending_resume：status=interrupted 但 interrupts dict 为空 → 无真中断，仅 pending 卡住。
+        # interrupts 平台返回 dict（按 task_id 键控）；empty 检测涵盖 None / {} / []。
+        interrupts = t.get("interrupts")
+        has_real_interrupt = bool(interrupts) if interrupts is not None else False
+        pending_resume = t.get("status") == "interrupted" and not has_real_interrupt
         out.append(
             {
                 "thread_id": t["thread_id"],
@@ -133,6 +144,7 @@ async def get_novels_summary(request: Request) -> JSONResponse:
                 "updated_at": t.get("updated_at"),
                 "metadata": t.get("metadata") or {},
                 "values": summary,
+                "pending_resume": pending_resume,
             }
         )
     return JSONResponse(out)

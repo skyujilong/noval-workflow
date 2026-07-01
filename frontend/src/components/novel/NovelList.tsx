@@ -1,7 +1,7 @@
-// 左侧小说列表：列出所有 thread，支持新建、选择与删除。
+// 左侧小说列表：列出所有 thread，支持新建、选择、删除、pending 继续。
 
 import { useState } from "react";
-import { AlertTriangle, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { AlertTriangle, Play, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import type { ThreadInfo } from "../../lib/langgraph";
 
 interface Props {
@@ -14,6 +14,8 @@ interface Props {
   onRefresh: () => void;
   onConfig: (thread: ThreadInfo) => void;
   onDelete: (threadId: string) => Promise<boolean>;
+  /** pending_resume 卡片的「▶」按钮回调：选中该 thread 并触发一次继续执行。 */
+  onContinue: (threadId: string) => void;
 }
 
 export function NovelList({
@@ -26,6 +28,7 @@ export function NovelList({
   onRefresh,
   onConfig,
   onDelete,
+  onContinue,
 }: Props) {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -131,6 +134,19 @@ export function NovelList({
               >
                 <Settings2 size={16} strokeWidth={2} />
               </button>
+              {t.pending_resume && (
+                <button
+                  type="button"
+                  title="上次运行中断，点击继续执行"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onContinue(t.thread_id);
+                  }}
+                  className="shrink-0 px-2.5 text-amber-500 hover:text-amber-600 hover:bg-amber-50 transition-colors flex items-center justify-center"
+                >
+                  <Play size={16} strokeWidth={2} fill="currentColor" />
+                </button>
+              )}
               <button
                 type="button"
                 title="删除小说"

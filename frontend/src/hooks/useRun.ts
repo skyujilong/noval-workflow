@@ -1,11 +1,13 @@
 // 编排单个 thread 的运行：组合「流式展示」(useStreamingDisplay) 与「thread 快照」
-// (useThreadSnapshot) 两个子 hook，负责 start / resume / replay / refresh 与
+// (useThreadSnapshot) 两个子 hook，负责 start / resume / replay / continue / refresh 与
 // running / error 状态。
 //
 // 核心流程：
 //   start()          → 启动新 run（无 resume），graph 会在首个 interrupt 暂停
-//   refresh()        → 拉取快照，提取 interrupt，必要时 join 后台 run
+//   refresh()        → 拉取快照，提取 interrupt，必要时 join 后台 run；无中断且 next 非空
+//                      时暴露 pendingResume（重启后 pending 卡住，等用户点「继续执行」）
 //   resume(value)    → 用 Command(resume=value) 恢复 run，结束后再 refresh
+//   continueRun()    → 无 interrupt 但 next 非空时，用 input:{} 无 resume 让 pending task 继续
 //   replay(id)       → 从指定 checkpoint 重跑（同线程 replay）
 //
 // 跨小说隔离由 React 协调负责：承载本 hook 的子树以 key={threadId} 重挂载，故每个
@@ -34,6 +36,13 @@ export interface UseRunResult {
   /** 首次快照尚未拉回——右侧据此显示「加载中」而非空态详情 */
   loading: boolean;
   error: string | null;
+  /**
+   * 「等待继续」状态：thread 无 interrupt、无活跃 run，但 state.next 非空。
+   * 常见于 langgraph dev 重启后：上一次 run 中途被中断，checkpoint 已写下「下一步」，
+   * 但没有活跃 run 在推它。UI 应露出「继续执行」按钮，点击后 continueRun()。
+   * 非 null 时值为 next 数组第一个待执行节点名。
+   */
+  pendingResume: string | null;
   /** LLM 流式输出的增量内容（打字机效果） */
   streamingContent: string;
   /** 当前正在输出内容的节点名 */
@@ -44,6 +53,8 @@ export interface UseRunResult {
   start: () => Promise<void>;
   /** 从当前 interrupt 恢复 */
   resume: (value: unknown) => Promise<void>;
+  /** 无 interrupt 时把 pending task 继续跑起来（重启卡住场景） */
+  continueRun: () => Promise<void>;
   /** 从指定 checkpoint 重跑（同线程 replay） */
   replay: (checkpointId: string) => Promise<void>;
 }
@@ -61,6 +72,7 @@ export function useRun(threadId: string): UseRunResult {
 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingResume, setPendingResume] = useState<string | null>(null);
   // 防止同一小说并发 run
   const runningRef = useRef(false);
   // 实例存活标记：卸载后丢弃后台 run 仍在产生的流式回调。
@@ -95,11 +107,13 @@ export function useRun(threadId: string): UseRunResult {
       const { interrupt: it, next } = await load(threadId);
       if (it) {
         if (next.length) setCurrentNode(next[0]);
+        setPendingResume(null);
         // payload 自描述（带 type + 富表单上下文），无需再取子图 state。
       } else if (!runningRef.current) {
         // 无中断且本地未在流式 — 检查后台是否有正在运行的 run（刷新后恢复 running）
         const activeRuns = await listActiveRuns(threadId);
         if (activeRuns.length > 0) {
+          setPendingResume(null);
           runningRef.current = true;
           setRunning(true);
           try {
@@ -114,6 +128,9 @@ export function useRun(threadId: string): UseRunResult {
           await refresh();
           return;
         }
+        // 无 interrupt + 无活跃 run，但 next 非空 —— pending 卡住场景（重启后残留）。
+        // 露出「继续执行」按钮，等用户显式确认后再拉起 run，避免自动消耗 LLM。
+        setPendingResume(next.length > 0 ? next[0] : null);
       }
       setError(null);
     } catch (e) {
@@ -126,7 +143,7 @@ export function useRun(threadId: string): UseRunResult {
     void refresh();
   }, [refresh]);
 
-  // start / resume / replay 的共享骨架：并发守卫 → 置 running/清错/(可选清中断)/清流式
+  // start / resume / replay / continueRun 的共享骨架：并发守卫 → 置 running/清错/(可选清中断)/清流式
   // → 执行 → 成功后 refresh；失败 setError（resume/replay 还需 refresh 还原中断）→ 收尾。
   const runGuarded = useCallback(
     async (
@@ -138,6 +155,7 @@ export function useRun(threadId: string): UseRunResult {
       runningRef.current = true;
       setRunning(true);
       setError(null);
+      setPendingResume(null); // 任何主动 run 都清掉 pending 提示
       if (opts?.clearInterrupt) setInterrupt(null);
       resetStreaming();
       try {
@@ -171,6 +189,13 @@ export function useRun(threadId: string): UseRunResult {
     [runGuarded, threadId, onEvent]
   );
 
+  // 「继续执行」：无 interrupt + next 非空的 pending 场景。等价于新 run 无 resume（input:{}），
+  // langgraph 会从 checkpoint 的 next 节点继续跑，不会重复执行已完成节点。
+  const continueRun = useCallback(
+    () => runGuarded(() => runStream(threadId, onEvent, { input: {} }), "继续执行失败"),
+    [runGuarded, threadId, onEvent]
+  );
+
   // replay 同线程从指定 checkpoint 重跑：先清旧中断（clearInterrupt），失败时 refresh 还原。
   const replay = useCallback(
     (checkpointId: string) =>
@@ -189,11 +214,13 @@ export function useRun(threadId: string): UseRunResult {
     running,
     loading,
     error,
+    pendingResume,
     streamingContent,
     streamingNode,
     refresh,
     start,
     resume,
+    continueRun,
     replay,
   };
 }

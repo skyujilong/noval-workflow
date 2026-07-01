@@ -26,6 +26,9 @@ export default function App() {
     () => localStorage.getItem("selectedThreadId")
   );
   const [autoStart, setAutoStart] = useState(false);
+  // 当从列表点「▶」进入 pending 卡住的 thread 时置为 true，workspace 挂载后自动触发一次 continueRun。
+  // 与 autoStart 语义并行：autoStart 面向「新建自动 start」；autoContinue 面向「pending 一键继续」。
+  const [autoContinue, setAutoContinue] = useState(false);
   const [leftTab, setLeftTab] = useState<LeftTab>("novels");
   const [configThread, setConfigThread] = useState<ThreadInfo | null>(null);
   // 当前小说的运行状态（由 NovelWorkspace 上报），供 header / 错误条渲染
@@ -72,8 +75,25 @@ export default function App() {
       }
       setSelectedId(id);
       setAutoStart(false);
+      setAutoContinue(false);
     },
     [threads]
+  );
+
+  // 列表卡片「▶」：选中该 thread；若已选中则直接触发 continueRun，
+  // 否则设置 autoContinue，workspace 挂载后由本组件自动触发一次（见下 useEffect）。
+  const handleContinue = useCallback(
+    (id: string) => {
+      if (id === selectedId) {
+        workspaceRef.current?.continueRun();
+        return;
+      }
+      setStatus(EMPTY_STATUS);
+      setSelectedId(id);
+      setAutoStart(false);
+      setAutoContinue(true);
+    },
+    [selectedId]
   );
 
   // 新建小说：创建 thread → 选中 → 自动启动 run
@@ -82,6 +102,7 @@ export default function App() {
     if (t) {
       setSelectedId(t.thread_id);
       setAutoStart(true);
+      setAutoContinue(false);
       setStatus(EMPTY_STATUS);
     }
   }, [create]);
@@ -89,6 +110,9 @@ export default function App() {
   const handleReplay = useCallback((checkpointId: string) => {
     workspaceRef.current?.replay(checkpointId);
   }, []);
+
+  // autoContinue 消费回调：稳定引用，避免每次 App render 新建导致 workspace 里 effect deps 抖动。
+  const handleAutoContinueConsumed = useCallback(() => setAutoContinue(false), []);
 
   // 持久化 selectedId，页面刷新后恢复
   useEffect(() => {
@@ -153,6 +177,7 @@ export default function App() {
               onCreate={handleCreate}
               onRefresh={refresh}
               onConfig={setConfigThread}
+              onContinue={handleContinue}
               onDelete={async (id) => {
                 const success = await deleteThread(id);
                 if (success && id === selectedId) {
@@ -176,6 +201,8 @@ export default function App() {
             graphNodes={graphNodes}
             graphEdges={graphEdges}
             autoStart={autoStart}
+            autoContinue={autoContinue}
+            onAutoContinueConsumed={handleAutoContinueConsumed}
             threadMeta={selectedThread?.metadata}
             summaryBusy={selectedThread?.status === "busy"}
             onRefreshThreads={refresh}
