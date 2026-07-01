@@ -18,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useState } from "react";
 import { useStateEditor } from "../../hooks/useStateEditor";
 import {
   EDITABLE_FIELDS,
@@ -30,6 +31,7 @@ import {
 } from "../../lib/editableState";
 import type { NovelState } from "../../lib/types";
 import { ForeshadowingEditor } from "./ForeshadowingEditor";
+import { FieldExpandDialog } from "./FieldExpandDialog";
 
 interface Props {
   open: boolean;
@@ -42,15 +44,18 @@ interface Props {
   onSaved: () => void | Promise<void>;
 }
 
-/** 字段头：标签 + 已改标记 + 撤销 */
+/** 字段头：标签 + 已改标记 + 放大（可选）+ 撤销 */
 function FieldHead({
   label,
   dirty,
   onReset,
+  onExpand,
 }: {
   label: string;
   dirty: boolean;
   onReset: () => void;
+  /** 提供则显示「⤢ 放大」按钮（长文本字段专注编辑） */
+  onExpand?: () => void;
 }) {
   return (
     <div className="mb-1 flex items-center justify-between">
@@ -62,14 +67,26 @@ function FieldHead({
           </span>
         )}
       </Label>
-      <button
-        type="button"
-        onClick={onReset}
-        disabled={!dirty}
-        className="text-xs text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        撤销
-      </button>
+      <div className="flex items-center gap-3">
+        {onExpand && (
+          <button
+            type="button"
+            onClick={onExpand}
+            title="放大编辑"
+            className="text-xs text-gray-400 hover:text-blue-600"
+          >
+            ⤢ 放大
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={!dirty}
+          className="text-xs text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          撤销
+        </button>
+      </div>
     </div>
   );
 }
@@ -80,13 +97,14 @@ interface TextFieldProps {
   dirty: boolean;
   onChange: (key: EditableTextKey, value: string) => void;
   onReset: () => void;
+  onExpand: () => void;
 }
 
-function TextField({ field, value, dirty, onChange, onReset }: TextFieldProps) {
+function TextField({ field, value, dirty, onChange, onReset, onExpand }: TextFieldProps) {
   const rows = field.key === "current_draft" ? 12 : 6;
   return (
     <div>
-      <FieldHead label={field.label} dirty={dirty} onReset={onReset} />
+      <FieldHead label={field.label} dirty={dirty} onReset={onReset} onExpand={onExpand} />
       <Textarea
         value={value}
         onChange={(e) => onChange(field.key as EditableTextKey, e.target.value)}
@@ -150,6 +168,10 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
     save,
   } = useStateEditor({ threadId, state, open, onSaved });
 
+  // 当前放大编辑的文本字段（null = 无）；放大框编辑的是同一份草稿，关闭即保留
+  const [expanded, setExpanded] = useState<EditableFieldDef | null>(null);
+  const expandedKey = expanded?.key as EditableTextKey | undefined;
+
   const canSave = !disabled && !saving && dirtyCount > 0;
 
   const renderField = (f: EditableFieldDef) => {
@@ -175,6 +197,7 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
         dirty={dirty}
         onChange={setTextField}
         onReset={() => resetField(f.key)}
+        onExpand={() => setExpanded(f)}
       />
     );
   };
@@ -229,6 +252,16 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
             {saving ? "保存中…" : "保存"}
           </Button>
         </SheetFooter>
+
+        {/* 单字段放大编辑：与抽屉共享同一份草稿，改动实时写回，关闭即保留 */}
+        <FieldExpandDialog
+          open={expandedKey !== undefined}
+          title={expanded?.label ?? ""}
+          value={expandedKey ? textDraft[expandedKey] : ""}
+          disabled={disabled}
+          onChange={(v) => expandedKey && setTextField(expandedKey, v)}
+          onClose={() => setExpanded(null)}
+        />
       </SheetContent>
     </Sheet>
   );
