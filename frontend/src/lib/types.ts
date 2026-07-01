@@ -7,6 +7,14 @@ export interface ReviewHistoryEntry {
   content: string;
 }
 
+/**
+ * 伏笔台账（state.py `foreshadowing: dict`）。运行时是结构化 dict
+ * （形如 `{"pending": [...], "collected": [...]}`），历史遗留数据可能是字符串。
+ * 之前前端误标为 string——实际平台返回的是对象；这里按真实形态标注，
+ * 兼容老旧字符串格式（后端 _migrate_legacy_foreshadowing 会在读取时迁移）。
+ */
+export type ForeshadowingLedger = Record<string, unknown> | string;
+
 /** NovelState（state.py）— 平台 thread state 的 values 结构 */
 export interface NovelState {
   // Phase -1：灵感脑爆（可选，入口分叉）
@@ -52,7 +60,7 @@ export interface NovelState {
   current_arc_outline: string;
   character_status: string;
   character_relations: string;
-  foreshadowing: string;
+  foreshadowing: ForeshadowingLedger;
   phase_summary: string;
 
   // 子图扩展字段（部分子图会用到）
@@ -94,7 +102,7 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   current_arc_outline: "",
   character_status: "",
   character_relations: "",
-  foreshadowing: "",
+  foreshadowing: {},
   phase_summary: "",
 };
 

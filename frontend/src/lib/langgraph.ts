@@ -127,6 +127,28 @@ export async function getThreadState(threadId: string) {
   return client.threads.getState(threadId);
 }
 
+/**
+ * 就地修改 thread 当前（最新）checkpoint 的 state（LangGraph 原生 update_state）。
+ * 用于「暂停点手动纠正 state → 继续」——只 patch 传入的字段，其余不动。
+ *
+ * ⚠️ 刻意**不传 asNode**（已实测）：
+ * - 不传 → 值写入、`next` 保持在原中断节点、后续 resume 正常恢复并保留改动（正确）。
+ * - 传 asNode → LangGraph 把该节点当「已执行」，跳过中断并污染 resume（错误）。
+ *
+ * ⚠️ 另一个已实测副作用：update_state 后 `tasks[].interrupts` 与顶层 `thread.interrupts`
+ * 都会被清空（但 `next` 保留、resume 仍可用）。故调用方保存后**只应刷新 values、保留内存里的
+ * interrupt**，切勿跑会 extractInterrupt 的常规 refresh（否则中断表单会消失）。
+ *
+ * ⚠️ reducer 字段（all_chapter_titles / all_chapter_summaries，operator.add）是**追加**语义，
+ * 不要经此覆盖——编辑白名单已将它们排除（见 lib/editableState.ts）。
+ */
+export async function updateThreadState(
+  threadId: string,
+  values: Partial<NovelState>
+): Promise<void> {
+  await client.threads.updateState(threadId, { values });
+}
+
 /** 获取 thread 的 checkpoint 历史（用于回溯）。
  *  🔍 关键参数：include_subgraphs = true —— 必须加，否则只返回主图 checkpoint，
  *  子图（chapter_edit、arc_edit 等）的历史会被隐藏，导致历史列表不完整。

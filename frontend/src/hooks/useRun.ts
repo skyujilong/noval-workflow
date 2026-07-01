@@ -49,6 +49,8 @@ export interface UseRunResult {
   streamingNode: string;
   /** 拉取当前 thread state 并提取 interrupt */
   refresh: () => Promise<void>;
+  /** 只刷新 values（不碰 interrupt）——就地 update_state 保存后用，避免中断表单消失 */
+  refreshValues: () => Promise<void>;
   /** 启动一次新 run（新 thread 会立刻在 collect_user_inputs 中断） */
   start: () => Promise<void>;
   /** 从当前 interrupt 恢复 */
@@ -60,7 +62,8 @@ export interface UseRunResult {
 }
 
 export function useRun(threadId: string): UseRunResult {
-  const { state, interrupt, loading, setInterrupt, load } = useThreadSnapshot();
+  const { state, interrupt, loading, setInterrupt, load, reloadValues } =
+    useThreadSnapshot();
   const {
     currentNode,
     streamingNode,
@@ -137,6 +140,16 @@ export function useRun(threadId: string): UseRunResult {
       setError(`获取状态失败：${(e as Error).message}`);
     }
   }, [threadId, load, setCurrentNode, onEvent]);
+
+  // 只刷新 values（不动 interrupt）：就地 update_state 保存后调用。update_state 会清空中断
+  // 两源，跑常规 refresh 会把 interrupt 置 null 让表单消失；这里只更新展示用的 values。
+  const refreshValues = useCallback(async () => {
+    try {
+      await reloadValues(threadId);
+    } catch (e) {
+      setError(`刷新状态失败：${(e as Error).message}`);
+    }
+  }, [threadId, reloadValues]);
 
   // 挂载时拉取状态（key 重挂载保证一个实例只对应一个 threadId）
   useEffect(() => {
@@ -218,6 +231,7 @@ export function useRun(threadId: string): UseRunResult {
     streamingContent,
     streamingNode,
     refresh,
+    refreshValues,
     start,
     resume,
     continueRun,

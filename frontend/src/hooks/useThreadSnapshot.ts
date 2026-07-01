@@ -25,6 +25,12 @@ export interface UseThreadSnapshot {
   load: (
     threadId: string
   ) => Promise<{ interrupt: CurrentInterrupt | null; next: string[] }>;
+  /**
+   * 只重新拉取 values 写入 state，**不碰 interrupt / loading**。
+   * 专供「就地 update_state 后」刷新：update_state 会清空中断两源，跑常规 load 会把
+   * interrupt 置 null（表单消失）；此方法只更新展示用的 values，保留内存里的中断。
+   */
+  reloadValues: (threadId: string) => Promise<void>;
 }
 
 export function useThreadSnapshot(): UseThreadSnapshot {
@@ -52,5 +58,11 @@ export function useThreadSnapshot(): UseThreadSnapshot {
     }
   }, []);
 
-  return { state, interrupt, loading, setInterrupt, load };
+  const reloadValues = useCallback(async (threadId: string) => {
+    const st = await getThreadState(threadId);
+    const values = (st.values ?? {}) as Partial<NovelState>;
+    setState({ ...EMPTY_NOVEL_STATE, ...values });
+  }, []);
+
+  return { state, interrupt, loading, setInterrupt, load, reloadValues };
 }

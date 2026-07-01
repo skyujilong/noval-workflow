@@ -17,6 +17,7 @@ import { InterruptHandler } from "./interrupts/InterruptHandler";
 import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
+import { StateEditPanel } from "./state/StateEditPanel";
 import { useRun } from "../hooks/useRun";
 import { updateThreadMeta } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
@@ -88,10 +89,13 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       continueRun,
       replay,
       refresh,
+      refreshValues,
       streamingContent,
       streamingNode,
     } = useRun(threadId);
     const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
+    // 就地编辑当前 state 的抽屉开关（暂停点手动纠偏 → 继续）
+    const [editorOpen, setEditorOpen] = useState(false);
 
     // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond）
     // 两态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
@@ -202,6 +206,20 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             />
           ) : interrupt ? (
             <div className="p-4">
+              {/* 暂停点入口：手动纠正当前 state 后再「通过 / 提交意见」继续 */}
+              {state.novel_name && (
+                <div className="mb-3 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setEditorOpen(true)}
+                    disabled={inputDisabled}
+                    title={inputDisabled ? "运行中不可编辑状态" : undefined}
+                    className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-gray-200 disabled:hover:text-gray-500"
+                  >
+                    ✎ 编辑当前状态
+                  </button>
+                </div>
+              )}
               {/* 闸由 summary busy 触发、而非本地运行：陈旧 UI / 后台 run 正在跑同一 thread，
                   解释为何「确认通过」等被锁，避免看上去像坏掉。本地 running 期另有流式提示，不重复。 */}
               {summaryBusy && !running && (
@@ -319,10 +337,20 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                       </button>
                     </div>
                   )}
-                  <div className="px-4 pb-4">
+                  <div className="flex gap-2 px-4 pb-4">
+                    {state.novel_name && (
+                      <button
+                        onClick={() => setEditorOpen(true)}
+                        disabled={inputDisabled}
+                        title={inputDisabled ? "运行中不可编辑状态" : undefined}
+                        className="flex-1 rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                      >
+                        ✎ 编辑当前状态
+                      </button>
+                    )}
                     <button
                       onClick={() => void refresh()}
-                      className="w-full rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                      className="flex-1 rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
                     >
                       刷新状态
                     </button>
@@ -334,6 +362,17 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             </>
           )}
         </aside>
+
+        {/* 就地编辑 state 抽屉：暂停点手动纠偏。保存后只刷新 values（refreshValues），
+            不动 interrupt——update_state 会清空中断源，跑常规 refresh 会让中断表单消失。 */}
+        <StateEditPanel
+          open={editorOpen}
+          threadId={threadId}
+          state={state}
+          disabled={inputDisabled}
+          onClose={() => setEditorOpen(false)}
+          onSaved={refreshValues}
+        />
       </>
     );
   }
