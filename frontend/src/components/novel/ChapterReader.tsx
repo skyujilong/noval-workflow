@@ -1,7 +1,7 @@
 // 章节正文阅读视图：左侧章节列表，右侧渲染正文（从 output/<小说名>/chapters/*.txt 读取）。
 
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { ArticleParagraphs } from "../ArticleParagraphs";
 import { chapterUrl, fetchChapterText } from "../../lib/files";
 import type { NovelState } from "../../lib/types";
 
@@ -84,8 +84,8 @@ export function ChapterReader({ state }: Props) {
           <div className="rounded bg-red-50 p-2 text-sm text-red-600">{error}</div>
         )}
         {selectedIdx >= 0 && !loading && !error && content && (
-          <div className="prose prose-sm max-w-none">
-            <ReactMarkdown>{content}</ReactMarkdown>
+          <div className="prose prose-sm max-w-none leading-relaxed text-gray-800 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
+            <ArticleParagraphs text={content} />
           </div>
         )}
       </div>

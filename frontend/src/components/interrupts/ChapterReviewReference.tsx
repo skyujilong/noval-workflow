@@ -4,7 +4,7 @@
 // 仅 review_type === "chapter" 时由 HumanReviewForm 渲染。
 
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import { ArticleParagraphs } from "../ArticleParagraphs";
 import { chapterUrl, fetchChapterText } from "../../lib/files";
 import type { NovelState } from "../../lib/types";
 
@@ -73,7 +73,7 @@ function PreviousChapterDetails({ novelName, chapterNum, title }: PreviousChapte
         {error && <div className="rounded bg-red-50 p-2 text-xs text-red-600">{error}</div>}
         {!loading && !error && content && (
           <div className="text-sm leading-relaxed text-gray-700 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
-            <ReactMarkdown>{content}</ReactMarkdown>
+            <ArticleParagraphs text={content} />
           </div>
         )}
         {!loading && !error && !content && (

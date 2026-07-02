@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import { ArticleParagraphs } from "../ArticleParagraphs";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
@@ -109,7 +109,11 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
           </button>
         </div>
         <div className="max-w-none overflow-y-auto max-h-[70vh] text-sm leading-relaxed text-gray-800 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
-          <ReactMarkdown>{draft || "（无草稿内容）"}</ReactMarkdown>
+          {draft ? (
+            <ArticleParagraphs text={draft} />
+          ) : (
+            <p className="text-gray-400">（无草稿内容）</p>
+          )}
         </div>
       </div>
 
