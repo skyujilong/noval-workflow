@@ -79,6 +79,483 @@ async def put_prompt_overrides(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "overrides": saved})
 
 
+# ── 提示词自进化接口（按小说：提炼 / 应用 / 还原） ───────────────────────────────
+# 把人工打回的修改要求提炼成整改，经确认写进该小说 prompt_overrides.json 的
+# evolved_directives（下一次 prepare_chapter 新鲜读取即生效）；台账与可复用整改库落在
+# 中央 SQLite（noval_workflow.prompts.evolution_store），图节点不碰。
+
+
+def _current_prompt(genre: str, novel: str):
+    """读取某小说当前生效（已合并覆盖）的相关提示词字段，供提炼去重/冲突判断。"""
+    from noval_workflow.prompts import get_prompt_pack
+    from noval_workflow.prompts.evolution import CurrentPrompt
+
+    flavor = get_prompt_pack(genre, novel).flavor
+    return CurrentPrompt(
+        chapter_style_rules=flavor.chapter_style_rules,
+        chapter_review_checklist=flavor.chapter_review_checklist,
+        evolved_directives=flavor.evolved_directives,
+    )
+
+
+def _event_to_json(ev) -> dict:
+    """序列化进化事件给前端（省略体量较大、仅服务端还原用的 prompt_before）。"""
+    return {
+        "id": ev.id,
+        "created_at": ev.created_at,
+        "novel_name": ev.novel_name,
+        "genre": ev.genre,
+        "trigger": ev.trigger.value,
+        "review_type": ev.review_type,
+        "chapter_index": ev.chapter_index,
+        "source_feedback": ev.source_feedback,
+        "rejected_excerpt": ev.rejected_excerpt,
+        "proposals": [
+            {
+                "field": p.field,
+                "op": p.op.value,
+                "text": p.text,
+                "rationale": p.rationale,
+                "conflicts_with": p.conflicts_with,
+            }
+            for p in ev.proposals
+        ],
+        "status": ev.status.value,
+        "applied": ev.applied,
+        "applied_at": ev.applied_at,
+        "reverted_at": ev.reverted_at,
+    }
+
+
+def _directive_to_json(d) -> dict:
+    return {
+        "id": d.id,
+        "created_at": d.created_at,
+        "genre": d.genre,
+        "title": d.title,
+        "text": d.text,
+        "tags": list(d.tags),
+        "source_novel": d.source_novel,
+        "usage_count": d.usage_count,
+    }
+
+
+def _merge_field(base: str, text: str, op: str) -> str:
+    """把一条整改文本按 append/replace 合到字段现值上。"""
+    text = text.strip()
+    if op == "replace" or not base.strip():
+        return text
+    return f"{base.rstrip()}\n{text}"
+
+
+async def get_prompt_evolution(request: Request) -> JSONResponse:
+    """列出某小说的进化事件台账（最新在前）。query: novel=<原始小说名>。"""
+    from noval_workflow.prompts.evolution_store import get_events
+
+    novel = request.query_params.get("novel", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    events = await asyncio.to_thread(get_events, novel)
+    return JSONResponse({"events": [_event_to_json(e) for e in events]})
+
+
+async def post_prompt_evolution_distill(request: Request) -> JSONResponse:
+    """提炼一条人工修改意见为整改提案，落一条 proposed 事件并返回。
+
+    query: novel, genre；body: {feedback, review_type?, draft_excerpt?, chapter_index?}
+    """
+    from noval_workflow.prompts.evolution import distill
+    from noval_workflow.prompts.evolution_store import (
+        EventTrigger,
+        EvolutionEvent,
+        EvolutionEventNotFound,
+        add_event,
+        update_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    feedback = str(body.get("feedback", "")).strip()
+    if not feedback:
+        return JSONResponse({"error": "missing feedback"}, status_code=400)
+    review_type = str(body.get("review_type", "chapter"))
+    draft_excerpt = str(body.get("draft_excerpt", ""))
+    chapter_index = body.get("chapter_index")
+    event_id = str(body.get("event_id", "")).strip()
+
+    current = await asyncio.to_thread(_current_prompt, genre, novel)
+    result = await asyncio.to_thread(distill, feedback, review_type, current, draft_excerpt)
+    if event_id:
+        # 就地提炼：把提案更新进已有事件（通常是打回自动落库的 REJECT 记录），不新建。
+        try:
+            saved = await asyncio.to_thread(update_event, event_id, proposals=result.proposals)
+        except EvolutionEventNotFound:
+            return JSONResponse({"error": "event not found"}, status_code=404)
+    else:
+        event = EvolutionEvent(
+            novel_name=novel,
+            genre=genre,
+            trigger=EventTrigger.MANUAL,
+            review_type=review_type,
+            chapter_index=chapter_index if isinstance(chapter_index, int) else None,
+            source_feedback=feedback,
+            rejected_excerpt=draft_excerpt,
+            proposals=result.proposals,
+        )
+        saved = await asyncio.to_thread(add_event, event)
+    return JSONResponse({"event": _event_to_json(saved), "summary": result.summary})
+
+
+async def post_prompt_evolution_reject(request: Request) -> JSONResponse:
+    """打回自动落库：把一次人工打回的修改意见记一条 REJECT 事件（proposed，待提炼）。
+
+    query: novel, genre；body: {review_type, feedback, chapter_index?}。
+    供前端在 chapter/arc_outline 打回时自动调用；空 feedback（=通过）直接跳过。
+    """
+    from noval_workflow.prompts.evolution_store import (
+        EventTrigger,
+        EvolutionEvent,
+        add_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    feedback = str(body.get("feedback", "")).strip()
+    if not feedback:
+        return JSONResponse({"ok": True, "skipped": True})
+    review_type = str(body.get("review_type", "chapter"))
+    chapter_index = body.get("chapter_index")
+    event = EvolutionEvent(
+        novel_name=novel,
+        genre=genre,
+        trigger=EventTrigger.REJECT,
+        review_type=review_type,
+        chapter_index=chapter_index if isinstance(chapter_index, int) else None,
+        source_feedback=feedback,
+    )
+    saved = await asyncio.to_thread(add_event, event)
+    return JSONResponse({"ok": True, "event": _event_to_json(saved)})
+
+
+def _apply_selected(novel: str, genre: str, selected: list[dict]) -> tuple[dict, dict, dict]:
+    """把选中的整改合并进该小说覆盖并落盘。返回 (落盘后 overrides, applied, 应用前快照)。
+
+    纯合并 + IO 编排：应用前快照当前覆盖（供还原），基于当前生效字段做 append/replace。
+    """
+    from noval_workflow.prompts import GenreFlavor, get_prompt_pack, load_overrides, save_overrides
+
+    allowed = {f.name for f in fields(GenreFlavor)}
+    prompt_before = load_overrides(novel)
+    flavor = get_prompt_pack(genre, novel).flavor
+    merged = dict(prompt_before)
+    applied: dict[str, str] = {}
+    for item in selected:
+        field_name = str(item.get("field", "evolved_directives"))
+        text = str(item.get("text", "")).strip()
+        if field_name not in allowed or not text:
+            continue
+        op = str(item.get("op", "append"))
+        base = merged.get(field_name) or getattr(flavor, field_name, "")
+        merged[field_name] = _merge_field(base, text, op)
+        applied[field_name] = merged[field_name]
+    saved = save_overrides(novel, merged)
+    return saved, applied, prompt_before
+
+
+async def post_prompt_evolution_apply(request: Request) -> JSONResponse:
+    """应用某事件里选中的整改到该小说覆盖，标记 applied 并记录应用前快照。
+
+    query: novel, genre；body: {event_id, selected:[{field,text,op}]}
+    """
+    from noval_workflow.prompts.evolution_store import (
+        EventStatus,
+        _now,
+        update_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    event_id = str(body.get("event_id", ""))
+    selected = body.get("selected", [])
+    if not event_id or not isinstance(selected, list) or not selected:
+        return JSONResponse({"error": "missing event_id or selected"}, status_code=400)
+
+    saved, applied, prompt_before = await asyncio.to_thread(
+        _apply_selected, novel, genre, selected
+    )
+    if not applied:
+        return JSONResponse({"error": "no valid selected fields"}, status_code=400)
+    event = await asyncio.to_thread(
+        update_event,
+        event_id,
+        status=EventStatus.APPLIED,
+        applied=applied,
+        prompt_before=prompt_before,
+        applied_at=_now(),
+    )
+    return JSONResponse({"ok": True, "overrides": saved, "event": _event_to_json(event)})
+
+
+async def post_prompt_evolution_restore(request: Request) -> JSONResponse:
+    """把某已应用事件还原到应用前快照。query: novel；body: {event_id}。"""
+    from noval_workflow.prompts import save_overrides
+    from noval_workflow.prompts.evolution_store import (
+        EventStatus,
+        EvolutionEventNotFound,
+        _now,
+        get_event,
+        update_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    event_id = str(body.get("event_id", ""))
+    if not event_id:
+        return JSONResponse({"error": "missing event_id"}, status_code=400)
+    try:
+        event = await asyncio.to_thread(get_event, event_id)
+    except EvolutionEventNotFound:
+        return JSONResponse({"error": "event not found"}, status_code=404)
+    saved = await asyncio.to_thread(save_overrides, novel, event.prompt_before)
+    await asyncio.to_thread(
+        update_event, event_id, status=EventStatus.REVERTED, reverted_at=_now()
+    )
+    return JSONResponse({"ok": True, "overrides": saved})
+
+
+async def post_prompt_evolution_reconcile(request: Request) -> JSONResponse:
+    """预览：把该小说累积的 evolved_directives 整理消解成去重、无矛盾的自洽全集（不落盘）。
+
+    query: novel, genre；body: {}。返回 {before, after, summary, resolved}，供前端确认后再应用。
+    """
+    from noval_workflow.prompts.evolution import reconcile
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    current = await asyncio.to_thread(_current_prompt, genre, novel)
+    before = current.evolved_directives.strip()
+    if not before:
+        return JSONResponse({"error": "no evolved_directives to reconcile"}, status_code=400)
+    result = await asyncio.to_thread(reconcile, before, genre)
+    return JSONResponse(
+        {
+            "before": before,
+            "after": result.reconciled,
+            "summary": result.summary,
+            "resolved": list(result.resolved),
+        }
+    )
+
+
+def _apply_reconciled(novel: str, genre: str, text: str) -> tuple[dict, dict]:
+    """把整理后的 directives 全量 REPLACE 写进该小说覆盖并落盘。返回 (overrides, 应用前快照)。"""
+    from noval_workflow.prompts import load_overrides, save_overrides
+
+    prompt_before = load_overrides(novel)
+    merged = dict(prompt_before)
+    merged["evolved_directives"] = text.strip()
+    saved = save_overrides(novel, merged)
+    return saved, prompt_before
+
+
+async def post_prompt_evolution_reconcile_apply(request: Request) -> JSONResponse:
+    """把整理后的 directives 全量 REPLACE 写进覆盖，记一条 reconcile 事件（含应用前快照，可还原）。
+
+    query: novel, genre；body: {text, before?, summary?}。text 为用户确认（可能编辑过）的整理结果。
+    """
+    from noval_workflow.prompts.evolution_store import (
+        EventStatus,
+        EventTrigger,
+        EvolutionEvent,
+        Proposal,
+        ProposalOp,
+        _now,
+        add_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    text = str(body.get("text", "")).strip()
+    if not text:
+        return JSONResponse({"error": "missing text"}, status_code=400)
+    before = str(body.get("before", ""))
+    summary = str(body.get("summary", "")).strip()
+
+    saved, prompt_before = await asyncio.to_thread(_apply_reconciled, novel, genre, text)
+    event = EvolutionEvent(
+        novel_name=novel,
+        genre=genre,
+        trigger=EventTrigger.RECONCILE,
+        review_type="chapter",
+        source_feedback=summary or "整理消解累积整改要点",
+        rejected_excerpt=before,
+        proposals=(
+            Proposal(
+                field="evolved_directives",
+                text=text,
+                op=ProposalOp.REPLACE,
+                rationale="整理消解：去重 + 消解矛盾 + 后者优先",
+            ),
+        ),
+        status=EventStatus.APPLIED,
+        applied={"evolved_directives": saved.get("evolved_directives", "")},
+        prompt_before=prompt_before,
+        applied_at=_now(),
+    )
+    saved_event = await asyncio.to_thread(add_event, event)
+    return JSONResponse({"ok": True, "overrides": saved, "event": _event_to_json(saved_event)})
+
+
+# ── 整改库接口（跨小说：精炼入库 / 查询 / 导入） ────────────────────────────────
+
+
+async def post_prompt_library_refine(request: Request) -> JSONResponse:
+    """把某小说累积的 evolved_directives 精炼拆成候选原子条目（不落库，供前端勾选）。
+
+    query: novel, genre。resp: {items:[{title,text,tags}]}
+    """
+    from noval_workflow.prompts.evolution import refine_to_items
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    current = await asyncio.to_thread(_current_prompt, genre, novel)
+    items = await asyncio.to_thread(refine_to_items, current.evolved_directives, genre)
+    return JSONResponse(
+        {"items": [{"title": it.title, "text": it.text, "tags": list(it.tags)} for it in items]}
+    )
+
+
+async def post_prompt_library(request: Request) -> JSONResponse:
+    """把选中的候选条目入中央整改库。query: genre；body: {items:[{title,text,tags}], source_novel?}"""
+    from noval_workflow.prompts.evolution_store import DirectiveItem, add_directives
+
+    genre = request.query_params.get("genre", "")
+    body = await _json_body(request)
+    raw_items = body.get("items", [])
+    source_novel = str(body.get("source_novel", ""))
+    if not isinstance(raw_items, list) or not raw_items:
+        return JSONResponse({"error": "missing items"}, status_code=400)
+    items = [
+        DirectiveItem(
+            genre=genre,
+            title=str(it.get("title", "")).strip(),
+            text=str(it.get("text", "")).strip(),
+            tags=tuple(str(t) for t in it.get("tags", []) if isinstance(it.get("tags", []), list)),
+            source_novel=source_novel,
+        )
+        for it in raw_items
+        if isinstance(it, dict) and str(it.get("text", "")).strip()
+    ]
+    saved = await asyncio.to_thread(add_directives, items)
+    return JSONResponse({"items": [_directive_to_json(d) for d in saved]})
+
+
+async def get_prompt_library(request: Request) -> JSONResponse:
+    """查询整改库。query: genre, q, all（all=1 放宽到全部题材）。resp: {items:[...]}"""
+    from noval_workflow.prompts.evolution_store import query_directives
+
+    genre = request.query_params.get("genre", "")
+    q = request.query_params.get("q", "")
+    show_all = request.query_params.get("all", "") in ("1", "true", "yes")
+    items = await asyncio.to_thread(
+        query_directives, None if show_all else (genre or None), q or None
+    )
+    return JSONResponse({"items": [_directive_to_json(d) for d in items]})
+
+
+def _import_directives(novel: str, genre: str, item_ids: list[str]) -> tuple[dict, dict, int]:
+    """取库条目、去重追加进该小说 evolved_directives 并落盘。返回 (overrides, 应用前快照, 导入数)。"""
+    from noval_workflow.prompts import get_prompt_pack, load_overrides, save_overrides
+    from noval_workflow.prompts.evolution_store import bump_usage, get_directives
+
+    directives = get_directives(item_ids)
+    prompt_before = load_overrides(novel)
+    flavor = get_prompt_pack(genre, novel).flavor
+    current = prompt_before.get("evolved_directives") or flavor.evolved_directives
+    merged = current
+    added = 0
+    for d in directives:
+        if d.text.strip() and d.text.strip() not in merged:
+            merged = _merge_field(merged, d.text, "append")
+            added += 1
+    if added == 0:
+        return prompt_before, prompt_before, 0
+    overrides = dict(prompt_before)
+    overrides["evolved_directives"] = merged
+    saved = save_overrides(novel, overrides)
+    bump_usage([d.id for d in directives])
+    return saved, prompt_before, added
+
+
+async def post_prompt_library_import(request: Request) -> JSONResponse:
+    """把选中的库条目导入某小说的 evolved_directives（去重追加），记一条 import 事件。
+
+    query: novel, genre；body: {item_ids:[...]}
+    """
+    from noval_workflow.prompts.evolution_store import (
+        EventStatus,
+        EventTrigger,
+        EvolutionEvent,
+        _now,
+        add_event,
+    )
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    body = await _json_body(request)
+    item_ids = body.get("item_ids", [])
+    if not isinstance(item_ids, list) or not item_ids:
+        return JSONResponse({"error": "missing item_ids"}, status_code=400)
+
+    saved, prompt_before, added = await asyncio.to_thread(
+        _import_directives, novel, genre, [str(i) for i in item_ids]
+    )
+    if added == 0:
+        return JSONResponse({"ok": True, "overrides": saved, "imported": 0})
+    event = EvolutionEvent(
+        novel_name=novel,
+        genre=genre,
+        trigger=EventTrigger.IMPORT,
+        review_type="chapter",
+        source_feedback=f"从整改库导入 {added} 条",
+        applied={"evolved_directives": saved.get("evolved_directives", "")},
+        prompt_before=prompt_before,
+        status=EventStatus.APPLIED,
+        applied_at=_now(),
+    )
+    await asyncio.to_thread(add_event, event)
+    return JSONResponse({"ok": True, "overrides": saved, "imported": added})
+
+
+async def _json_body(request: Request) -> dict:
+    """安全解析 JSON body，非法/非对象一律回 {}。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 # ── 小说列表摘要接口（轻量化轮询） ───────────────────────────────────────────────
 # 平台 POST /threads/search 会为每个 thread 返回完整 values（整个 NovelState，含正文/大纲
 # /人物档案等大字段）。前端列表 3s 轮询只需 novel_name / total_chapters_written / status，
@@ -155,6 +632,23 @@ async def get_novels_summary(request: Request) -> JSONResponse:
 routes = [
     Route("/prompt-overrides", get_prompt_overrides, methods=["GET"]),
     Route("/prompt-overrides", put_prompt_overrides, methods=["PUT"]),
+    # 提示词自进化（按小说：提炼 / 应用 / 还原）
+    Route("/prompt-evolution", get_prompt_evolution, methods=["GET"]),
+    Route("/prompt-evolution/reject", post_prompt_evolution_reject, methods=["POST"]),
+    Route("/prompt-evolution/distill", post_prompt_evolution_distill, methods=["POST"]),
+    Route("/prompt-evolution/apply", post_prompt_evolution_apply, methods=["POST"]),
+    Route("/prompt-evolution/restore", post_prompt_evolution_restore, methods=["POST"]),
+    Route("/prompt-evolution/reconcile", post_prompt_evolution_reconcile, methods=["POST"]),
+    Route(
+        "/prompt-evolution/reconcile/apply",
+        post_prompt_evolution_reconcile_apply,
+        methods=["POST"],
+    ),
+    # 整改库（跨小说：精炼入库 / 查询 / 导入）
+    Route("/prompt-library", get_prompt_library, methods=["GET"]),
+    Route("/prompt-library", post_prompt_library, methods=["POST"]),
+    Route("/prompt-library/refine", post_prompt_library_refine, methods=["POST"]),
+    Route("/prompt-library/import", post_prompt_library_import, methods=["POST"]),
     # 小说列表轻量摘要（替代前端对 /threads/search 的全量轮询）
     Route("/novels/summary", get_novels_summary, methods=["GET"]),
     # 不挂 html 索引：仅按文件名访问，避免暴露所有小说的文件清单

@@ -18,10 +18,24 @@ import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
 import { StateEditPanel } from "./state/StateEditPanel";
+import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
 import { updateThreadMeta } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
 import { BRAINSTORM_END, InterruptType } from "../lib/interruptTypes";
+import type { NovelState } from "../lib/types";
+import { EVOLVABLE_REVIEW_TYPES } from "../lib/types";
+
+/** 尽力取「最近一次人工打回意见」预填进化抽屉：优先持久的 human_feedback，
+ *  否则从 review_history 里取最后一条人工发言（剥掉 generate 追加的「输出规范」尾巴）；
+ *  首条人工发言是任务提示词而非打回意见，故仅在有 >1 条人工发言时才回退取用。 */
+function latestHumanFeedback(state: NovelState): string {
+  if (state.human_feedback?.trim()) return state.human_feedback.trim();
+  const humans = (state.review_history ?? []).filter((h) => h.role === "human");
+  if (humans.length <= 1) return "";
+  return humans[humans.length - 1].content.split("【输出规范】")[0].trim();
+}
+
 
 export interface NovelWorkspaceHandle {
   replay: (checkpointId: string) => void;
@@ -96,6 +110,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const [rightTab, setRightTab] = useState<"detail" | "reader">("detail");
     // 就地编辑当前 state 的抽屉开关（暂停点手动纠偏 → 继续）
     const [editorOpen, setEditorOpen] = useState(false);
+    // 提示词进化抽屉开关（把人工打回意见提炼进本书提示词 / 整改库复用）
+    const [evolveOpen, setEvolveOpen] = useState(false);
 
     // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond）
     // 两态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
@@ -206,9 +222,21 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             />
           ) : interrupt ? (
             <div className="p-4">
-              {/* 暂停点入口：手动纠正当前 state 后再「通过 / 提交意见」继续 */}
+              {/* 暂停点入口：进化提示词（仅章节正文/弧线大纲阶段，提炼本次打回意见即生效）/
+                  手动纠正当前 state 后再「通过 / 提交意见」继续。进化按钮不受 inputDisabled
+                  约束——它只读写 overrides/台账，不 resume 本 thread。 */}
               {state.novel_name && (
-                <div className="mb-3 flex justify-end">
+                <div className="mb-3 flex justify-end gap-2">
+                  {EVOLVABLE_REVIEW_TYPES.has(state.review_type) && (
+                    <button
+                      type="button"
+                      onClick={() => setEvolveOpen(true)}
+                      title="把本次打回意见提炼进本书提示词（章节正文 / 弧线大纲阶段下一次生成即生效）"
+                      className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600"
+                    >
+                      🧬 提示词进化
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setEditorOpen(true)}
@@ -349,6 +377,14 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                         ✎ 编辑当前状态
                       </button>
                     )}
+                    {state.novel_name && (
+                      <button
+                        onClick={() => setEvolveOpen(true)}
+                        className="flex-1 rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+                      >
+                        🧬 提示词进化
+                      </button>
+                    )}
                     <button
                       onClick={() => void refresh()}
                       className="flex-1 rounded border border-gray-300 px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
@@ -373,6 +409,16 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
           disabled={inputDisabled}
           onClose={() => setEditorOpen(false)}
           onSaved={refreshValues}
+        />
+
+        {/* 提示词进化抽屉：作用域为本书，写入 prompt_overrides.json 的 evolved_directives，下一章生效。 */}
+        <PromptEvolutionModal
+          open={evolveOpen}
+          novelName={state.novel_name}
+          genre={state.genre}
+          reviewType={state.review_type}
+          prefillFeedback={latestHumanFeedback(state)}
+          onClose={() => setEvolveOpen(false)}
         />
       </>
     );

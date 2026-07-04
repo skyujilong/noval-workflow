@@ -119,8 +119,33 @@ class GenreFlavor:
     arc_focus: str = ""
     """故事弧步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
 
+    # ── 自进化：历次人工反馈沉淀的强制整改要点（默认空）──────────────────────
+    evolved_directives: str = ""
+    """按小说累积的「历史整改要点」，来源于人工打回意见的提炼/整改库导入。
+    追加到 chapter_prompt 末尾并声明为最高优先级：与上文冲突时以本节为准，
+    本节内多条冲突时以更靠后（更新）者为准。默认空 → 对现有题材零影响。"""
+
 
 # ── PromptPack：通用脚手架 + 风味组装 ─────────────────────────────────────────
+
+
+def evolved_directives_block(directives: str) -> str:
+    """把「历史整改要点」渲染成置于提示词末尾的最高优先级段；空则返回空串。
+
+    章节正文/弧线大纲的首轮 prepare（chapter_prompt/arc_outline_prompt）与打回重跑
+    （subgraph.generate 补注入）共用本函数，保证两处注入的整改文案完全一致。
+    与上文任何规则/示例冲突时一律以本节为准；本节内多条冲突以更靠后（更新）者为准。
+    """
+    directives = directives.strip()
+    if not directives:
+        return ""
+    return (
+        "\n\n### ⚠️ 历史整改要点（最高优先级，务必执行）\n"
+        "以下为依据历次人工反馈沉淀的强制修正项。"
+        "**若与上文任何规则、风格示例或设定冲突，一律以本节为准**；"
+        "本节内多条要点若彼此冲突，以更靠后（更新）的为准。\n"
+        f"{directives}"
+    )
 
 
 class PromptPack:
@@ -268,6 +293,10 @@ class PromptPack:
 
 请直接输出{BATCH_SIZE}个标题，每行一个。"""
 
+    def _evolved_directives_section(self) -> str:
+        """本 pack 当前 flavor 的整改段（章节正文/弧线大纲共用）。见 evolved_directives_block。"""
+        return evolved_directives_block(self.flavor.evolved_directives)
+
     def chapter_prompt(
         self,
         title: str,
@@ -291,6 +320,9 @@ class PromptPack:
         context_section = ""
         if chapter_context:
             context_section = f"\n\n【前文内容参考】\n{chapter_context}"
+
+        # 自进化整改要点段（章节正文/弧线大纲共用），置于全文末尾＝收尾约束、最高优先级。
+        evolved_section = self._evolved_directives_section()
 
         # 弧线大纲锚点：显式告知 LLM 当前是本批第几章，并把对应分章大纲抽出作为首要依据。
         arc_section = ""
@@ -337,7 +369,7 @@ class PromptPack:
 - 普通日常对话、走路、平淡场景一律弱化隐藏标志动作，保持真人自然感，杜绝AI复读式人设描写。
 
 ### 风格参考示例
-{self.flavor.chapter_example}
+{self.flavor.chapter_example}{evolved_section}
 
 ### 输出硬性规范（严格执行）
 仅输出**章节纯正文**，开篇直接进入故事叙述，无额外解释、说明、修改备注、格式标注、开场白、结束语。
@@ -396,4 +428,4 @@ class PromptPack:
 ## 补充兜底规则
 1. 若上一批衔接信息缺失，优先沿用最近主线冲突、人物状态、场景位置续写。
 2. 关键反派、核心配角的行为保持前后一致，恩怨、矛盾持续延续。
-3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。"""
+3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。{self._evolved_directives_section()}"""

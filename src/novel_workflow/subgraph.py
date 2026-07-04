@@ -22,9 +22,14 @@ from noval_workflow.prompts import (
     PHASE_SUMMARY_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
+    evolved_directives_block,
     get_prompt_pack,
 )
 from noval_workflow.state import ReviewSubState
+
+# 自进化整改仅对「会重复生成」的正文/弧线环节注入：打回重跑时从该书 overrides 新鲜读取，
+# 使当前这一章/批的打回重跑立即遵循刚提炼应用（或整理消解）的最新整改。
+_EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline"}
 
 # Max review rounds kept in history, per review_type.
 # foundation/titles: content is short, 5 rounds affordable.
@@ -126,6 +131,13 @@ def generate(state: ReviewSubState) -> dict:
             "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言，"
             "从正文第一句话开始输出。"
         )
+        # 打回重跑不重算 chapter_prompt/arc_outline_prompt，故首轮 task_prompt 里的整改段在
+        # 重跑分支缺席。这里对正文/弧线从该书 overrides 新鲜读取「当前生效」的最新整改，拼到
+        # 重写指令末尾（最高优先级段，同一条 human message），使当前这一章/批的打回重跑立即
+        # 遵循刚提炼应用（或整理消解）的整改。
+        if state.review_type in _EVOLVABLE_REVIEW_TYPES:
+            flavor = get_prompt_pack(state.genre, state.novel_name).flavor
+            regen_instruction += evolved_directives_block(flavor.evolved_directives)
         messages.append(HumanMessage(content=regen_instruction))
         new_user_msg = state.review_feedback  # 历史只存原始 feedback，不含 instruction
     else:

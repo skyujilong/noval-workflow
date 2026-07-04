@@ -9,7 +9,8 @@ import { ArticleParagraphs } from "../ArticleParagraphs";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
-import { reviewTypeLabel } from "../../lib/types";
+import { EVOLVABLE_REVIEW_TYPES, reviewTypeLabel } from "../../lib/types";
+import { recordReject } from "../../lib/langgraph";
 import { ChapterReviewReference } from "./ChapterReviewReference";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
@@ -50,6 +51,23 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
 
   const handleSubmit = () => {
     setSubmitting(true);
+    // 打回（提出修改意见）时，把意见落一条 REJECT 记录，供「提示词进化」抽屉逐条提炼。
+    // 仅限会重复生成的正文/弧线环节；fire-and-forget，落库失败不影响审核 resume。
+    if (
+      mode === "revise" &&
+      feedback.trim() &&
+      novelState?.novel_name &&
+      EVOLVABLE_REVIEW_TYPES.has(reviewType)
+    ) {
+      void recordReject(novelState.novel_name, novelState.genre, {
+        review_type: reviewType,
+        feedback: feedback.trim(),
+        chapter_index:
+          reviewType === "chapter" ? novelState.total_chapters_written + 1 : null,
+      }).catch(() => {
+        // 落库是辅助功能，失败静默降级，不打断打回重跑
+      });
+    }
     onSubmit(buildReviewResume(mode === "approve" ? "" : feedback, thinkingOn));
   };
 

@@ -66,6 +66,8 @@ export interface NovelState {
   // 子图扩展字段（部分子图会用到）
   review_history?: ReviewHistoryEntry[];
   llm_review_max?: number;
+  /** 最近一次人工打回的原始意见（ReviewSubState.human_feedback，中断在子图内时可见） */
+  human_feedback?: string;
 }
 
 /** 空状态，用于初始展示 */
@@ -126,3 +128,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
 export function reviewTypeLabel(t: string): string {
   return REVIEW_TYPE_LABELS[t] ?? t;
 }
+
+/** 自进化闭环生效的审核环节：仅这两个「会重复生成」的环节消费 evolved_directives，
+ *  故只在它们打回时落库 REJECT 记录、并在中断处显示进化入口。 */
+export const EVOLVABLE_REVIEW_TYPES = new Set(["chapter", "arc_outline"]);

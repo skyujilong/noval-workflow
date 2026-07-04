@@ -241,6 +241,219 @@ export async function savePromptOverrides(
   }
 }
 
+// ── 提示词自进化（按小说：提炼/应用/还原）+ 整改库（跨小说：精炼入库/查询/导入）──
+// 同样走自定义 HTTP 路由（src/http_app.py），直连 API_URL。台账与整改库在中央 SQLite；
+// 应用/导入写入该小说 prompt_overrides.json 的 evolved_directives，下一次生成新鲜读取即生效。
+
+export interface EvolutionProposal {
+  field: string;
+  op: string; // "append" | "replace"
+  text: string;
+  rationale: string;
+  conflicts_with: string; // 非空＝覆盖某条原规则
+}
+
+export interface EvolutionEvent {
+  id: string;
+  created_at: string;
+  novel_name: string;
+  genre: string;
+  trigger: string; // "manual" | "reject" | "import" | "reconcile"
+  review_type: string;
+  chapter_index: number | null;
+  source_feedback: string;
+  rejected_excerpt: string;
+  proposals: EvolutionProposal[];
+  status: string; // "proposed" | "applied" | "reverted"
+  applied: Record<string, string>;
+  applied_at: string | null;
+  reverted_at: string | null;
+}
+
+export interface DirectiveItem {
+  id: string;
+  created_at: string;
+  genre: string;
+  title: string;
+  text: string;
+  tags: string[];
+  source_novel: string;
+  usage_count: number;
+}
+
+/** 精炼拆条的候选（尚未入库） */
+export interface RefinedCandidate {
+  title: string;
+  text: string;
+  tags: string[];
+}
+
+/** apply 时提交的单条选中整改 */
+export interface SelectedDirective {
+  field: string;
+  text: string;
+  op: string; // "append" | "replace"
+}
+
+async function postJson<T>(url: string, body: unknown, errLabel: string): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new Error(`${errLabel}失败 (${res.status})：${await res.text()}`);
+  }
+  return (await res.json()) as T;
+}
+
+/** 打回时把修改意见自动落一条 REJECT 记录（供进化抽屉逐条提炼）。 */
+export async function recordReject(
+  novelName: string,
+  genre: string,
+  input: { review_type: string; feedback: string; chapter_index?: number | null }
+): Promise<void> {
+  const url = `${API_URL}/prompt-evolution/reject?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  await postJson(url, input, "记录打回");
+}
+
+/** 列出某小说的进化事件台账（最新在前）。 */
+export async function getPromptEvolution(novelName: string): Promise<EvolutionEvent[]> {
+  const res = await fetch(`${API_URL}/prompt-evolution?novel=${encodeURIComponent(novelName)}`);
+  if (!res.ok) {
+    throw new Error(`读取进化台账失败 (${res.status})：${await res.text()}`);
+  }
+  const data = (await res.json()) as { events: EvolutionEvent[] };
+  return data.events;
+}
+
+/** 提炼一条人工修改意见为整改提案（落一条 proposed 事件）。 */
+export async function distillPromptEvolution(
+  novelName: string,
+  genre: string,
+  input: {
+    feedback: string;
+    review_type?: string;
+    draft_excerpt?: string;
+    chapter_index?: number | null;
+    /** 传入则「就地提炼」：把提案更新进该已有记录（打回记录）而非新建。 */
+    event_id?: string;
+  }
+): Promise<{ event: EvolutionEvent; summary: string }> {
+  const url = `${API_URL}/prompt-evolution/distill?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  return postJson(url, input, "提炼");
+}
+
+/** 应用某事件里选中的整改到该小说覆盖（下一章生效）。 */
+export async function applyPromptEvolution(
+  novelName: string,
+  genre: string,
+  eventId: string,
+  selected: SelectedDirective[]
+): Promise<{ overrides: Record<string, string>; event: EvolutionEvent }> {
+  const url = `${API_URL}/prompt-evolution/apply?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  return postJson(url, { event_id: eventId, selected }, "应用整改");
+}
+
+/** 把某已应用事件还原到应用前快照。 */
+export async function restorePromptEvolution(novelName: string, eventId: string): Promise<void> {
+  const url = `${API_URL}/prompt-evolution/restore?novel=${encodeURIComponent(novelName)}`;
+  await postJson(url, { event_id: eventId }, "还原");
+}
+
+/** 整理消解预览：把累积整改去重、消解矛盾成自洽全集（不落盘，供确认后再应用）。 */
+export interface ReconcilePreview {
+  before: string;
+  after: string;
+  summary: string;
+  resolved: string[];
+}
+
+export async function reconcilePreview(
+  novelName: string,
+  genre: string
+): Promise<ReconcilePreview> {
+  const url = `${API_URL}/prompt-evolution/reconcile?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  return postJson(url, {}, "整理消解预览");
+}
+
+/** 应用整理后的自洽整改（整段 REPLACE，记一条 reconcile 事件，可还原）。 */
+export async function applyReconciled(
+  novelName: string,
+  genre: string,
+  input: { text: string; before: string; summary: string }
+): Promise<{ overrides: Record<string, string>; event: EvolutionEvent }> {
+  const url = `${API_URL}/prompt-evolution/reconcile/apply?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  return postJson(url, input, "应用整理");
+}
+
+/** 把某小说累积的整改精炼拆成候选条目（不落库）。 */
+export async function refineToLibrary(
+  novelName: string,
+  genre: string
+): Promise<RefinedCandidate[]> {
+  const url = `${API_URL}/prompt-library/refine?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  const data = await postJson<{ items: RefinedCandidate[] }>(url, {}, "精炼");
+  return data.items;
+}
+
+/** 把选中的候选条目入中央整改库。 */
+export async function commitLibraryItems(
+  genre: string,
+  items: RefinedCandidate[],
+  sourceNovel: string
+): Promise<DirectiveItem[]> {
+  const url = `${API_URL}/prompt-library?genre=${encodeURIComponent(genre)}`;
+  const data = await postJson<{ items: DirectiveItem[] }>(
+    url,
+    { items, source_novel: sourceNovel },
+    "入库"
+  );
+  return data.items;
+}
+
+/** 查询整改库（showAll=true 放宽到全部题材）。 */
+export async function listLibrary(
+  genre: string,
+  q: string,
+  showAll: boolean
+): Promise<DirectiveItem[]> {
+  const params = new URLSearchParams();
+  if (genre) params.set("genre", genre);
+  if (q) params.set("q", q);
+  if (showAll) params.set("all", "1");
+  const res = await fetch(`${API_URL}/prompt-library?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`查询整改库失败 (${res.status})：${await res.text()}`);
+  }
+  const data = (await res.json()) as { items: DirectiveItem[] };
+  return data.items;
+}
+
+/** 把选中的库条目导入某小说的 evolved_directives（去重追加）。 */
+export async function importLibraryItems(
+  novelName: string,
+  genre: string,
+  itemIds: string[]
+): Promise<{ imported: number }> {
+  const url = `${API_URL}/prompt-library/import?novel=${encodeURIComponent(
+    novelName
+  )}&genre=${encodeURIComponent(genre)}`;
+  return postJson(url, { item_ids: itemIds }, "导入");
+}
+
 // ── Run（执行 / 恢复）─────────────────────────────────────────────────────────
 
 export type StreamEvent =

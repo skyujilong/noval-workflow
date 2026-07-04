@@ -32,6 +32,7 @@ const FIELDS: { key: string; label: string; long: boolean }[] = [
   { key: "chapter_style_rules", label: "章节文体风格", long: true },
   { key: "chapter_example", label: "风格示例（❌/✅ 对照）", long: true },
   { key: "chapter_review_checklist", label: "章节审核·文风检查清单", long: true },
+  { key: "evolved_directives", label: "历史整改要点（自进化累积）", long: true },
   { key: "core_theme_focus", label: "核心主题·题材聚焦", long: false },
   { key: "world_building_focus", label: "世界观·题材聚焦", long: false },
   { key: "core_conflicts_focus", label: "核心冲突·题材聚焦", long: false },

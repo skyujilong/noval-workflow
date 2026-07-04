@@ -12,6 +12,7 @@ from noval_workflow.prompts.base import (
     SUMMARY_PROMPT,
     GenreFlavor,
     PromptPack,
+    evolved_directives_block,
 )
 from noval_workflow.prompts.ledger import (
     _format_foreshadowing_for_context,
@@ -21,6 +22,21 @@ from noval_workflow.prompts.ledger import (
     character_status_prompt,
     foreshadowing_prompt,
     phase_summary_prompt,
+)
+from noval_workflow.prompts.evolution import (
+    CurrentPrompt,
+    DistillResult,
+    ReconcileResult,
+    RefinedItem,
+    distill,
+    reconcile,
+    refine_to_items,
+)
+from noval_workflow.prompts.evolution_store import (
+    DirectiveItem,
+    EvolutionEvent,
+    Proposal,
+    init_db,
 )
 from noval_workflow.prompts.overrides import (
     apply_overrides,
@@ -51,10 +67,23 @@ __all__ = [
     "available_genres",
     "PromptPack",
     "GenreFlavor",
+    "evolved_directives_block",
     # 按小说提示词覆盖
     "load_overrides",
     "apply_overrides",
     "save_overrides",
+    # 提示词自进化（提炼 / 精炼入库 / 中央存储）
+    "distill",
+    "refine_to_items",
+    "reconcile",
+    "CurrentPrompt",
+    "DistillResult",
+    "RefinedItem",
+    "ReconcileResult",
+    "init_db",
+    "EvolutionEvent",
+    "DirectiveItem",
+    "Proposal",
     # 共享常量
     "SUMMARY_PROMPT",
     "ARC_CHAPTER_FORMAT",
