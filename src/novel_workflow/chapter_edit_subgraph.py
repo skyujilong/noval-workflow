@@ -19,8 +19,8 @@ from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
-import json
 import logging
 
 from noval_workflow.prompts import (
@@ -139,12 +139,12 @@ def _save_foreshadowing(state) -> dict:
 
     draft = state.current_draft.strip()
 
-    # 尝试解析 JSON
+    # 尝试解析 JSON（先修复：LLM 生成的台账常带围栏 / 尾逗号 / 截断等脏输出）
     try:
-        foreshadowing = json.loads(draft)
+        foreshadowing = repair_and_parse(draft, kind=dict)
         _logger.info("伏笔台账 JSON 解析成功")
         return {"foreshadowing": foreshadowing}
-    except json.JSONDecodeError as e:
+    except JsonParseError as e:
         _logger.warning(f"伏笔台账 JSON 解析失败，尝试迁移旧格式: {e}")
         # fallback: 尝试用迁移函数解析老旧字符串格式
         migrated = _migrate_legacy_foreshadowing(draft)

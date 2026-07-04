@@ -18,7 +18,6 @@ LangGraph 重放语义：interrupt() resume 会从节点头部重放整个节点
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Callable
 
@@ -26,6 +25,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.json_utils import invoke_json
 from noval_workflow.llm import get_llm
 from noval_workflow.state import NovelState
 
@@ -115,17 +115,6 @@ def _entries_to_text(entries: list[dict]) -> str:
         who = "用户" if entry.get("role") == "human" else "AI"
         lines.append(f"{who}：{entry.get('content', '')}")
     return "\n".join(lines)
-
-
-def _parse_json_object(content: str) -> dict:
-    """从 LLM 输出中提取 JSON 对象，容错处理 markdown 围栏（参考 foreshadow_prune_analyze）。"""
-    text = content.strip()
-    if "```json" in text:
-        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in text:
-        text = text.split("```", 1)[1].split("```", 1)[0].strip()
-    data = json.loads(text)
-    return data if isinstance(data, dict) else {}
 
 
 def _compress(prev_summary: str, overflow: list[dict]) -> str:
@@ -233,11 +222,16 @@ def brainstorm_extract(state: NovelState) -> dict:
         # 抽取是「结束脑爆」后的一次性重格式化（对话里已有内容），不需深度思考；关闭避免
         # 切到表单前再空等一截。质量由后续表单 + 轻量确认步强制复核兜底。
         llm = get_llm(temperature=0.4, label="brainstorm_extract", thinking="disabled")
-        result = llm.invoke([
-            SystemMessage(content=_EXTRACT_SYSTEM_PROMPT),
-            HumanMessage(content=_EXTRACT_PROMPT.format(material=material)),
-        ])
-        data = _parse_json_object(result.content)
+        # invoke_json：先修复脏 JSON，失败则回喂报错重试一次；仍失败抛错 → 下方兜底捕获。
+        data = invoke_json(
+            llm,
+            [
+                SystemMessage(content=_EXTRACT_SYSTEM_PROMPT),
+                HumanMessage(content=_EXTRACT_PROMPT.format(material=material)),
+            ],
+            kind=dict,
+            label="brainstorm_extract",
+        )
     except Exception as e:  # noqa: BLE001 — 抽取失败兜底，表单/确认步手填
         _logger.error("脑爆产物抽取失败：%s", e)
         data = {}

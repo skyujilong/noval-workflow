@@ -11,12 +11,18 @@
 
 from __future__ import annotations
 
-import json
-import re
 from dataclasses import dataclass
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from noval_workflow.json_utils import (
+    JsonArr,
+    JsonKind,
+    JsonObj,
+    JsonParseError,
+    SupportsInvoke,
+    invoke_json,
+)
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts.evolution_store import Proposal, ProposalOp
 
@@ -68,43 +74,20 @@ class ReconcileResult:
     resolved: tuple[str, ...] = ()
 
 
-# ── JSON 解析（容错） ────────────────────────────────────────────────────────
+# ── JSON 解析（先修复，失败回喂 LLM 重试，仍不行抛错） ─────────────────────────
 
 
-def _content_to_text(content: object) -> str:
-    """把 LLM 返回内容归一为纯文本（兼容 str 与内容块列表）。"""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = [
-            block.get("text", "") if isinstance(block, dict) else str(block)
-            for block in content
-        ]
-        return "".join(parts)
-    return str(content)
-
-
-def _extract_json(raw: str, kind: type) -> object:
-    """从 LLM 文本里剥出 JSON（去 ```json 围栏），解析为 dict 或 list。
-
-    kind 传 dict 或 list，指定期望的顶层类型；不匹配或解析失败抛 EvolutionParseError。
-    """
-    text = raw.strip()
-    fence = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
-    open_ch = "[" if kind is list else "{"
-    start = text.find(open_ch)
-    if start == -1:
-        raise EvolutionParseError(f"未找到 {open_ch} 开头的 JSON 片段：{raw[:200]}")
-    # raw_decode 只解析从 start 起的第一个完整 JSON 值，容忍其后残留的说明文字。
+def _invoke_json(
+    llm: SupportsInvoke, messages: list[BaseMessage], kind: JsonKind, label: str
+) -> JsonObj | JsonArr:
+    """调 LLM 取 JSON：json_utils 负责修复 + 回喂重试，这里只把错误翻译成 EvolutionParseError。"""
     try:
-        data, _ = json.JSONDecoder().raw_decode(text, start)
-    except json.JSONDecodeError as exc:
-        raise EvolutionParseError(f"JSON 解析失败：{exc}; 原文：{raw[:200]}") from exc
-    if not isinstance(data, kind):
-        raise EvolutionParseError(f"顶层不是 {kind.__name__}：{raw[:200]}")
-    return data
+        # 分支传入具体 dict/list，命中 invoke_json 的对应重载，保住精确返回类型。
+        if kind is list:
+            return invoke_json(llm, messages, kind=list, label=label)
+        return invoke_json(llm, messages, kind=dict, label=label)
+    except JsonParseError as exc:
+        raise EvolutionParseError(str(exc)) from exc
 
 
 def _coerce_field(name: object) -> str:
@@ -165,13 +148,15 @@ def distill(
     if not feedback.strip():
         return DistillResult(proposals=(), summary="")
     llm = get_llm(temperature=0.4, label="evolve:distill", thinking="disabled")
-    result = llm.invoke(
+    data = _invoke_json(
+        llm,
         [
             SystemMessage(content=_DISTILL_SYSTEM),
             HumanMessage(content=_distill_prompt(feedback, review_type, current, draft_excerpt)),
-        ]
+        ],
+        dict,
+        "evolve:distill",
     )
-    data = _extract_json(_content_to_text(result.content), dict)
     raw_proposals = data.get("proposals", []) if isinstance(data, dict) else []
     proposals = tuple(
         Proposal(
@@ -216,13 +201,15 @@ def refine_to_items(evolved_directives: str, genre: str) -> list[RefinedItem]:
     if not evolved_directives.strip():
         return []
     llm = get_llm(temperature=0.4, label="evolve:refine", thinking="disabled")
-    result = llm.invoke(
+    data = _invoke_json(
+        llm,
         [
             SystemMessage(content=_REFINE_SYSTEM),
             HumanMessage(content=_refine_prompt(evolved_directives, genre)),
-        ]
+        ],
+        list,
+        "evolve:refine",
     )
-    data = _extract_json(_content_to_text(result.content), list)
     items: list[RefinedItem] = []
     for it in data:
         if not isinstance(it, dict):
@@ -268,13 +255,15 @@ def reconcile(evolved_directives: str, genre: str) -> ReconcileResult:
     if not evolved_directives.strip():
         return ReconcileResult(reconciled="", summary="")
     llm = get_llm(temperature=0.3, label="evolve:reconcile", thinking="disabled")
-    result = llm.invoke(
+    data = _invoke_json(
+        llm,
         [
             SystemMessage(content=_RECONCILE_SYSTEM),
             HumanMessage(content=_reconcile_prompt(evolved_directives, genre)),
-        ]
+        ],
+        dict,
+        "evolve:reconcile",
     )
-    data = _extract_json(_content_to_text(result.content), dict)
     reconciled = str(data.get("reconciled", "")).strip() if isinstance(data, dict) else ""
     summary = str(data.get("summary", "")).strip() if isinstance(data, dict) else ""
     raw_resolved = data.get("resolved", []) if isinstance(data, dict) else []

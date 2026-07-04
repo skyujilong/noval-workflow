@@ -129,9 +129,11 @@ def test_refine_empty_input_short_circuits(monkeypatch):
     assert e.refine_to_items("   ", "玄幻") == []
 
 
-def test_extract_json_raises_on_garbage():
+def test_distill_raises_on_unparseable_llm_output(monkeypatch):
+    # LLM 反复吐无 JSON 的脏文本：json_repair 修不出、回喂重试仍失败 → 抛 EvolutionParseError 到顶层。
+    monkeypatch.setattr(e, "get_llm", lambda *a, **k: _FakeLLM("这里没有 JSON，纯说明文字"))
     with pytest.raises(e.EvolutionParseError):
-        e._extract_json("这里没有 JSON", dict)
+        e.distill("把战斗写短一点", "chapter", e.CurrentPrompt())
 
 
 # ── reconcile ────────────────────────────────────────────────────────────────

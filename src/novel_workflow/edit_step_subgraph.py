@@ -36,6 +36,7 @@ from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.json_utils import invoke_json, repair_and_parse
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import FORESHADOW_PRUNE_ANALYSIS_PROMPT
 from noval_workflow.state import ReviewSubState, reset_review_fields
@@ -166,9 +167,9 @@ def make_edit_step_subgraph(
     def foreshadow_prune_analyze(state: EditStepSubState) -> dict:
         """调用LLM分析伏笔台账，给出精简建议。"""
         try:
-            # 解析当前草稿中的伏笔数据（假设是JSON字符串）
+            # 解析当前草稿中的伏笔数据（LLM 生成的 JSON 台账，先修复再解析）
             draft = state.current_draft
-            foreshadow_data = json.loads(draft.strip()) if isinstance(draft, str) else draft
+            foreshadow_data = repair_and_parse(draft, kind=dict) if isinstance(draft, str) else draft
 
             # 准备上下文
             recent_summaries = "\n".join(
@@ -194,17 +195,8 @@ def make_edit_step_subgraph(
                 SystemMessage(content="你是专业的小说伏笔管理专家，擅长识别核心伏笔与次要伏笔，帮助作者精简上下文。"),
                 HumanMessage(content=prompt),
             ]
-            result = llm.invoke(messages)
-
-            # 解析LLM输出的JSON
-            content = result.content.strip()
-            # 尝试提取JSON部分（去掉可能的markdown标记）
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                content = content.split("```")[1].strip()
-
-            suggestion = json.loads(content)
+            # invoke_json：先修复脏 JSON，失败则回喂报错重试一次；仍失败抛错 → 下方 except 兜底空建议。
+            suggestion = invoke_json(llm, messages, kind=dict, label="foreshadow_prune")
             _logger.info(f"伏笔精简分析完成，建议删除 {len(suggestion.get('to_delete', []))} 个")
             return {"foreshadow_prune_suggestion": suggestion}
 
@@ -216,7 +208,7 @@ def make_edit_step_subgraph(
     def foreshadow_prune_confirm(state: EditStepSubState) -> dict:
         """展示精简建议，让用户勾选确认。"""
         suggestion = state.foreshadow_prune_suggestion
-        foreshadow_data = json.loads(state.current_draft.strip()) if isinstance(state.current_draft, str) else state.current_draft
+        foreshadow_data = repair_and_parse(state.current_draft, kind=dict) if isinstance(state.current_draft, str) else state.current_draft
 
         answer = interrupt({
             "type": InterruptType.FORESHADOW_PRUNE_CONFIRM.value,
@@ -250,7 +242,7 @@ def make_edit_step_subgraph(
             return {}  # 没有要删除的，直接返回
 
         try:
-            foreshadow_data = json.loads(state.current_draft.strip()) if isinstance(state.current_draft, str) else state.current_draft
+            foreshadow_data = repair_and_parse(state.current_draft, kind=dict) if isinstance(state.current_draft, str) else state.current_draft
 
             # 从 pending 中删除
             before_pending = len(foreshadow_data.get("pending", []))
