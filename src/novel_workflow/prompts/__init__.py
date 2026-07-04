@@ -21,6 +21,7 @@ from noval_workflow.prompts.ledger import (
     character_relations_prompt,
     character_status_prompt,
     foreshadowing_prompt,
+    initial_status_prompt,
     phase_summary_prompt,
 )
 from noval_workflow.prompts.evolution import (
@@ -106,6 +107,7 @@ __all__ = [
     "character_status_prompt",
     "character_relations_prompt",
     "foreshadowing_prompt",
+    "initial_status_prompt",
     "phase_summary_prompt",
     # 伏笔工具函数
     "_format_foreshadowing_for_context",

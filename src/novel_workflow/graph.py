@@ -22,12 +22,14 @@ from noval_workflow.nodes.foundation import (
     prepare_character_profiles,
     prepare_core_conflicts,
     prepare_core_theme,
+    prepare_initial_status,
     prepare_overall_outline,
     prepare_world_building,
     save_character_profiles,
     save_config,
     save_core_conflicts,
     save_core_theme,
+    save_initial_status,
     save_overall_outline,
     save_world_building,
 )
@@ -66,6 +68,7 @@ builder.add_node("prepare_world_building", prepare_world_building)
 builder.add_node("prepare_core_conflicts", prepare_core_conflicts)
 builder.add_node("prepare_overall_outline", prepare_overall_outline)
 builder.add_node("prepare_character_profiles", prepare_character_profiles)
+builder.add_node("prepare_initial_status", prepare_initial_status)
 
 # Phase 1 — review subgraphs (same compiled subgraph, different node names)
 builder.add_node("review_core_theme", review_subgraph)
@@ -73,6 +76,7 @@ builder.add_node("review_world_building", review_subgraph)
 builder.add_node("review_core_conflicts", review_subgraph)
 builder.add_node("review_overall_outline", review_subgraph)
 builder.add_node("review_character_profiles", review_subgraph)
+builder.add_node("review_initial_status", review_subgraph)
 
 # Phase 1 — save nodes
 builder.add_node("save_core_theme", save_core_theme)
@@ -80,6 +84,7 @@ builder.add_node("save_world_building", save_world_building)
 builder.add_node("save_core_conflicts", save_core_conflicts)
 builder.add_node("save_overall_outline", save_overall_outline)
 builder.add_node("save_character_profiles", save_character_profiles)
+builder.add_node("save_initial_status", save_initial_status)
 builder.add_node("save_config", save_config)
 
 # Phase 2.5 — arc outline
@@ -153,8 +158,13 @@ builder.add_edge("save_overall_outline", "prepare_character_profiles")
 builder.add_edge("prepare_character_profiles", "review_character_profiles")
 builder.add_edge("review_character_profiles", "save_character_profiles")
 
+# 人物初始基线（第0章）：从已定稿人物档案 + 世界观固化基线，写入 phase_summary
+builder.add_edge("save_character_profiles", "prepare_initial_status")
+builder.add_edge("prepare_initial_status", "review_initial_status")
+builder.add_edge("review_initial_status", "save_initial_status")
+
 # Phase 1 → save config → Phase 2.5: arc outline first
-builder.add_edge("save_character_profiles", "save_config")
+builder.add_edge("save_initial_status", "save_config")
 builder.add_edge("save_config", "prepare_arc_outline")
 
 # Phase 2.5 — arc outline chain
