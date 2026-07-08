@@ -80,6 +80,7 @@ export interface BrainstormChatPayload {
 /** 脑爆产物轻量确认 payload（core_theme / world_building / core_conflicts）：展示内容供确认或编辑。 */
 export interface BrainstormConfirmPayload {
   type: InterruptTypeValue;
+  title: string; // 确认项名称（核心主题 / 世界观 / 核心冲突），用于区分表单标题
   message: string;
   field: string;
   content: string;

@@ -251,6 +251,7 @@ def _make_confirm(field: str, label: str, itype: InterruptType) -> Callable[[Nov
     def _confirm(state: NovelState) -> dict:
         edited = interrupt({
             "type": itype.value,
+            "title": label,  # 前端表单标题据此区分是在确认「核心主题/世界观/核心冲突」哪一项
             "message": f"确认或编辑脑爆生成的{label}（可直接修改后确认）：",
             "field": field,
             "content": getattr(state, field),

@@ -30,10 +30,13 @@ export function BrainstormConfirmForm({ payload, onSubmit, disabled }: Props) {
   // 本地 submitting 优先于上层 disabled，点击后立即禁用
   const isDisabled = disabled || submitting;
   const edited = text.trim() !== content.trim();
+  const title = payload.title?.trim();
 
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-gray-800">脑爆产物确认</h3>
+      <h3 className="text-lg font-semibold text-gray-800">
+        {title ? `脑爆产物确认 · ${title}` : "脑爆产物确认"}
+      </h3>
       <p className="text-sm text-gray-500">{payload.message}</p>
       <textarea
         value={text}
