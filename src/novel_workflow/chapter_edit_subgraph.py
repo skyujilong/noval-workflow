@@ -82,7 +82,7 @@ class ChapterEditSubState:
     current_draft: str = ""
     review_feedback: str = ""
     approved: bool = False
-    review_type: str = "foundation"
+    review_type: str = "foundation"  # 初始哨兵值；各 prepare 步骤必覆盖为已登记 review 类型
     review_history: list = field(default_factory=list)
     llm_review_count: int = 0
     llm_review_max: int = 3

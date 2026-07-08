@@ -42,6 +42,7 @@ export const InterruptType = {
   REVIEW_CHAPTER: "review_chapter",
   // 其他
   ASK_CONTINUE: "ask_continue",
+  CONSISTENCY_GATE: "consistency_gate", // 设定一致性总审闸门（save_config 冻结前，跨设定终审）
   // 伏笔台账精简流程
   FORESHADOW_PRUNE_ASK: "foreshadow_prune_ask",
   FORESHADOW_PRUNE_CONFIRM: "foreshadow_prune_confirm",
@@ -210,6 +211,9 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.ARC_TITLES_CONFIRM]: "arc_titles_confirm",
 
   [InterruptType.ASK_CONTINUE]: "ask_continue",
+  // 一致性总审复用 entry_gate（payload 仅 {type, message}，报告走 message 由 whitespace-pre-wrap 渲染）
+  // 语义化按钮：跳过=通过冻结、执行=重新审查（见 InterruptHandler / EntryGateForm）
+  [InterruptType.CONSISTENCY_GATE]: "entry_gate",
   [InterruptType.FORESHADOW_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
   [InterruptType.FORESHADOW_PRUNE_CONFIRM]: "foreshadow_prune_confirm", // 专用确认表单
 };

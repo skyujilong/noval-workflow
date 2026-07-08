@@ -12,7 +12,7 @@ class ReviewSubState:
     current_draft: str = ""     # 当前迭代中的草稿内容
     review_feedback: str = ""   # LLM 或人工反馈（空字符串 = 无问题 / 已通过）
     approved: bool = False      # 人工审核通过后置为 True
-    review_type: str = "foundation"  # 选择审稿提示词："foundation"|"titles"|"chapter"|"arc_outline"|...
+    review_type: str = "foundation"  # 初始哨兵值；prepare 节点必覆盖为已登记类型（core_theme|titles|chapter|arc_outline|…），未覆盖即进 review 会 fail-fast
     review_history: list = field(default_factory=list)
     # list[dict]，每条格式：{"role": "human"|"ai", "content": str}
     # 由 generate() 管理；按 _HISTORY_MAX_ROUNDS 上限滚动裁剪（每轮 2 条消息）
@@ -58,7 +58,7 @@ class NovelState:
     current_draft: str = ""         # 子图审核完成后的最终草稿（由子图写回父图）
     review_feedback: str = ""       # 审核反馈（LLM 或人工；空 = 通过）
     approved: bool = False          # 审核是否通过
-    review_type: str = "foundation" # 审稿类型，决定使用哪条 review prompt
+    review_type: str = "foundation" # 初始哨兵值；prepare 节点必覆盖为已登记 review 类型（未覆盖进 review 即 fail-fast）
     llm_review_count: int = 0       # LLM 自审累计轮数（子图桥接字段）
 
     # ── Phase 1：小说基础设定（每项审核通过后保存）────────────────────────────────
@@ -67,6 +67,13 @@ class NovelState:
     core_conflicts: str = ""        # 核心冲突设计
     overall_outline: str = ""       # 整体大纲与结局
     character_profiles: str = ""    # 人物档案（主角 + 主要配角 + 反派）
+
+    # ── 设定一致性总审（save_config 冻结前的跨设定闸门；transient，覆盖语义，无 reducer）──
+    # 每次进入 audit_consistency / consistency_gate 都被节点主动覆盖，无残留风险；
+    # 不进 reset_review_fields()（那是 review_subgraph 桥接字段清理，本闸门不走子图）。
+    consistency_report: str = ""      # 最近一次审计报告全文（audit 写，gate 展示）："无问题" 或问题清单
+    consistency_pass: bool = False    # 审计判定通过（路由 / 前端提示用）
+    consistency_audit_count: int = 0  # 已审计轮数，达 _MAX_AUDIT_ROUNDS 强制放行、防死循环
 
     # ── Phase 2：章节写作追踪 ───────────────────────────────────────────────────
     current_batch_titles: list[str] = field(default_factory=list)

@@ -17,7 +17,6 @@ from noval_workflow.prompts import (
     CORE_CONFLICTS_REVIEW_PROMPT,
     CORE_THEME_REVIEW_PROMPT,
     FORESHADOWING_REVIEW_PROMPT,
-    FOUNDATION_REVIEW_PROMPT,
     OVERALL_OUTLINE_REVIEW_PROMPT,
     PHASE_SUMMARY_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
@@ -32,10 +31,9 @@ from noval_workflow.state import ReviewSubState
 _EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline"}
 
 # Max review rounds kept in history, per review_type.
-# foundation/titles: content is short, 5 rounds affordable.
-# chapter: drafts are long (~2000 chars each), 3 rounds keeps token cost manageable.
+# core_theme/titles 等短内容：5 轮可负担；chapter 草稿长（~2000 字/篇），3 轮控制 token。
+# 未登记的 review_type 回退 _HISTORY_MAX_ROUNDS_DEFAULT。
 _HISTORY_MAX_ROUNDS: dict[str, int] = {
-    "foundation": 5,
     "core_theme": 5,
     "world_building": 5,
     "core_conflicts": 5,
@@ -52,7 +50,6 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
 _REVIEW_PROMPTS = {
-    "foundation": FOUNDATION_REVIEW_PROMPT,
     "core_theme": CORE_THEME_REVIEW_PROMPT,
     "world_building": WORLD_BUILDING_REVIEW_PROMPT,
     "core_conflicts": CORE_CONFLICTS_REVIEW_PROMPT,
@@ -180,7 +177,13 @@ def llm_self_review(state: ReviewSubState) -> dict:
             style_checklist=pack.flavor.chapter_review_checklist,
         )
     else:
-        review_template = _REVIEW_PROMPTS.get(state.review_type, FOUNDATION_REVIEW_PROMPT)
+        review_template = _REVIEW_PROMPTS.get(state.review_type)
+        if review_template is None:
+            # review_type 未登记 = 上游 prepare 契约故障，fail-fast 显式暴露，而非静默套用通用模板。
+            raise ValueError(
+                f"未登记的 review_type：{state.review_type!r}"
+                "（应由 prepare 节点设为 _REVIEW_PROMPTS 中已登记的类型）。"
+            )
         review_prompt = review_template.format(draft=state.current_draft)
 
     # ========================================================================

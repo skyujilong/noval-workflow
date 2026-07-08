@@ -45,6 +45,11 @@ from noval_workflow.nodes.brainstorm import (
     route_after_collect,
     route_after_gate,
 )
+from noval_workflow.nodes.consistency import (
+    audit_consistency,
+    consistency_gate,
+    route_after_consistency_gate,
+)
 from noval_workflow.nodes.inputs import collect_user_inputs
 from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
@@ -88,6 +93,10 @@ builder.add_node("save_overall_outline", save_overall_outline)
 builder.add_node("save_character_profiles", save_character_profiles)
 builder.add_node("save_initial_status", save_initial_status)
 builder.add_node("save_config", save_config)
+
+# Phase 1 → 冻结前的设定一致性总审闸门（脑爆链与常规链在此汇合后统一覆盖）
+builder.add_node("audit_consistency", audit_consistency)
+builder.add_node("consistency_gate", consistency_gate)
 
 # Phase 2.5 — arc outline
 builder.add_node("prepare_arc_outline", prepare_arc_outline)
@@ -167,8 +176,16 @@ builder.add_edge("save_character_profiles", "prepare_initial_status")
 builder.add_edge("prepare_initial_status", "review_initial_status")
 builder.add_edge("review_initial_status", "save_initial_status")
 
-# Phase 1 → save config → Phase 2.5: arc outline first
-builder.add_edge("save_initial_status", "save_config")
+# Phase 1 → 设定一致性总审 → save config → Phase 2.5: arc outline first
+# 脑爆链在 prepare_overall_outline 汇回常规链，两路都流经 save_initial_status，
+# 故闸门插在其后、save_config 前 → 双路径统一覆盖。
+builder.add_edge("save_initial_status", "audit_consistency")
+builder.add_edge("audit_consistency", "consistency_gate")
+builder.add_conditional_edges(
+    "consistency_gate",
+    route_after_consistency_gate,
+    {"audit_consistency": "audit_consistency", "save_config": "save_config"},
+)
 builder.add_edge("save_config", "prepare_arc_outline")
 
 # Phase 2.5 — arc outline chain

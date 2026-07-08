@@ -79,6 +79,7 @@ class InterruptType(str, Enum):
     # 其他中断
     # ============================================================
     ASK_CONTINUE = "ask_continue"  # 是否继续写下一批
+    CONSISTENCY_GATE = "consistency_gate"  # 设定一致性总审闸门（save_config 冻结前，跨设定终审）
 
 
 # ============================================================
