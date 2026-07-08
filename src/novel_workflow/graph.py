@@ -47,8 +47,12 @@ from noval_workflow.nodes.brainstorm import (
 )
 from noval_workflow.nodes.consistency import (
     audit_consistency,
+    consistency_diff_gate,
     consistency_gate,
+    revise_consistency,
     route_after_consistency_gate,
+    route_after_diff_gate,
+    route_after_revise,
 )
 from noval_workflow.nodes.inputs import collect_user_inputs
 from noval_workflow.state import NovelState
@@ -97,6 +101,8 @@ builder.add_node("save_config", save_config)
 # Phase 1 → 冻结前的设定一致性总审闸门（脑爆链与常规链在此汇合后统一覆盖）
 builder.add_node("audit_consistency", audit_consistency)
 builder.add_node("consistency_gate", consistency_gate)
+builder.add_node("revise_consistency", revise_consistency)
+builder.add_node("consistency_diff_gate", consistency_diff_gate)
 
 # Phase 2.5 — arc outline
 builder.add_node("prepare_arc_outline", prepare_arc_outline)
@@ -184,7 +190,22 @@ builder.add_edge("audit_consistency", "consistency_gate")
 builder.add_conditional_edges(
     "consistency_gate",
     route_after_consistency_gate,
-    {"audit_consistency": "audit_consistency", "save_config": "save_config"},
+    {
+        "audit_consistency": "audit_consistency",
+        "revise_consistency": "revise_consistency",
+        "save_config": "save_config",
+    },
+)
+# 让 AI 修订：revise 产提案 → 有则进 diff 审核闸门，无则折返回闸门；diff 应用 → 复审一轮，放弃 → 折返。
+builder.add_conditional_edges(
+    "revise_consistency",
+    route_after_revise,
+    {"consistency_diff_gate": "consistency_diff_gate", "consistency_gate": "consistency_gate"},
+)
+builder.add_conditional_edges(
+    "consistency_diff_gate",
+    route_after_diff_gate,
+    {"audit_consistency": "audit_consistency", "consistency_gate": "consistency_gate"},
 )
 builder.add_edge("save_config", "prepare_arc_outline")
 

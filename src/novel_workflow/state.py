@@ -74,6 +74,12 @@ class NovelState:
     consistency_report: str = ""      # 最近一次审计报告全文（audit 写，gate 展示）："无问题" 或问题清单
     consistency_pass: bool = False    # 审计判定通过（路由 / 前端提示用）
     consistency_audit_count: int = 0  # 已审计轮数，达 _MAX_AUDIT_ROUNDS 强制放行、防死循环
+    consistency_revisions: list = field(default_factory=list)
+    # AI 修订提案：[{"field","label","before","after","reason"}]；diff_gate 展示，应用/放弃后清空
+    consistency_action: str = ""
+    # 最近一次闸门 / diff 决定，供路由：freeze|revise|reaudit|apply|discard（transient）
+    consistency_revise_note: str = ""
+    # AI 修订未产出可用改动时给闸门的一行提示（gate 展示后自清）
 
     # ── Phase 2：章节写作追踪 ───────────────────────────────────────────────────
     current_batch_titles: list[str] = field(default_factory=list)

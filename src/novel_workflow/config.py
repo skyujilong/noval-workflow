@@ -6,6 +6,10 @@ import os
 
 BATCH_SIZE: int = int(os.environ.get("NOVEL_BATCH_SIZE", "5"))
 
+# 设定一致性总审的重审轮数上限（audit → gate → 复审 的循环安全阀）。
+# 达此轮数后强制放行冻结，杜绝反复重审卡死。默认 3；可经 env 调整。
+MAX_AUDIT_ROUNDS: int = int(os.environ.get("CONSISTENCY_MAX_AUDIT_ROUNDS", "3"))
+
 # Context window split: how many of the most-recent chapters to include as full
 # text vs. summary-only.  Tuned for token efficiency without breaking coherence.
 #   FULL_COUNT=1  → 只保留紧邻上一章的完整原文，保证情节/对话/伏笔精准承接

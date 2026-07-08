@@ -43,6 +43,7 @@ export const InterruptType = {
   // 其他
   ASK_CONTINUE: "ask_continue",
   CONSISTENCY_GATE: "consistency_gate", // 设定一致性总审闸门（save_config 冻结前，跨设定终审）
+  CONSISTENCY_DIFF: "consistency_diff", // 一致性总审 · AI 修订改前/改后 diff 审核闸门
   // 伏笔台账精简流程
   FORESHADOW_PRUNE_ASK: "foreshadow_prune_ask",
   FORESHADOW_PRUNE_CONFIRM: "foreshadow_prune_confirm",
@@ -90,6 +91,29 @@ export interface AskContinuePayload {
   type: InterruptTypeValue;
   message: string;
   total_chapters_written: number;
+}
+
+/** 设定一致性总审闸门 payload：报告走 message（whitespace-pre-wrap 渲染）；can_revise 决定是否给「让 AI 修订」。 */
+export interface ConsistencyGatePayload {
+  type: InterruptTypeValue;
+  message: string;
+  can_revise: boolean;
+}
+
+/** 一致性总审 · AI 修订单条提案：某设定项的改前/改后 + 修订理由。 */
+export interface ConsistencyRevision {
+  field: string;
+  label: string;
+  before: string;
+  after: string;
+  reason?: string;
+}
+
+/** AI 修订 diff 审核闸门 payload：逐项 revisions 供高亮 diff 展示 + 逐项编辑。 */
+export interface ConsistencyDiffPayload {
+  type: InterruptTypeValue;
+  message: string;
+  revisions: ConsistencyRevision[];
 }
 export interface ArcDirectionPayload {
   type: InterruptTypeValue;
@@ -169,6 +193,8 @@ export type FormKind =
   | "arc_titles_confirm"
   | "foreshadowing_review"
   | "foreshadow_prune_confirm"
+  | "consistency_gate"
+  | "consistency_diff"
   | "unknown";
 
 /**
@@ -211,9 +237,10 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.ARC_TITLES_CONFIRM]: "arc_titles_confirm",
 
   [InterruptType.ASK_CONTINUE]: "ask_continue",
-  // 一致性总审复用 entry_gate（payload 仅 {type, message}，报告走 message 由 whitespace-pre-wrap 渲染）
-  // 语义化按钮：跳过=通过冻结、执行=重新审查（见 InterruptHandler / EntryGateForm）
-  [InterruptType.CONSISTENCY_GATE]: "entry_gate",
+  // 一致性总审：专用三选表单（通过冻结 / 让 AI 修订 / 重新审查），报告走 message 由 whitespace-pre-wrap 渲染
+  [InterruptType.CONSISTENCY_GATE]: "consistency_gate",
+  // AI 修订改前/改后 diff 审核（逐项高亮 diff + 可编辑 + 应用/放弃）
+  [InterruptType.CONSISTENCY_DIFF]: "consistency_diff",
   [InterruptType.FORESHADOW_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
   [InterruptType.FORESHADOW_PRUNE_CONFIRM]: "foreshadow_prune_confirm", // 专用确认表单
 };
@@ -295,4 +322,33 @@ export interface ReviewResume {
 /** 构造审核表单的结构化 resume 值（approve 传空 feedback，revise 传修改意见）。 */
 export function buildReviewResume(feedback: string, thinkingOn: boolean): ReviewResume {
   return { feedback: feedback.trim(), thinking: thinkingOn ? "enabled" : "disabled" };
+}
+
+// ── 一致性总审闸门 resume 值（与后端 consistency_gate 的信号集对齐）─────────────
+/** 通过冻结：采纳当前设定，进入正式创作 */
+export const CONSISTENCY_FREEZE = "freeze";
+/** 让 AI 修订：进入 revise → diff 审核闭环 */
+export const CONSISTENCY_REVISE = "revise";
+/** 重新审查：配合左侧手改设定后复审 */
+export const CONSISTENCY_REAUDIT = "reaudit";
+
+/** AI 修订 diff 闸门的结构化 resume 值。 */
+export interface ConsistencyDiffApply {
+  action: "apply";
+  revisions: Array<{ field: string; after: string }>;
+}
+export interface ConsistencyDiffDiscard {
+  action: "discard";
+}
+export type ConsistencyDiffResume = ConsistencyDiffApply | ConsistencyDiffDiscard;
+
+/** 应用修订：把逐项（可能人工编辑过的）终稿回写。 */
+export function buildConsistencyApplyResume(
+  items: Array<{ field: string; after: string }>
+): ConsistencyDiffApply {
+  return { action: "apply", revisions: items };
+}
+/** 放弃修订：不改动任何设定，折返回闸门。 */
+export function buildConsistencyDiscardResume(): ConsistencyDiffDiscard {
+  return { action: "discard" };
 }

@@ -2,13 +2,15 @@
 // 的 TYPE_TO_FORM 契约表）。表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
 import { useRef } from "react";
-import { formKindOfPayload, InterruptType } from "../../lib/interruptTypes";
+import { formKindOfPayload } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
 import { BrainstormGateForm } from "./BrainstormGateForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
+import { ConsistencyDiffForm } from "./ConsistencyDiffForm";
+import { ConsistencyGateForm } from "./ConsistencyGateForm";
 import { DirectionForm } from "./DirectionForm";
 import { EntryGateForm } from "./EntryGateForm";
 import { ForeshadowingReviewForm } from "./ForeshadowingReviewForm";
@@ -86,22 +88,35 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Pr
         />
       );
 
-    case "entry_gate": {
-      // 一致性总审复用 entry_gate，但按钮语义化：跳过=通过冻结、执行=重新审查。
-      const isConsistency =
-        (payload as { type?: unknown }).type === InterruptType.CONSISTENCY_GATE;
+    case "entry_gate":
       return (
         <EntryGateForm
           key={formKey}
           payload={payload as Parameters<typeof EntryGateForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
-          title={isConsistency ? "设定一致性总审" : undefined}
-          skipLabel={isConsistency ? "通过冻结" : undefined}
-          executeLabel={isConsistency ? "重新审查" : undefined}
         />
       );
-    }
+
+    case "consistency_gate":
+      return (
+        <ConsistencyGateForm
+          key={formKey}
+          payload={payload as Parameters<typeof ConsistencyGateForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "consistency_diff":
+      return (
+        <ConsistencyDiffForm
+          key={formKey}
+          payload={payload as Parameters<typeof ConsistencyDiffForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
 
     case "direction":
     case "arc_direction":

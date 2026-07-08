@@ -80,6 +80,7 @@ class InterruptType(str, Enum):
     # ============================================================
     ASK_CONTINUE = "ask_continue"  # 是否继续写下一批
     CONSISTENCY_GATE = "consistency_gate"  # 设定一致性总审闸门（save_config 冻结前，跨设定终审）
+    CONSISTENCY_DIFF = "consistency_diff"  # 一致性总审 · AI 修订改前/改后 diff 审核闸门
 
 
 # ============================================================
