@@ -48,7 +48,10 @@ export function NovelDetail({ state }: Props) {
       <Field label="人物档案" value={state.character_profiles} />
       <Field label="当前弧线大纲" value={state.current_arc_outline} />
 
-      {state.review_type && state.current_draft && (
+      {/* 「当前草稿」只在草稿仍待审时展示（approved=false）。通过后 current_draft 会残留到下一个
+          prepare_* 才被 reset_review_fields 清空，此窗口内落回详情会把刚确认的旧草稿又显示出来——
+          用 !approved 拦掉「已通过的遗留草稿」，只保留真正 pending 的预览。 */}
+      {state.review_type && state.current_draft && !state.approved && (
         <Field
           label={`当前草稿 · ${reviewTypeLabel(state.review_type)}`}
           value={state.current_draft}
