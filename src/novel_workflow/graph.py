@@ -40,6 +40,7 @@ from noval_workflow.nodes.brainstorm import (
     brainstorm_respond,
     confirm_brainstorm_core_theme,
     confirm_brainstorm_world_building,
+    confirm_brainstorm_core_conflicts,
     route_after_chat,
     route_after_collect,
     route_after_gate,
@@ -58,6 +59,7 @@ builder.add_node("brainstorm_respond", brainstorm_respond)
 builder.add_node("brainstorm_extract", brainstorm_extract)
 builder.add_node("confirm_brainstorm_core_theme", confirm_brainstorm_core_theme)
 builder.add_node("confirm_brainstorm_world_building", confirm_brainstorm_world_building)
+builder.add_node("confirm_brainstorm_core_conflicts", confirm_brainstorm_core_conflicts)
 
 # Phase 0
 builder.add_node("collect_user_inputs", collect_user_inputs)
@@ -134,9 +136,11 @@ builder.add_conditional_edges(
         "prepare_core_theme": "prepare_core_theme",
     },
 )
-# 轻量确认链 → 汇合到「世界观后边的环节」prepare_core_conflicts
+# 轻量确认链（主题→世界观→核心冲突）→ 汇合到「核心冲突后边的环节」prepare_overall_outline
+# （脑爆已产出 core_theme/world_building/core_conflicts，整段跳过对应的 prepare/review/save）
 builder.add_edge("confirm_brainstorm_core_theme", "confirm_brainstorm_world_building")
-builder.add_edge("confirm_brainstorm_world_building", "prepare_core_conflicts")
+builder.add_edge("confirm_brainstorm_world_building", "confirm_brainstorm_core_conflicts")
+builder.add_edge("confirm_brainstorm_core_conflicts", "prepare_overall_outline")
 
 # Phase 1 chain
 builder.add_edge("prepare_core_theme", "review_core_theme")

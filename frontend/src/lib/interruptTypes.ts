@@ -11,6 +11,7 @@ export const InterruptType = {
   BRAINSTORM_CHAT: "brainstorm_chat",
   BRAINSTORM_CORE_THEME_CONFIRM: "brainstorm_core_theme_confirm",
   BRAINSTORM_WORLD_BUILDING_CONFIRM: "brainstorm_world_building_confirm",
+  BRAINSTORM_CORE_CONFLICTS_CONFIRM: "brainstorm_core_conflicts_confirm",
   // 用户输入阶段
   USER_INPUTS: "user_inputs",
   USER_INPUTS_ERROR: "user_inputs_error",
@@ -76,7 +77,7 @@ export interface BrainstormChatPayload {
   brainstorm_history: Array<{ role: "human" | "ai"; content: string }>;
 }
 
-/** 脑爆产物轻量确认 payload（core_theme / world_building）：展示内容供确认或编辑。 */
+/** 脑爆产物轻量确认 payload（core_theme / world_building / core_conflicts）：展示内容供确认或编辑。 */
 export interface BrainstormConfirmPayload {
   type: InterruptTypeValue;
   message: string;
@@ -178,6 +179,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.BRAINSTORM_CHAT]: "brainstorm_chat",
   [InterruptType.BRAINSTORM_CORE_THEME_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM]: "brainstorm_confirm",
+  [InterruptType.BRAINSTORM_CORE_CONFLICTS_CONFIRM]: "brainstorm_confirm",
 
   [InterruptType.USER_INPUTS]: "user_inputs",
   [InterruptType.USER_INPUTS_ERROR]: "user_inputs",

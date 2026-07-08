@@ -1,9 +1,9 @@
 """Phase -1：灵感脑爆（可选，入口分叉）。
 
 入口分叉：新建小说时先问「进脑爆」还是「直接填表」。选脑爆 → 与 LLM 多轮流式对话
-（brainstorm_chat ⇄ brainstorm_respond 自循环），共同脑爆出基础信息 + 核心主题 + 世界观；
-经轻量确认后汇合到 prepare_core_conflicts，**整段跳过** Phase 1 的 core_theme / world_building
-生成审稿（否则再走 prepare 会把脑爆已生成的内容冲掉）。
+（brainstorm_chat ⇄ brainstorm_respond 自循环），共同脑爆出基础信息 + 核心主题 + 世界观 + 核心冲突；
+经轻量确认后汇合到 prepare_overall_outline，**整段跳过** Phase 1 的 core_theme / world_building /
+core_conflicts 生成审稿（否则再走 prepare 会把脑爆已生成的内容冲掉）。
 
 记忆管理：始终保留最近 _KEEP_ROUNDS 轮完整对话，更早的轮次 LLM 压缩进 brainstorm_summary，
 避免上下文无限膨胀。
@@ -51,14 +51,15 @@ _BASIC_FIELDS = (
 # ── prompts ──────────────────────────────────────────────────────────────────
 _BRAINSTORM_SYSTEM_PROMPT = """你是一位资深的小说策划与灵感教练。你的任务是通过轻松的多轮对话，
 和用户一起脑爆出一部小说的雏形：基础设定（题材、写作风格、目标读者、核心基调、篇幅）、
-核心主题立意，以及世界观框架。
+核心主题立意、世界观框架，以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
 
 对话原则：
 1. 一次只聚焦一两个问题，循序渐进，不要一口气抛出一堆问题。
 2. 主动提出有启发性的可选方向供用户挑选，而不是干巴巴地索取信息。
 3. 适时小结已经达成的共识，帮助用户看清雏形逐渐成形。
-4. 当用户表示满意、或基础信息与主题/世界观已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
-5. 用自然、口语化的中文，简洁有重点。"""
+4. 主题与世界观有雏形后，主动引导用户聊清核心冲突——是什么力量在推动故事、主角要对抗什么。
+5. 当用户表示满意、或基础信息与主题/世界观/核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
+6. 用自然、口语化的中文，简洁有重点。"""
 
 _COMPRESS_SYSTEM_PROMPT = "你是严谨的对话纪要员，擅长把长对话压缩成不丢关键信息的要点概要。"
 
@@ -83,12 +84,13 @@ JSON 字段：
 - total_word_count: 总字数目标（如 "100万字"）
 - core_theme: 核心主题与立意（完整成段，可直接作为正式设定使用）
 - world_building: 世界观设定（完整成段，可直接作为正式设定使用）
+- core_conflicts: 核心冲突设计（主角的核心矛盾、对抗势力、贯穿全书的主要张力，完整成段，可直接作为正式设定使用）
 
 对话信息不足的字段，请基于已有方向合理补全，不要留空。
 
 输出示例：
 ```json
-{{"novel_name": "...", "genre": "...", "writing_style": "...", "target_audience": "...", "core_tone": "...", "chapter_word_count": "...", "total_word_count": "...", "core_theme": "...", "world_building": "..."}}
+{{"novel_name": "...", "genre": "...", "writing_style": "...", "target_audience": "...", "core_tone": "...", "chapter_word_count": "...", "total_word_count": "...", "core_theme": "...", "world_building": "...", "core_conflicts": "..."}}
 ```
 
 【脑爆对话内容】
@@ -209,10 +211,10 @@ def brainstorm_respond(state: NovelState) -> dict:
 
 
 def brainstorm_extract(state: NovelState) -> dict:
-    """脑爆结束：从对话抽取结构化产物（7 基础字段 + 完整 core_theme + world_building）写入 state。
+    """脑爆结束：从对话抽取结构化产物（7 基础字段 + 完整 core_theme + world_building + core_conflicts）写入 state。
 
-    JSON 解析失败兜底返回空——7 字段空则 collect 表单让用户手填，core_theme/world_building 空则
-    后续轻量确认步可手输；绝不阻断流程。
+    JSON 解析失败兜底返回空——7 字段空则 collect 表单让用户手填，core_theme/world_building/
+    core_conflicts 空则后续轻量确认步可手输；绝不阻断流程。
     """
     material = "\n".join([
         f"【早期对话概要】\n{state.brainstorm_summary}" if state.brainstorm_summary else "",
@@ -237,7 +239,7 @@ def brainstorm_extract(state: NovelState) -> dict:
         data = {}
 
     out: dict = {}
-    for field_name in (*_BASIC_FIELDS, "core_theme", "world_building"):
+    for field_name in (*_BASIC_FIELDS, "core_theme", "world_building", "core_conflicts"):
         val = data.get(field_name)
         if isinstance(val, str) and val.strip():
             out[field_name] = val.strip()
@@ -265,8 +267,11 @@ confirm_brainstorm_core_theme = _make_confirm(
 confirm_brainstorm_world_building = _make_confirm(
     "world_building", "世界观", InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM
 )
+confirm_brainstorm_core_conflicts = _make_confirm(
+    "core_conflicts", "核心冲突", InterruptType.BRAINSTORM_CORE_CONFLICTS_CONFIRM
+)
 
 
 def route_after_collect(state: NovelState) -> str:
-    """collect_user_inputs 之后：脑爆来源走轻量确认（跳过 Phase 1 主题/世界观生成），否则走原流程。"""
+    """collect_user_inputs 之后：脑爆来源走轻量确认（跳过 Phase 1 主题/世界观/核心冲突生成），否则走原流程。"""
     return "confirm_brainstorm_core_theme" if state.from_brainstorm else "prepare_core_theme"
