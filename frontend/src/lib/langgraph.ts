@@ -626,10 +626,12 @@ export async function runStream(
     input: opts?.input ?? null,
     command: opts?.resumeValue !== undefined ? { resume: opts.resumeValue } : undefined,
     streamMode: [...STREAM_MODES],
-    // SSE 断线续传：开启后服务端为每个事件分配 event_id 并缓冲，join 时不带 Last-Event-ID
-    // 就从头 replay 全量事件。切走再切回时新的 useRun 无历史 lastEventId，正好走「从头
-    // replay」路径，前端 streamingContent 由 useStreamingDisplay 在节点切换时清零再累加，
-    // 天然拿到完整内容，无需前端拼接残缺后半段。行业标准做法（SSE Last-Event-ID 规范）。
+    // SSE 断线续传：开启后服务端为每个事件分配 event_id 并缓冲。客户端 join 时必须
+    // 显式传 Last-Event-ID: "-" 才会从头 replay 全量事件；不传 header，服务端从当前
+    // 进度开始推，切走期间产生的 token 全部丢失（官方约定，见
+    // docs.langchain.com/langsmith/streaming）。切走再切回、页面刷新等 join 场景由
+    // joinRunStream 显式带 lastEventId="-" 触发从头 replay，useStreamingDisplay 在
+    // 节点首个 chunk 处清空累加器，天然无内容翻倍。
     streamResumable: true,
   });
 
@@ -645,15 +647,31 @@ export async function listActiveRuns(threadId: string) {
   return runs.filter((r) => r.status === "running" || r.status === "pending");
 }
 
-/** 加入已有 run 的流式输出，等待其完成。用于页面刷新后重新连接正在运行的 run。 */
+/**
+ * 加入已有 run 的流式输出，等待其完成。用于：
+ *   1) 页面刷新后重新连接正在运行的 run
+ *   2) 切走 thread 再切回时，重新订阅仍在跑的 run
+ *
+ * `opts.lastEventId` 传给服务端的 Last-Event-ID header：
+ *   - `"-"`（默认，官方约定）：从事件缓冲区头部 replay 全量事件，前端拿到完整流。
+ *   - 具体 event id：从该 id 之后开始（用于短断线续传，本项目暂无此路径）。
+ *   - `undefined`：SDK 不发 header → 服务端从当前进度开始推（**会丢失历史 token**，勿用）。
+ *
+ * 前端累加器（useStreamingDisplay）在节点首个 chunk 到达时清空重填，从头 replay
+ * 不会导致内容翻倍。参考 SDK 1.9.25 行为：
+ *   `node_modules/@langchain/langgraph-sdk/dist/client/runs/index.js:253`
+ *   `headers: opts?.lastEventId ? { "Last-Event-ID": opts.lastEventId } : void 0`
+ */
 export async function joinRunStream(
   threadId: string,
   runId: string,
-  onEvent: (e: StreamEvent) => void
+  onEvent: (e: StreamEvent) => void,
+  opts?: { lastEventId?: string }
 ): Promise<void> {
   const stream = client.runs.joinStream(threadId, runId, {
     streamMode: [...STREAM_MODES],
     cancelOnDisconnect: false,
+    lastEventId: opts?.lastEventId ?? "-",
   });
   for await (const chunk of stream) {
     processJoinStreamChunk(chunk, onEvent);

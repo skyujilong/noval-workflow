@@ -120,6 +120,10 @@ export function useRun(threadId: string): UseRunResult {
           runningRef.current = true;
           setRunning(true);
           try {
+            // 从头 replay 前显式清零累加器。fresh mount 下 ref 本就是空；但 refresh()
+            // 存在递归调用（本函数末尾），上一次 join 结束后 ref 可能残留最后一段 content，
+            // 显式清零保证下一次 join 首个 chunk 走「新节点覆盖」路径，避免旧尾 + 新头拼接。
+            resetStreaming();
             await joinRunStream(threadId, activeRuns[0].run_id, onEvent);
           } catch (e) {
             setError(`等待运行完成失败：${(e as Error).message}`);
@@ -139,7 +143,7 @@ export function useRun(threadId: string): UseRunResult {
     } catch (e) {
       setError(`获取状态失败：${(e as Error).message}`);
     }
-  }, [threadId, load, setCurrentNode, onEvent]);
+  }, [threadId, load, setCurrentNode, onEvent, resetStreaming]);
 
   // 只刷新 values（不动 interrupt）：就地 update_state 保存后调用。update_state 会清空中断
   // 两源，跑常规 refresh 会把 interrupt 置 null 让表单消失；这里只更新展示用的 values。
