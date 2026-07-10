@@ -50,20 +50,36 @@ _BASIC_FIELDS = (
 )
 
 # ── prompts ──────────────────────────────────────────────────────────────────
-_BRAINSTORM_SYSTEM_PROMPT = """你是一位资深的小说策划与灵感教练。你的任务是通过轻松的多轮对话，
+_BRAINSTORM_SYSTEM_PROMPT_BASE = """你是一位资深的小说策划与灵感教练。你的任务是通过轻松的多轮对话，
 和用户一起脑爆出一部小说的雏形：基础设定（题材、写作风格、目标读者、核心基调、篇幅）、
-核心主题立意、世界观框架、力量体系（人物凭以行动与成长的能力规则：修炼境界 / 科技 / 异能 /
-社会资源等，视题材而定），以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
+核心主题立意、世界观框架，以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
 
 对话原则：
 1. 一次只聚焦一两个问题，循序渐进，不要一口气抛出一堆问题。
 2. 主动提出有启发性的可选方向供用户挑选，而不是干巴巴地索取信息。
 3. 适时小结已经达成的共识，帮助用户看清雏形逐渐成形。
-4. 世界观有雏形后：若这是有超凡力量 / 等级体系的题材（玄幻 / 科幻 / 末日等），主动引导用户聊清
-   这套力量体系——力量来源、等级 / 流派、晋升代价与边界；若是现实向题材（都市 / 情感 / 职场等），
-   则无需单列"力量体系"，把"实力 = 资源 / 地位 / 人脉"融进世界观即可。之后再引导聊清核心冲突。
-5. 当用户表示满意、或基础信息与主题 / 世界观 /（力量体系，若适用）/ 核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
-6. 用自然、口语化的中文，简洁有重点。"""
+4. 当用户表示满意、或基础信息与主题 / 世界观 / 核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
+5. 用自然、口语化的中文，简洁有重点。"""
+
+# 力量体系分支硬规则：由前端 switch 决定。开关状态实时写回 state.has_power_system，
+# 每轮 brainstorm_respond 按 flag 拼进 system prompt 让 AI 引导风格与用户意图对齐——
+# 避免"AI 按题材默认引导 vs 用户实际想要"的错位。
+_POWER_SYSTEM_ON_RULE = """
+【本作力量体系约定：开启】
+本作**包含**独立力量体系。世界观有雏形后请**主动引导**用户聊清这套力量体系——力量来源与底层原理、
+层级/境界/流派、晋升路径与代价、能力边界与规则红线。这是全书人物成长与冲突升级的统一标尺，务必聊到位。"""
+
+_POWER_SYSTEM_OFF_RULE = """
+【本作力量体系约定：关闭】
+本作**不单列**力量体系。实力/竞争规则融进世界观与冲突即可（如资源、地位、人脉、社会规则）。
+**不要主动询问**"力量体系"、"修炼境界"、"异能等级"之类的概念——除非用户明确提出，否则不引入这个维度。"""
+
+
+def _build_brainstorm_system_prompt(has_power_system: bool) -> str:
+    """按作品级 has_power_system 拼脑爆 system prompt。前端 switch 切换后写回 state，
+    下一轮 respond 立即感知新 flag——AI 引导风格随开关变化。"""
+    rule = _POWER_SYSTEM_ON_RULE if has_power_system else _POWER_SYSTEM_OFF_RULE
+    return _BRAINSTORM_SYSTEM_PROMPT_BASE + rule
 
 _COMPRESS_SYSTEM_PROMPT = "你是严谨的对话纪要员，擅长把长对话压缩成不丢关键信息的要点概要。"
 
@@ -182,12 +198,18 @@ def route_after_gate(state: NovelState) -> str:
 
 
 def brainstorm_chat(state: NovelState) -> dict:
-    """多轮聊天：只 interrupt 拿用户这一条消息（无 LLM，resume 重放无副作用）。"""
+    """多轮聊天：只 interrupt 拿用户这一条消息（无 LLM，resume 重放无副作用）。
+
+    payload 里带 has_power_system 供前端 switch 显示——用户切换开关时前端会立即通过
+    updateThreadState 写回 state（不清 interrupt），本轮 payload 已过时无影响；下一轮进本节点
+    时 payload 自然反映最新 flag。
+    """
     msg = interrupt({
         "type": InterruptType.BRAINSTORM_CHAT.value,
         "message": "和 AI 一起脑爆吧——说说你的想法，或让 AI 给你些方向。聊得差不多了点「结束脑爆」。",
         "brainstorm_summary": state.brainstorm_summary,
         "brainstorm_history": state.brainstorm_history,
+        "has_power_system": state.has_power_system,
     })
     text = str(msg or "").strip()
     if text in _END_SIGNALS:
@@ -201,10 +223,14 @@ def route_after_chat(state: NovelState) -> str:
 
 
 def brainstorm_respond(state: NovelState) -> dict:
-    """生成 AI 回复（流式由 LangGraph 自动捕获）+ 追加历史 + 必要时压缩。无 interrupt，不会被重放。"""
+    """生成 AI 回复（流式由 LangGraph 自动捕获）+ 追加历史 + 必要时压缩。无 interrupt，不会被重放。
+
+    system prompt 按 state.has_power_system 动态拼装——前端 switch 切换后写回 state，本轮
+    respond 就能立即按新 flag 引导风格（开/关都有对应硬规则，见 _POWER_SYSTEM_*_RULE）。
+    """
     history = state.brainstorm_history
     # 对话上下文：系统提示 + 早期概要（若有）+ 完整近期历史（末条即当前用户提问）
-    messages: list = [SystemMessage(content=_BRAINSTORM_SYSTEM_PROMPT)]
+    messages: list = [SystemMessage(content=_build_brainstorm_system_prompt(state.has_power_system))]
     if state.brainstorm_summary:
         messages.append(SystemMessage(content=f"【早期对话概要】\n{state.brainstorm_summary}"))
     messages.extend(_history_to_messages(history))
@@ -231,6 +257,9 @@ def brainstorm_extract(state: NovelState) -> dict:
 
     JSON 解析失败兜底返回空——7 字段空则 collect 表单让用户手填，core_theme/world_building/
     power_system/core_conflicts 空则后续轻量确认步可手输；绝不阻断流程。
+
+    has_power_system 由聊天页 switch 在脑爆过程中实时写回 state，本节点**只读不写**——
+    读 state.has_power_system 决定是否保留抽出的 power_system 字段。
     """
     material = "\n".join([
         f"【早期对话概要】\n{state.brainstorm_summary}" if state.brainstorm_summary else "",
@@ -259,9 +288,10 @@ def brainstorm_extract(state: NovelState) -> dict:
         val = data.get(field_name)
         if isinstance(val, str) and val.strip():
             out[field_name] = val.strip()
-    # 现实向题材（has_power_system=False）：即便抽出了力量体系也丢弃，与"整步跳过力量体系确认"
-    # 一致，不把该概念强加进现实题材的正式设定。genre 缺失 → 回退通用包，同样无力量体系。
-    if out.get("power_system") and not get_prompt_pack(out.get("genre", ""), "").flavor.has_power_system:
+
+    # 用户在聊天页 switch 决定的 has_power_system 才是权威（已写回 state）。开关关闭时即便对话
+    # 里聊过力量体系、LLM 抽出了内容也丢弃——尊重用户"本作不单列力量体系"的显式决定。
+    if out.get("power_system") and not state.has_power_system:
         out.pop("power_system", None)
     return out
 
@@ -306,11 +336,10 @@ def brainstorm_extract_review(state: NovelState) -> dict:
       - {"action": "advance", ...4 字段} → 覆写字段 + 置 brainstorm_review_advance=True → 路由到 collect_user_inputs
       - {"action": "back_to_chat"}       → 不写回字段，把 brainstorm_done 置回 False → 路由回 brainstorm_chat 继续聊天
 
-    payload 里显式携带 has_power_system 布尔标志，前端据此决定是否渲染力量体系编辑区，
-    避免"内容为空 == 现实向题材"的错误推断（沿用 brainstorm_extract 已有的题材判定）。
+    payload 里带 has_power_system 供前端判定是否渲染力量体系编辑区。此值来源于 state（用户在
+    聊天页 switch 已经决定过），本节点不再让用户在抽屉里覆盖 flag——避免"聊天时说不要 → 抽屉里
+    又勾上但没有内容可展示"的错位。
     """
-    has_power_system = get_prompt_pack(state.genre, state.novel_name).flavor.has_power_system
-
     answer = interrupt({
         "type": InterruptType.BRAINSTORM_EXTRACT_REVIEW.value,
         "message": "请审阅并按需修改脑爆生成的正式设定；保存并推进将跳过逐项确认，直接进入基础参数填写。",
@@ -318,7 +347,7 @@ def brainstorm_extract_review(state: NovelState) -> dict:
         "world_building": state.world_building,
         "power_system": state.power_system,
         "core_conflicts": state.core_conflicts,
-        "has_power_system": has_power_system,
+        "has_power_system": state.has_power_system,
     })
 
     # 契约：前端必发 dict。非 dict 视为契约故障，回炉聊天避免坑住图；不试图猜测意图。
@@ -337,8 +366,9 @@ def brainstorm_extract_review(state: NovelState) -> dict:
             val = answer.get(field_name)
             if isinstance(val, str) and val.strip():
                 out[field_name] = val.strip()
-        # 现实向题材防御性剔除 power_system（与 brainstorm_extract 一致），前端已不渲染但仍防前端契约漂移
-        if not has_power_system:
+        # 现实向作品（state.has_power_system=False）：即便前端契约漂移带回了 power_system 也丢弃，
+        # 与聊天页开关关闭的语义一致。
+        if not state.has_power_system:
             out.pop("power_system", None)
         return out
 
@@ -353,15 +383,14 @@ def route_after_extract_review(state: NovelState) -> str:
 
 
 def route_after_confirm_world_building(state: NovelState) -> str:
-    """脑爆确认链：世界观确认后，有力量体系的题材走力量体系确认，现实向题材（has_power_system=False）
+    """脑爆确认链：世界观确认后，有力量体系的作品走力量体系确认，无力量体系（state.has_power_system=False）
     跳过、直连核心冲突确认。与常规链 route_after_world_building 同一开关，双链行为一致。
 
     ⚠️ 已被 brainstorm_extract_review 合并接管，图上不再挂。保留定义仅便于快速回滚。
     """
-    pack = get_prompt_pack(state.genre, state.novel_name)
     return (
         "confirm_brainstorm_power_system"
-        if pack.flavor.has_power_system
+        if state.has_power_system
         else "confirm_brainstorm_core_conflicts"
     )
 

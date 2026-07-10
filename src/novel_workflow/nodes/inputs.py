@@ -5,11 +5,16 @@ from __future__ import annotations
 from langgraph.types import interrupt
 
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.state import NovelState
 
 
 def collect_user_inputs(state: NovelState) -> dict:
-    """Interrupt to collect the 6 basic novel parameters from the user."""
+    """Interrupt to collect the 6 basic novel parameters from the user.
+
+    附带：直接填表路径下，用最终 genre 查题材默认值兜底填 has_power_system——脑爆路径此时
+    state.has_power_system 已由 brainstorm_extract_review 由用户确认过，本节点不覆盖。
+    """
     # Allow pre-populated values via thread input (langgraph dev API).
     # 脑爆来源（from_brainstorm）即使字段全填也不短路——强制弹表单让用户复核/编辑
     # 脑爆抽取的基础信息（已预填进 current_values）。
@@ -58,6 +63,15 @@ def collect_user_inputs(state: NovelState) -> dict:
     if isinstance(answers, dict):
         result = {k: str(v) for k, v in answers.items() if k in VALID_FIELDS}
         if result:
+            # 直接填表路径：按题材默认写入 has_power_system，让 route_after_world_building 有决策依据。
+            # 脑爆路径（from_brainstorm=True）此时 state.has_power_system 已由 review 抽屉由用户确认，
+            # 若在此二次覆盖会把用户在抽屉里的显式选择冲掉——只对直接填表路径填。
+            if not state.from_brainstorm:
+                genre_val = result.get("genre") or state.genre
+                if genre_val:
+                    result["has_power_system"] = get_prompt_pack(
+                        genre_val, ""
+                    ).flavor.has_power_system
             return result
 
     # Non-dict or empty dict: re-interrupt with error guidance

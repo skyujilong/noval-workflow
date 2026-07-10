@@ -171,7 +171,9 @@ builder.add_edge("save_core_theme", "prepare_world_building")
 builder.add_edge("prepare_world_building", "review_world_building")
 builder.add_edge("review_world_building", "save_world_building")
 # 力量体系：依赖世界观、喂给核心冲突/大纲/人物，故插在世界观之后、核心冲突之前。
-# 按题材条件插入：现实向题材（has_power_system=False）在世界观定稿后直连核心冲突，整步跳过。
+# 按作品级 state.has_power_system 条件插入：无力量体系时在世界观定稿后直连核心冲突，整步跳过。
+# state.has_power_system 由 collect_user_inputs（直接填表路径按题材默认）/
+# brainstorm_extract_review（脑爆路径由用户在抽屉里确认）填充。
 builder.add_conditional_edges(
     "save_world_building",
     route_after_world_building,

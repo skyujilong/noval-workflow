@@ -20,7 +20,7 @@ import { NovelDetail } from "./novel/NovelDetail";
 import { StateEditPanel } from "./state/StateEditPanel";
 import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
-import { updateThreadMeta } from "../lib/langgraph";
+import { updateThreadMeta, updateThreadState } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
 import { BRAINSTORM_END, InterruptType } from "../lib/interruptTypes";
 import type { NovelState } from "../lib/types";
@@ -240,6 +240,13 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               awaitingInput={interruptType === InterruptType.BRAINSTORM_CHAT}
               onSend={(m) => void resume(m)}
               onEnd={() => void resume(BRAINSTORM_END)}
+              hasPowerSystem={!!state.has_power_system}
+              onHasPowerSystemChange={async (v) => {
+                // 就地 update_state：LangGraph 会清 interrupts 两源但保留 next；用 refreshValues
+                // 只刷 values 不动内存 interrupt，聊天页 interrupt 表单不消失。
+                await updateThreadState(threadId, { has_power_system: v });
+                await refreshValues();
+              }}
               disabled={inputDisabled}
             />
           ) : interrupt ? (

@@ -32,6 +32,10 @@ export interface NovelState {
   chapter_word_count: string;
   total_word_count: string;
 
+  /** 作品是否含独立【力量体系】——作品级决策（题材默认建议 + 用户可覆盖），非题材属性。
+   * 由后端 collect_user_inputs（直接填表路径）/ brainstorm_extract_review（脑爆路径）填充。 */
+  has_power_system: boolean;
+
   // 子图桥接字段
   system_context: string;
   task_prompt: string;
@@ -84,6 +88,7 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   core_tone: "",
   chapter_word_count: "",
   total_word_count: "",
+  has_power_system: false,
   system_context: "",
   task_prompt: "",
   current_draft: "",

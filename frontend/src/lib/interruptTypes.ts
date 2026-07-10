@@ -75,12 +75,15 @@ export interface MessageOnlyPayload {
   message: string;
 }
 
-/** 脑爆多轮聊天 payload（brainstorm_chat）：携带概要 + 完整近期历史，前端直接渲染。 */
+/** 脑爆多轮聊天 payload（brainstorm_chat）：携带概要 + 完整近期历史，前端直接渲染。
+ * has_power_system 供聊天页底部 switch 显示初值；用户切换时前端调 updateThreadState 直接写回
+ * state（不清 interrupt），下轮进本节点时后端从 state 读到最新值。 */
 export interface BrainstormChatPayload {
   type: InterruptTypeValue;
   message: string;
   brainstorm_summary: string;
   brainstorm_history: Array<{ role: "human" | "ai"; content: string }>;
+  has_power_system: boolean;
 }
 
 /** 脑爆产物轻量确认 payload（core_theme / world_building / core_conflicts）：展示内容供确认或编辑。 */
@@ -94,8 +97,8 @@ export interface BrainstormConfirmPayload {
 
 /**
  * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段。
- * has_power_system 由后端 flavor 判定，前端据此决定是否渲染 power_system 编辑区，
- * 不依赖内容是否为空（避免"内容空 == 现实向题材"的错误推断）。
+ * has_power_system 反映 state 里的作品级决策（初始由题材默认建议，用户可在抽屉里覆盖），
+ * 前端据此决定 checkbox 初始状态与力量体系编辑区显隐。
  */
 export interface BrainstormExtractReviewPayload {
   type: InterruptTypeValue;
@@ -377,9 +380,9 @@ export function buildConsistencyDiscardResume(): ConsistencyDiffDiscard {
 
 // ── 脑爆产物整合 review 的 resume 值（与后端 brainstorm_extract_review 节点对齐）─────
 /**
- * 脑爆产物整合 review 的结构化 resume 值。
+ * 脑爆产物整合 review 的结构化 resume 值。has_power_system 由聊天页 switch 在结束脑爆前决定
+ * 并已写回 state，抽屉不再产生此值——power_system 字段仅在 has_power_system=true 时透传。
  * - advance：用户 review 完成，携带编辑后 4 字段 → 后端覆写 state + 推进到 collect_user_inputs
- *   （power_system 仅在 has_power_system=true 时携带；后端也会兜底剔除防漂移）
  * - back_to_chat：用户想再和 AI 聊几轮 → 后端不写字段、复位 brainstorm_done → 回 brainstorm_chat
  */
 export interface BrainstormReviewAdvance {
@@ -394,7 +397,7 @@ export interface BrainstormReviewBackToChat {
 }
 export type BrainstormReviewResume = BrainstormReviewAdvance | BrainstormReviewBackToChat;
 
-/** 构造「保存并推进」resume 值。 */
+/** 构造「保存并推进」resume 值。power_system 仅在调用方判定 has_power_system=true 时传入。 */
 export function buildBrainstormReviewAdvanceResume(fields: {
   core_theme: string;
   world_building: string;

@@ -120,11 +120,16 @@ class GenreFlavor:
     """注入 CHAPTER_REVIEW_PROMPT 的 {style_checklist} 占位，作为章节审核的
     文风合规检查清单。"""
 
-    # ── 题材行为开关 ──────────────────────────────────────────────────────
+    # ── 题材默认建议 ───────────────────────────────────────────────────────
     has_power_system: bool = True
-    """本题材是否需要独立的【力量体系】设定。默认 True（有超凡力量 / 等级 / 流派的
-    题材：玄幻 / 科幻 / 末日等）。现实向题材（都市 / 两性情感 / 通用）置 False，则常规链
-    与脑爆链都整步跳过力量体系（生成 / 确认），不把"力量体系"概念强加给现实题材。"""
+    """本题材是否**默认建议**独立【力量体系】设定——仅作为 NovelState.has_power_system 的初始值来源，
+    实际运行时决策统一读 state 字段。默认 True（有超凡力量 / 等级 / 流派的题材：玄幻 / 科幻 / 末日等）；
+    现实向题材（都市 / 两性情感 / 通用）置 False。
+
+    脑爆路径由 brainstorm_extract 按抽出的 genre 查此字段填入 state.has_power_system，
+    用户可在 brainstorm_extract_review 抽屉里 checkbox 覆盖；直接填表路径由 collect_user_inputs
+    按 genre 查此字段兜底写入 state。三个消费点（route_after_world_building / brainstorm_extract
+    抽后剔除 / brainstorm_extract_review payload）都读 state.has_power_system，本字段不再是运行时开关。"""
 
     # ── 可选：各创作步骤的题材聚焦补充（默认空串）──────────────────────────
     core_theme_focus: str = ""

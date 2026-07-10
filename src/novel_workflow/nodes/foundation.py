@@ -105,10 +105,14 @@ def save_power_system(state: NovelState) -> dict:
 
 
 def route_after_world_building(state: NovelState) -> str:
-    """世界观定稿后：有力量体系的题材（玄幻/科幻/末日）走 prepare_power_system，
-    现实向题材（都市/两性情感/通用，has_power_system=False）整步跳过、直连核心冲突。"""
-    pack = get_prompt_pack(state.genre, state.novel_name)
-    return "prepare_power_system" if pack.flavor.has_power_system else "prepare_core_conflicts"
+    """世界观定稿后：作品含力量体系（state.has_power_system=True）走 prepare_power_system，
+    否则整步跳过、直连核心冲突。
+
+    state.has_power_system 由 collect_user_inputs（直接填表路径按题材默认写入）或
+    brainstorm_extract_review（脑爆路径由用户在抽屉里确认）负责填充。这里不查 flavor——
+    作品级决策统一从 state 读，避免"题材开关 vs 作品级用户选择"的双源冲突。
+    """
+    return "prepare_power_system" if state.has_power_system else "prepare_core_conflicts"
 
 
 def save_core_conflicts(state: NovelState) -> dict:

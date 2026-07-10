@@ -55,6 +55,12 @@ class NovelState:
     chapter_word_count: str = ""    # 每章目标字数
     total_word_count: str = ""      # 全书总字数目标
 
+    # 作品是否包含独立【力量体系】——从题材默认建议（GenreFlavor.has_power_system）初始化，
+    # 脑爆 review 抽屉里用户可覆盖。三个消费点统一读它（route_after_world_building /
+    # brainstorm_extract 抽后剔除 / brainstorm_extract_review payload），题材属性降级为默认值来源。
+    # 直接填表路径由 collect_user_inputs 按题材默认写入；脑爆路径由 brainstorm_extract 初始化 → review 抽屉可覆盖。
+    has_power_system: bool = False
+
     # ── 子图桥接字段（字段名与 ReviewSubState 完全一致，供 LangGraph 自动映射）────
     system_context: str = ""        # 当前节点的系统提示词（prepare 节点写入，子图消费）
     task_prompt: str = ""           # 当前节点的生成任务指令（prepare 节点写入，子图消费）

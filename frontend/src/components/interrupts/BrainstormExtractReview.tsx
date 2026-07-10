@@ -6,8 +6,9 @@
 //   - 返回脑爆继续修改 → { action: "back_to_chat" }
 //     后端复位 brainstorm_done、不写字段、路由回 brainstorm_chat
 //
-// power_system 仅在 payload.has_power_system 为 true 时渲染 —— 与后端 flavor 判定一致，
-// 避免"内容为空 == 现实向题材"的错误推断（题材信息在 payload 里显式传，不靠推断）。
+// has_power_system 由脑爆聊天页底部 switch 决定并已在结束脑爆前写回 state——本抽屉不再让用户
+// 覆盖 flag，只按 payload.has_power_system 展示/隐藏力量体系编辑区。若用户结束脑爆后发现开关
+// 选错，走「返回脑爆继续修改」回到聊天页调整 switch 即可。
 
 import { useEffect, useState } from "react";
 import {
@@ -48,7 +49,7 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
     setCoreConflicts(payload.core_conflicts ?? "");
   }, [payload, disabled]);
 
-  // 三个必填字段（力量体系视题材可选，不算必填）
+  // 三个必填字段（力量体系视 has_power_system 可选，不算必填）
   const canAdvance =
     coreTheme.trim().length > 0 &&
     worldBuilding.trim().length > 0 &&
@@ -110,7 +111,7 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
               value={powerSystem}
               onChange={setPowerSystem}
               disabled={isDisabled}
-              // 力量体系视题材可选，不做必填校验
+              // 力量体系视聊天页开关可选，不做必填校验
             />
           )}
           <FieldBlock

@@ -6,6 +6,10 @@
 // 乐观渲染：用户发出消息后，running 期间后端 state.brainstorm_history 尚未刷新回来，
 // 用本地 pendingUserMsg 先把这条消息渲染出来；当 history 回填包含它后自动隐藏（派生判断，
 // 不依赖时序，避免重复气泡）。
+//
+// 底部「本作包含独立力量体系」开关：作品级决策承载点。切换时先 optimistic 更新本地态，再 await
+// 父层写回 state（updateThreadState + refreshValues，不清 interrupt）；失败则回滚。开关同时
+// 影响 AI 引导风格（system prompt 硬规则）与 brainstorm_extract 抽取时是否保留力量体系正文。
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
@@ -25,6 +29,10 @@ interface Props {
   awaitingInput: boolean;
   onSend: (msg: string) => void;
   onEnd: () => void;
+  /** 作品级：是否含独立力量体系（来自 state.has_power_system） */
+  hasPowerSystem: boolean;
+  /** 切换开关时的写回回调（父层负责 updateThreadState + refreshValues）；返回 Promise 便于失败回滚 */
+  onHasPowerSystemChange: (v: boolean) => Promise<void>;
   /** 上层 running：运行期禁用所有输入（resume 期 interrupt 仍保留，故必须用此显式禁用） */
   disabled?: boolean;
 }
@@ -37,11 +45,22 @@ export function BrainstormChat({
   awaitingInput,
   onSend,
   onEnd,
+  hasPowerSystem,
+  onHasPowerSystemChange,
   disabled,
 }: Props) {
   const [input, setInput] = useState("");
   const [pendingUserMsg, setPendingUserMsg] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 力量体系开关的 optimistic 本地态：切换后立即反映在 UI，await 写回失败则回滚为父层值。
+  // 与父层 hasPowerSystem 同步：当父层拉到新 state 后覆盖本地态（幂等，非编辑中不丢已提交值）。
+  const [powerSwitch, setPowerSwitch] = useState(hasPowerSystem);
+  const [switchSaving, setSwitchSaving] = useState(false);
+  useEffect(() => {
+    // 父层刷新到新 state 时同步；本地 saving 期间不覆盖（避免和 optimistic 值打架）
+    if (!switchSaving) setPowerSwitch(hasPowerSystem);
+  }, [hasPowerSystem, switchSaving]);
 
   // 乐观气泡是否仍需展示：history 末条 human 尚未等于刚发出的消息时展示（派生，免时序依赖）
   const lastHuman = [...history].reverse().find((m) => m.role === "human");
@@ -81,7 +100,23 @@ export function BrainstormChat({
     }
   };
 
+  // 开关切换：optimistic 更新 → await 父层写回；失败回滚。running 期或非 interrupt 期禁用避免竞态。
+  const handlePowerSystemToggle = async (next: boolean) => {
+    if (switchSaving) return;
+    setPowerSwitch(next); // optimistic
+    setSwitchSaving(true);
+    try {
+      await onHasPowerSystemChange(next);
+    } catch {
+      // 写回失败：回滚为父层最新值（不必显式 setPowerSwitch，saving 结束后 useEffect 自然同步）
+    } finally {
+      setSwitchSaving(false);
+    }
+  };
+
   const inputDisabled = !awaitingInput || !!disabled;
+  // 开关比输入更保守：只有停在 chat interrupt 才允许改（running / respond 期禁用避免和后端 state 冲突）
+  const switchDisabled = inputDisabled || switchSaving;
 
   return (
     <div className="flex h-full flex-col">
@@ -131,6 +166,35 @@ export function BrainstormChat({
 
         {/* AI 流式回复气泡 */}
         {streamingShown && <Bubble role="ai" content={streamingContent || "…"} />}
+      </div>
+
+      {/* 力量体系开关（作品级决策，影响 AI 引导 + 抽取保留） */}
+      <div className="shrink-0 border-t bg-gray-50/60 px-4 py-2.5">
+        <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={powerSwitch}
+            onClick={() => void handlePowerSystemToggle(!powerSwitch)}
+            disabled={switchDisabled}
+            className={`relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+              powerSwitch ? "bg-blue-600" : "bg-gray-300"
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <span
+              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                powerSwitch ? "translate-x-4" : "translate-x-0.5"
+              }`}
+            />
+          </button>
+          <div className="flex-1">
+            <div className="font-medium text-gray-800">本作包含独立力量体系</div>
+            <div className="mt-0.5 text-xs text-gray-500">
+              开启 → AI 会主动引导聊清力量来源 / 层级 / 代价；关闭 → 把实力融进世界观即可，不单列。
+              {switchSaving && <span className="ml-1 text-blue-500">保存中…</span>}
+            </div>
+          </div>
+        </label>
       </div>
 
       {/* 输入区（固定底部） */}
