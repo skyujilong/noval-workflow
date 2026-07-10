@@ -125,7 +125,15 @@ def _entries_to_text(entries: list[dict]) -> str:
 
 
 def _compress(prev_summary: str, overflow: list[dict]) -> str:
-    """把旧概要 + 滑出保留窗口的对话轮次压缩成新的简要概要。压缩失败不阻断脑爆。"""
+    """把旧概要 + 滑出保留窗口的对话轮次压缩成新的简要概要。压缩失败不阻断脑爆。
+
+    ⚠️ 标记 tags=["nostream"]（LangGraph 官方约定的 TAG_NOSTREAM）：
+    压缩是 respond 节点内的隐藏后端优化调用，不是用户可见的对话回复。若不打标签，
+    messages-tuple 模式会把压缩 LLM 的 chunks 也流到前端，与 respond 的主对话回复
+    交织出现在同一节点的 message stream 里——前端会看到聊天气泡中途冒出「1. 题材...」
+    这种要点纪要格式的内容（compress 的输出），观感是「断开→冒不相干内容→变回去」。
+    加 nostream tag 后 LangGraph 从源头就不广播这次调用的 chunks，前端彻底看不到。
+    """
     parts = []
     if prev_summary:
         parts.append(f"【已有概要】\n{prev_summary}")
@@ -135,10 +143,13 @@ def _compress(prev_summary: str, overflow: list[dict]) -> str:
     try:
         # 压缩是每轮聊天的隐藏开销，必须快——关闭思考避免给对话回合再叠加十几秒延迟。
         llm = get_llm(temperature=0.3, label="brainstorm_compress", thinking="disabled")
-        result = llm.invoke([
-            SystemMessage(content=_COMPRESS_SYSTEM_PROMPT),
-            HumanMessage(content=_COMPRESS_PROMPT.format(material=material)),
-        ])
+        result = llm.invoke(
+            [
+                SystemMessage(content=_COMPRESS_SYSTEM_PROMPT),
+                HumanMessage(content=_COMPRESS_PROMPT.format(material=material)),
+            ],
+            config={"tags": ["nostream"]},  # 别被 messages-tuple 流出到前端
+        )
         return result.content.strip()
     except Exception as e:  # noqa: BLE001 — 压缩失败退化为拼接，绝不阻断主流程
         _logger.error("脑爆历史压缩失败，退化为简单拼接：%s", e)

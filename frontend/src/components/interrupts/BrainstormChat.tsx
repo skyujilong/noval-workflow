@@ -47,6 +47,16 @@ export function BrainstormChat({
   const lastHuman = [...history].reverse().find((m) => m.role === "human");
   const pendingShown = !!pendingUserMsg && lastHuman?.content !== pendingUserMsg;
 
+  // 流式气泡是否仍需展示：history 末条 AI 内容尚未等于当前流式累积内容时展示（与 pendingShown 同构，
+  // 派生免时序依赖）。修 Bug：SSE 结束瞬间，useRun 的 `await refresh()`（回填 history 含新 AI 回复）
+  // 与 `setRunning(false)` 之间存在微任务边界，React 会渲染一次「history 已含新 AI + streaming 仍为
+  // true + streamingContent 是完整内容」的中间态 → 同一段 AI 回复同时以 history 气泡 + streaming 气泡
+  // 渲染 → 视觉上闪动一下。用派生判断在等价内容落地那一帧立刻隐藏 streaming 气泡，交给 history
+  // 气泡接管，彻底绕开对 React 批处理/微任务时序的依赖。
+  const lastEntry = history[history.length - 1];
+  const streamingShown =
+    streaming && !(lastEntry?.role === "ai" && lastEntry.content === streamingContent);
+
   // 新消息 / 流式增量 / 乐观气泡变化时自动滚到底（ref 直接操作，不进 render）
   useEffect(() => {
     const el = scrollRef.current;
@@ -120,7 +130,7 @@ export function BrainstormChat({
         {pendingShown && <Bubble role="human" content={pendingUserMsg} />}
 
         {/* AI 流式回复气泡 */}
-        {streaming && <Bubble role="ai" content={streamingContent || "…"} />}
+        {streamingShown && <Bubble role="ai" content={streamingContent || "…"} />}
       </div>
 
       {/* 输入区（固定底部） */}

@@ -128,11 +128,21 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
           currentNode === "brainstorm_extract" ||
           streamingNode === "brainstorm_respond"));
 
-    // 脑爆 AI 回复的流式打字机门控：只要在脑爆运行中、有流式增量内容，就显示。
+    // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且非 extract 节点即显示。
+    //
     // 不强绑 streamingNode === "brainstorm_respond" 精确匹配——回复期间 streamingNode 常被
     // 上一拍 brainstorm_chat 的 updates 事件占着，精确匹配会一直 false，导致 token 在
     // streamingContent 里累积却从不渲染（最终只在 refresh 后以历史气泡整段出现）。
-    // 改为「有增量即流」，并用 streamingNode 显式排除 extract（其产出是 JSON，不该进聊天气泡）。
+    // 用 streamingNode 显式排除 extract（其产出是 JSON，不该进聊天气泡）。
+    //
+    // ⚠️ 刻意**不**加 !streamingFinalized 闸门（曾试过，会引入空白 bug）：
+    // brainstorm_respond 节点内 LLM 流完（finalized=true）后，若历史超过 _KEEP_MESSAGES，
+    // 还会跑 _compress（~10s，backend 内部调用，已用 tags=["nostream"] 屏蔽 chunks）。
+    // 这期间节点未 return，history 尚未更新。若在 finalized 时立刻隐藏流式气泡，用户会
+    // 看到「气泡消失 → 空白 10s → 相同内容以 history 形式冒出」。
+    // 交接给 history 的正确判断是「内容相等」，见 BrainstormChat 里的 streamingShown 派生：
+    //   streaming && !(lastEntry.role === "ai" && lastEntry.content === streamingContent)
+    // history 落地那一刻自动接管，不依赖 finalized 时序。
     const brainstormStreaming =
       running &&
       streamingContent.length > 0 &&

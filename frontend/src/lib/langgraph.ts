@@ -512,9 +512,16 @@ export function processStreamChunk(
   }
 
   if (event === "updates") {
-    const d = data as Record<string, unknown>;
-    const node = Object.keys(d ?? {})[0] ?? "";
-    onEvent({ event: "updates", data: d, node });
+    const d = (data ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(d);
+    // 空 updates（如 END 路由信号）：不推进 currentNode，避免图高亮短暂闪空。
+    // LangGraph 在图末尾会发一条 `updates {}`，若照旧 setCurrentNode(""), 图高亮消失一帧
+    // 再被下一个真事件覆盖回来——观感就是「图闪一下」。转为 metadata（观察用）。
+    if (keys.length === 0) {
+      onEvent({ event: "metadata", data: { emptyUpdates: d } });
+      return;
+    }
+    onEvent({ event: "updates", data: d, node: keys[0] });
   } else if (event === "values") {
     onEvent({ event: "values", data: (data ?? {}) as Partial<NovelState> });
   } else if (event === "metadata") {
@@ -570,8 +577,13 @@ export function processJoinStreamChunk(
 
   if (event === "updates") {
     const d = (data ?? {}) as Record<string, unknown>;
-    const node = typeof d === "object" && d ? Object.keys(d)[0] ?? "" : "";
-    onEvent({ event: "updates", data: d, node });
+    const keys = typeof d === "object" && d ? Object.keys(d) : [];
+    // 同 processStreamChunk：空 updates 不推进 currentNode，避免图高亮闪空
+    if (keys.length === 0) {
+      onEvent({ event: "metadata", data: { emptyUpdates: d } });
+      return;
+    }
+    onEvent({ event: "updates", data: d, node: keys[0] });
   } else if (event === "values") {
     onEvent({ event: "values", data: (data ?? {}) as Partial<NovelState> });
   } else if (event === "metadata") {
@@ -614,6 +626,11 @@ export async function runStream(
     input: opts?.input ?? null,
     command: opts?.resumeValue !== undefined ? { resume: opts.resumeValue } : undefined,
     streamMode: [...STREAM_MODES],
+    // SSE 断线续传：开启后服务端为每个事件分配 event_id 并缓冲，join 时不带 Last-Event-ID
+    // 就从头 replay 全量事件。切走再切回时新的 useRun 无历史 lastEventId，正好走「从头
+    // replay」路径，前端 streamingContent 由 useStreamingDisplay 在节点切换时清零再累加，
+    // 天然拿到完整内容，无需前端拼接残缺后半段。行业标准做法（SSE Last-Event-ID 规范）。
+    streamResumable: true,
   });
 
   for await (const chunk of streamRes) {
@@ -665,6 +682,9 @@ export async function replayFromCheckpoint(
       "thread_id"
     >,
     streamMode: [...STREAM_MODES],
+    // 与 runStream 一致开启断线续传：replay 出的 run 也需要能在「切走再切回」场景 join 时
+    // 从头 replay 全量事件（否则回到中途看到的是残缺流）。
+    streamResumable: true,
   });
 
   for await (const chunk of streamRes) {

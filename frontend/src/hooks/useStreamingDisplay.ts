@@ -28,13 +28,13 @@ export function useStreamingDisplay(): UseStreamingDisplay {
 
   const handleStreamEvent = useCallback((e: StreamEvent) => {
     if (e.event === "updates") {
+      // 只推进「当前节点」用于图高亮；**不**在此清空 streamingContent / streamingNode。
+      //
+      // 关键：streamingContent 的清零职责下移到 message_chunk 分支的「新节点首个 chunk」，
+      // 与首个 chunk 的写入在同一帧原子完成——中间不会经过「空内容 + running=true」的过渡帧，
+      // 避免 respond 流完 → 后端推 updates(chat) 那一刻把气泡冲空的闪烁。
+      // 空 updates（node=""）已在 processStreamChunk 里过滤，不会走到这条路径。
       setCurrentNode(e.node);
-      // 节点切换时清空流式内容
-      if (e.node && e.node !== streamingStateRef.current.node) {
-        streamingStateRef.current = { node: e.node, content: "" };
-        setStreamingNode(e.node);
-        setStreamingContent("");
-      }
     } else if (e.event === "message_chunk") {
       // 节点变了先清空再追加，否则累加
       if (e.node && e.node !== streamingStateRef.current.node) {
