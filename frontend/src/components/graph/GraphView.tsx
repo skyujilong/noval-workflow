@@ -1,7 +1,31 @@
 // React Flow 节点图可视化。按 Phase 分列布局，当前执行节点高亮。
+//
+// 关键实现：uncontrolled + useReactFlow().updateNode() 局部 patch 高亮
+// ------------------------------------------------------------------
+// 曾经用 controlled 模式（`<ReactFlow nodes={rfNodes}>` 每次 currentNode 变都新数组），
+// 结果是 React Flow 内部 store 的 `measured` 字段被外部 nodes 覆盖丢失 —— React Flow
+// 对未测量节点会加 `visibility:hidden` 避免用户看到未定位的节点，正常场景下 ResizeObserver
+// 一帧后就 measure 好、visibility 恢复；但脑爆阶段 `updates` 事件高频推进 currentNode，
+// 每次都抹掉 measured，ResizeObserver 追不上就会累积卡在 hidden。DOM 上表现是"背景在、
+// 47 个节点都在但全部 visibility:hidden"，切走切回（组件 remount）内部 store 重置才恢复。
+//
+// 官方推荐的解法是 uncontrolled：`defaultNodes` 挂载时一次性喂进去、之后 measured 由
+// React Flow 内部自管；高亮切换用 `useReactFlow().updateNode(id, {style})` 局部 patch，
+// 只影响该 id 一个节点，其他节点连同 measured 一起保留。本组件节点是纯只读（不允许拖拽/
+// 选择/连线），不需要外部维护 nodes state，uncontrolled 语义最贴。
+//
+// schema 更新（refetch 成功）时通过 key={schemaVersion} 让 Inner 整个 remount 重读
+// defaultNodes —— schema 由 App 一次性拉取，几乎不变，remount 成本可忽略。
 
-import { useMemo } from "react";
-import { ReactFlow, Background, Controls, MarkerType } from "@xyflow/react";
+import { useEffect, useMemo, useRef } from "react";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  Controls,
+  MarkerType,
+  useReactFlow,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { GraphNode } from "../../lib/langgraph";
 import { layoutGraph, phaseOf } from "./layout";
@@ -26,21 +50,130 @@ const PHASE_COLOR: Record<string, string> = {
 };
 
 // 骨架节点：不含高亮样式，仅描述"节点长什么样"的稳定形态。
-// 拆出来是为了在 currentNode 高频变化时，其他非高亮节点的引用保持稳定 —— React Flow
-// 内部按 node.id + 引用做 diff，引用不变就不重渲染该节点。
+// name 保留是因为 currentNode 可能是节点 name 或 id，二者都得能匹配。
 type BaseRfNode = {
   id: string;
   name: string;
   position: { x: number; y: number };
   data: { label: string };
-  /** 未高亮态的完整 style；命中 currentNode 时会用新 style 覆盖，其他节点直接复用 */
   baseStyle: Record<string, string | number>;
-  /** 高亮态用到的主色，避免 render 期再查 map */
+  /** 高亮态用到的主色 */
   color: string;
 };
 
-export function GraphView({ schemaNodes, schemaEdges, currentNode, schemaError, onRetrySchema }: Props) {
-  // 骨架层：只依赖 schema。schema 由 App 一次性拉取，几乎永不重算 → 骨架引用长期稳定。
+/** 高亮样式 —— 抽出来是为了 Inner 里 patch 时和还原时用同一份定义 */
+function highlightStyle(color: string): Record<string, string | number> {
+  return {
+    border: `2px solid ${color}`,
+    background: color,
+    color: "#fff",
+    borderRadius: 8,
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 700,
+    boxShadow: `0 0 0 4px ${color}55`,
+  };
+}
+
+function baseStyle(color: string): Record<string, string | number> {
+  return {
+    border: `2px solid ${color}`,
+    background: "#fff",
+    color: "#374151",
+    borderRadius: 8,
+    padding: "6px 10px",
+    fontSize: 12,
+    fontWeight: 400,
+    boxShadow: "none",
+  };
+}
+
+/** Inner —— 必须挂在 ReactFlowProvider 下，才能用 useReactFlow */
+function GraphViewInner({
+  baseNodes,
+  rfEdges,
+  currentNode,
+}: {
+  baseNodes: BaseRfNode[];
+  rfEdges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    type: string;
+    animated: boolean;
+    markerEnd: { type: MarkerType };
+    style: { stroke: string; strokeDasharray?: string };
+  }>;
+  currentNode: string;
+}) {
+  const { updateNode } = useReactFlow();
+  const prevActiveIdRef = useRef<string | null>(null);
+
+  // defaultNodes 只在挂载时读一次；schema 变化通过外层 key 触发 remount 让这里重算。
+  const defaultNodes = useMemo(
+    () =>
+      baseNodes.map((n) => ({
+        id: n.id,
+        position: n.position,
+        data: n.data,
+        style: n.baseStyle,
+      })),
+    // 只依赖挂载时的 baseNodes，schema 更新走 key 强制 remount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  // currentNode 变化：只 patch 「旧高亮 → 还原」+ 「新高亮 → 上色」，其他节点不动。
+  // React Flow 内部按 id 局部更新，不会影响任何一个未涉及节点的 measured 字段。
+  useEffect(() => {
+    const activeMeta = currentNode
+      ? baseNodes.find((n) => n.name === currentNode || n.id === currentNode)
+      : undefined;
+    const newActiveId = activeMeta?.id ?? null;
+    const prevActiveId = prevActiveIdRef.current;
+
+    if (newActiveId === prevActiveId) return;
+
+    // 还原旧高亮
+    if (prevActiveId) {
+      const prev = baseNodes.find((n) => n.id === prevActiveId);
+      if (prev) {
+        updateNode(prevActiveId, { style: prev.baseStyle });
+      }
+    }
+    // 上新高亮
+    if (newActiveId && activeMeta) {
+      updateNode(newActiveId, { style: highlightStyle(activeMeta.color) });
+    }
+    prevActiveIdRef.current = newActiveId;
+  }, [currentNode, baseNodes, updateNode]);
+
+  return (
+    <ReactFlow
+      defaultNodes={defaultNodes}
+      defaultEdges={rfEdges}
+      fitView
+      nodesDraggable={false}
+      nodesConnectable={false}
+      elementsSelectable={false}
+      minZoom={0.2}
+      maxZoom={2}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background gap={16} />
+      <Controls showInteractive={false} />
+    </ReactFlow>
+  );
+}
+
+export function GraphView({
+  schemaNodes,
+  schemaEdges,
+  currentNode,
+  schemaError,
+  onRetrySchema,
+}: Props) {
+  // 骨架：只依赖 schema。schema 由 App 一次性拉取，多数情况下引用长期稳定。
   const { baseNodes, rfEdges } = useMemo(() => {
     const layout = layoutGraph(schemaNodes, schemaEdges);
     const baseNodes: BaseRfNode[] = layout.nodes.map((n) => {
@@ -49,17 +182,15 @@ export function GraphView({ schemaNodes, schemaEdges, currentNode, schemaError, 
         id: n.id,
         name: n.name,
         position: { x: n.x, y: n.y },
-        data: { label: n.name === "__start__" ? "START" : n.name === "__end__" ? "END" : n.name },
-        baseStyle: {
-          border: `2px solid ${color}`,
-          background: "#fff",
-          color: "#374151",
-          borderRadius: 8,
-          padding: "6px 10px",
-          fontSize: 12,
-          fontWeight: 400,
-          boxShadow: "none",
+        data: {
+          label:
+            n.name === "__start__"
+              ? "START"
+              : n.name === "__end__"
+              ? "END"
+              : n.name,
         },
+        baseStyle: baseStyle(color),
         color,
       };
     });
@@ -70,43 +201,20 @@ export function GraphView({ schemaNodes, schemaEdges, currentNode, schemaError, 
       type: e.conditional ? "smoothstep" : "default",
       animated: false,
       markerEnd: { type: MarkerType.ArrowClosed },
-      style: { stroke: e.conditional ? "#9ca3af" : "#6b7280", strokeDasharray: e.conditional ? "4 2" : undefined },
+      style: {
+        stroke: e.conditional ? "#9ca3af" : "#6b7280",
+        strokeDasharray: e.conditional ? "4 2" : undefined,
+      },
     }));
     return { baseNodes, rfEdges };
   }, [schemaNodes, schemaEdges]);
 
-  // 高亮层：只对匹配 currentNode 的节点换新对象，其他节点直接复用骨架引用（不 new）。
-  // 这样脑爆阶段 currentNode 高频抖动时，React Flow 内部 diff 只处理 ≤2 个节点（旧/新高亮），
-  // 而不是把整个 nodes 数组当"全部重建"处理 —— 后者累积到某次会让节点 DOM 丢失（本 bug 根因）。
-  const rfNodes = useMemo(() => {
-    return baseNodes.map((n) => {
-      const isActive = n.name === currentNode || n.id === currentNode;
-      if (!isActive) {
-        // 关键：非高亮节点整个对象引用稳定复用骨架，才能让 React Flow 判定"未变化"
-        return {
-          id: n.id,
-          position: n.position,
-          data: n.data,
-          style: n.baseStyle,
-        };
-      }
-      return {
-        id: n.id,
-        position: n.position,
-        data: n.data,
-        style: {
-          border: `2px solid ${n.color}`,
-          background: n.color,
-          color: "#fff",
-          borderRadius: 8,
-          padding: "6px 10px",
-          fontSize: 12,
-          fontWeight: 700,
-          boxShadow: `0 0 0 4px ${n.color}55`,
-        },
-      };
-    });
-  }, [baseNodes, currentNode]);
+  // schema 变化时用作 Inner 的 key，触发 remount 重读 defaultNodes。
+  // 用节点 id 序列而不是引用相等，防止 layoutGraph 每次返回新数组但内容一致时误 remount。
+  const schemaVersion = useMemo(
+    () => baseNodes.map((n) => n.id).join("|"),
+    [baseNodes]
+  );
 
   if (schemaNodes.length === 0) {
     // 三次自动重试全失败：显式错误 + 手动重试；避免用户一直看到"加载中…"无法确认状态
@@ -135,20 +243,14 @@ export function GraphView({ schemaNodes, schemaEdges, currentNode, schemaError, 
   }
 
   return (
-    <ReactFlow
-      nodes={rfNodes}
-      edges={rfEdges}
-      fitView
-      nodesDraggable={false}
-      nodesConnectable={false}
-      elementsSelectable={false}
-      minZoom={0.2}
-      maxZoom={2}
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background gap={16} />
-      <Controls showInteractive={false} />
-    </ReactFlow>
+    <ReactFlowProvider>
+      <GraphViewInner
+        key={schemaVersion}
+        baseNodes={baseNodes}
+        rfEdges={rfEdges}
+        currentNode={currentNode}
+      />
+    </ReactFlowProvider>
   );
 }
 
