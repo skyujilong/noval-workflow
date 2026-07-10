@@ -55,6 +55,10 @@ interface Props {
   threadId: string;
   graphNodes: GraphNode[];
   graphEdges: GraphEdge[];
+  /** 图结构拉取错误（自动重试全失败后）—— 透传给中部 GraphView 显示错误态 */
+  graphError?: string | null;
+  /** 图结构手动重试入口 —— 透传给 GraphView 的"重试"按钮 */
+  onRetryGraph?: () => void;
   /** 本组件因「新建」而挂载时为 true：自动启动 run，停在 collect_user_inputs */
   autoStart: boolean;
   /** 因列表「▶」进入 pending thread 时为 true：等首次快照拉回后自动触发一次 continueRun。
@@ -80,6 +84,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       threadId,
       graphNodes,
       graphEdges,
+      graphError,
+      onRetryGraph,
       autoStart,
       autoContinue,
       onAutoContinueConsumed,
@@ -214,6 +220,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             schemaNodes={graphNodes}
             schemaEdges={graphEdges}
             currentNode={currentNode}
+            schemaError={graphError}
+            onRetrySchema={onRetryGraph}
           />
         </main>
 

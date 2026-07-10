@@ -38,7 +38,12 @@ export default function App() {
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
 
-  const { nodes: graphNodes, edges: graphEdges } = useGraphSchema(true);
+  const {
+    nodes: graphNodes,
+    edges: graphEdges,
+    error: graphError,
+    refetch: refetchGraph,
+  } = useGraphSchema(true);
 
   // 当前选中小说在 /novels/summary 轮询里的那条（含权威 status：idle/busy/interrupted/error）。
   const selectedThread = selectedId
@@ -200,6 +205,8 @@ export default function App() {
             threadId={selectedId}
             graphNodes={graphNodes}
             graphEdges={graphEdges}
+            graphError={graphError}
+            onRetryGraph={refetchGraph}
             autoStart={autoStart}
             autoContinue={autoContinue}
             onAutoContinueConsumed={handleAutoContinueConsumed}
@@ -211,7 +218,13 @@ export default function App() {
         ) : (
           <>
             <main className="flex-1 bg-gray-50">
-              <GraphView schemaNodes={graphNodes} schemaEdges={graphEdges} currentNode="" />
+              <GraphView
+                schemaNodes={graphNodes}
+                schemaEdges={graphEdges}
+                currentNode=""
+                schemaError={graphError}
+                onRetrySchema={refetchGraph}
+              />
             </main>
             <aside className="relative flex-1 overflow-y-auto border-l bg-white">
               <div className="flex h-full items-center justify-center p-4 text-center text-sm text-gray-400">
