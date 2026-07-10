@@ -64,6 +64,7 @@ class NovelState:
     # ── Phase 1：小说基础设定（每项审核通过后保存）────────────────────────────────
     core_theme: str = ""            # 核心主题与立意
     world_building: str = ""        # 世界观设定
+    power_system: str = ""          # 力量体系（修炼境界/科技/异能/社会竞争等，视题材而定；依赖世界观、喂给冲突/大纲/人物）
     core_conflicts: str = ""        # 核心冲突设计
     overall_outline: str = ""       # 整体大纲与结局
     character_profiles: str = ""    # 人物档案（主角 + 主要配角 + 反派）

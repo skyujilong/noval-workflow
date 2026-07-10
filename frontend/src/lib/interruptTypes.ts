@@ -11,6 +11,7 @@ export const InterruptType = {
   BRAINSTORM_CHAT: "brainstorm_chat",
   BRAINSTORM_CORE_THEME_CONFIRM: "brainstorm_core_theme_confirm",
   BRAINSTORM_WORLD_BUILDING_CONFIRM: "brainstorm_world_building_confirm",
+  BRAINSTORM_POWER_SYSTEM_CONFIRM: "brainstorm_power_system_confirm",
   BRAINSTORM_CORE_CONFLICTS_CONFIRM: "brainstorm_core_conflicts_confirm",
   // 用户输入阶段
   USER_INPUTS: "user_inputs",
@@ -207,6 +208,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.BRAINSTORM_CHAT]: "brainstorm_chat",
   [InterruptType.BRAINSTORM_CORE_THEME_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM]: "brainstorm_confirm",
+  [InterruptType.BRAINSTORM_POWER_SYSTEM_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_CORE_CONFLICTS_CONFIRM]: "brainstorm_confirm",
 
   [InterruptType.USER_INPUTS]: "user_inputs",

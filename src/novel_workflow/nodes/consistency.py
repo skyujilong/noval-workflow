@@ -46,6 +46,7 @@ _logger = logging.getLogger(__name__)
 _FOUNDATION_FIELDS: list[tuple[str, str]] = [
     ("core_theme", "核心主题与立意"),
     ("world_building", "世界观设定"),
+    ("power_system", "力量体系"),
     ("core_conflicts", "核心冲突"),
     ("overall_outline", "整体大纲与结局"),
     ("character_profiles", "人物档案"),

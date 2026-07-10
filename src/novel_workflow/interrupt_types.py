@@ -19,6 +19,7 @@ class InterruptType(str, Enum):
     BRAINSTORM_CHAT = "brainstorm_chat"  # 多轮聊天等待用户消息
     BRAINSTORM_CORE_THEME_CONFIRM = "brainstorm_core_theme_confirm"  # 核心主题轻量确认
     BRAINSTORM_WORLD_BUILDING_CONFIRM = "brainstorm_world_building_confirm"  # 世界观轻量确认
+    BRAINSTORM_POWER_SYSTEM_CONFIRM = "brainstorm_power_system_confirm"  # 力量体系轻量确认
     BRAINSTORM_CORE_CONFLICTS_CONFIRM = "brainstorm_core_conflicts_confirm"  # 核心冲突轻量确认
 
     # ============================================================

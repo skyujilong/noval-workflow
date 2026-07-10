@@ -51,6 +51,7 @@ FLAVOR = GenreFlavor(
     ),
 
     core_theme_focus="侧重情感成长、信任与救赎、亲密关系中的自我认同、爱与独立的平衡。",
+    has_power_system=False,  # 两性情感：无超凡力量体系，整步跳过（"筹码"体现在社会/家庭背景，融进世界观与冲突即可）
     world_building_focus="侧重人物关系网络、社会/家庭背景、情感羁绊的形成与演变环境。",
     core_conflicts_focus="侧重情感误解、信任危机、身份/阶层/立场差异、外部阻力与内心挣扎。",
     character_profiles_focus="侧重主角的情感经历、性格软肋、依恋模式、成长弧光与化学反应设计。",

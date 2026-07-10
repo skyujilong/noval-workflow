@@ -51,6 +51,7 @@ FLAVOR = GenreFlavor(
     ),
 
     core_theme_focus="侧重阶层跃迁、人心博弈、现实与理想的撕裂、都市生存法则。",
+    has_power_system=False,  # 现实都市：无超凡力量体系，整步跳过（实力体现在资源/地位，融进世界观与冲突即可）
     world_building_focus="侧重现实都市背景、行业规则、势力关系、社会阶层与利益网络。",
     core_conflicts_focus="侧重职场/商战博弈、利益分配、人际倾轧、阶层对抗与个人逆袭。",
     character_profiles_focus="侧重主角的背景履历、能力底牌、人脉资源、性格软肋与成长弧光。",

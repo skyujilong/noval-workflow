@@ -1,4 +1,4 @@
-"""Phase 1: Foundation setup nodes (10 nodes: 5 prepare + 5 save)."""
+"""Phase 1: Foundation setup nodes (prepare/save pairs per设定项 + save_config)."""
 
 from __future__ import annotations
 
@@ -27,6 +27,16 @@ def prepare_world_building(state: NovelState) -> dict:
         "system_context": build_foundation_context(state),
         "task_prompt": pack.world_building_prompt,
         "review_type": "world_building",
+        **reset_review_fields(),
+    }
+
+
+def prepare_power_system(state: NovelState) -> dict:
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    return {
+        "system_context": build_foundation_context(state),
+        "task_prompt": pack.power_system_prompt,
+        "review_type": "power_system",
         **reset_review_fields(),
     }
 
@@ -90,6 +100,17 @@ def save_world_building(state: NovelState) -> dict:
     return {"world_building": state.current_draft}
 
 
+def save_power_system(state: NovelState) -> dict:
+    return {"power_system": state.current_draft}
+
+
+def route_after_world_building(state: NovelState) -> str:
+    """世界观定稿后：有力量体系的题材（玄幻/科幻/末日）走 prepare_power_system，
+    现实向题材（都市/两性情感/通用，has_power_system=False）整步跳过、直连核心冲突。"""
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    return "prepare_power_system" if pack.flavor.has_power_system else "prepare_core_conflicts"
+
+
 def save_core_conflicts(state: NovelState) -> dict:
     return {"core_conflicts": state.current_draft}
 
@@ -122,6 +143,7 @@ def save_config(state: NovelState) -> dict:
         "total_word_count": state.total_word_count,
         "core_theme": state.core_theme,
         "world_building": state.world_building,
+        "power_system": state.power_system,
         "core_conflicts": state.core_conflicts,
         "overall_outline": state.overall_outline,
         "character_profiles": state.character_profiles,

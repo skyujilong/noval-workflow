@@ -49,4 +49,7 @@ FLAVOR = GenreFlavor(
         "   - 是否存在口头禅、标志性动作、服饰细节等机械复读（单章出现超过1-2次即视为问题）？\n"
         "   - 是否以人物对话、互动、行为驱动剧情，而非大段环境/心理铺叙？"
     ),
+
+    # 通用回退题材：不预设超凡力量体系，整步跳过（见 GenreFlavor.has_power_system）。
+    has_power_system=False,
 )

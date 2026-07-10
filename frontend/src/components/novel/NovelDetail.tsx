@@ -43,6 +43,7 @@ export function NovelDetail({ state }: Props) {
 
       <Field label="核心主题" value={state.core_theme} />
       <Field label="世界观" value={state.world_building} />
+      <Field label="力量体系" value={state.power_system} />
       <Field label="核心冲突" value={state.core_conflicts} />
       <Field label="整体大纲" value={state.overall_outline} />
       <Field label="人物档案" value={state.character_profiles} />

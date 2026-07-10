@@ -21,6 +21,7 @@ export type EditableTextKey =
   | "current_arc_outline"
   | "core_theme"
   | "world_building"
+  | "power_system"
   | "core_conflicts"
   | "overall_outline"
   | "character_profiles"
@@ -55,6 +56,7 @@ export const EDITABLE_FIELDS: EditableFieldDef[] = [
   { key: "current_arc_outline", label: "当前弧线大纲", group: "snapshot", kind: "text" },
   { key: "core_theme", label: "核心主题", group: "foundation", kind: "text" },
   { key: "world_building", label: "世界观", group: "foundation", kind: "text" },
+  { key: "power_system", label: "力量体系", group: "foundation", kind: "text" },
   { key: "core_conflicts", label: "核心冲突", group: "foundation", kind: "text" },
   { key: "overall_outline", label: "整体大纲", group: "foundation", kind: "text" },
   { key: "character_profiles", label: "人物档案", group: "foundation", kind: "text" },

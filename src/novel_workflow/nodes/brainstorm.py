@@ -1,9 +1,9 @@
 """Phase -1：灵感脑爆（可选，入口分叉）。
 
 入口分叉：新建小说时先问「进脑爆」还是「直接填表」。选脑爆 → 与 LLM 多轮流式对话
-（brainstorm_chat ⇄ brainstorm_respond 自循环），共同脑爆出基础信息 + 核心主题 + 世界观 + 核心冲突；
+（brainstorm_chat ⇄ brainstorm_respond 自循环），共同脑爆出基础信息 + 核心主题 + 世界观 + 力量体系 + 核心冲突；
 经轻量确认后汇合到 prepare_overall_outline，**整段跳过** Phase 1 的 core_theme / world_building /
-core_conflicts 生成审稿（否则再走 prepare 会把脑爆已生成的内容冲掉）。
+power_system / core_conflicts 生成审稿（否则再走 prepare 会把脑爆已生成的内容冲掉）。
 
 记忆管理：始终保留最近 _KEEP_ROUNDS 轮完整对话，更早的轮次 LLM 压缩进 brainstorm_summary，
 避免上下文无限膨胀。
@@ -27,6 +27,7 @@ from langgraph.types import interrupt
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import invoke_json
 from noval_workflow.llm import get_llm
+from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -51,14 +52,17 @@ _BASIC_FIELDS = (
 # ── prompts ──────────────────────────────────────────────────────────────────
 _BRAINSTORM_SYSTEM_PROMPT = """你是一位资深的小说策划与灵感教练。你的任务是通过轻松的多轮对话，
 和用户一起脑爆出一部小说的雏形：基础设定（题材、写作风格、目标读者、核心基调、篇幅）、
-核心主题立意、世界观框架，以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
+核心主题立意、世界观框架、力量体系（人物凭以行动与成长的能力规则：修炼境界 / 科技 / 异能 /
+社会资源等，视题材而定），以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
 
 对话原则：
 1. 一次只聚焦一两个问题，循序渐进，不要一口气抛出一堆问题。
 2. 主动提出有启发性的可选方向供用户挑选，而不是干巴巴地索取信息。
 3. 适时小结已经达成的共识，帮助用户看清雏形逐渐成形。
-4. 主题与世界观有雏形后，主动引导用户聊清核心冲突——是什么力量在推动故事、主角要对抗什么。
-5. 当用户表示满意、或基础信息与主题/世界观/核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
+4. 世界观有雏形后：若这是有超凡力量 / 等级体系的题材（玄幻 / 科幻 / 末日等），主动引导用户聊清
+   这套力量体系——力量来源、等级 / 流派、晋升代价与边界；若是现实向题材（都市 / 情感 / 职场等），
+   则无需单列"力量体系"，把"实力 = 资源 / 地位 / 人脉"融进世界观即可。之后再引导聊清核心冲突。
+5. 当用户表示满意、或基础信息与主题 / 世界观 /（力量体系，若适用）/ 核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
 6. 用自然、口语化的中文，简洁有重点。"""
 
 _COMPRESS_SYSTEM_PROMPT = "你是严谨的对话纪要员，擅长把长对话压缩成不丢关键信息的要点概要。"
@@ -83,14 +87,15 @@ JSON 字段：
 - chapter_word_count: 每章字数目标（如 "3000字"）
 - total_word_count: 总字数目标（如 "100万字"）
 - core_theme: 核心主题与立意（完整成段，可直接作为正式设定使用）
-- world_building: 世界观设定（完整成段，可直接作为正式设定使用）
+- world_building: 世界观设定（完整成段，可直接作为正式设定使用）。只写"舞台"——时代背景 / 地理环境 / 社会结构 / 历史脉络与当前大势；不写具体剧情走向、主角个人经历、单次冲突胜负；至少保留 1-2 处未解之谜供后续扩展。注：力量 / 技能体系单独写进 power_system 字段，此处只需点到世界与之的关系
+- power_system: 力量体系设定（完整成段，可直接作为正式设定使用）。人物凭以行动与成长的能力规则，须与 world_building 自洽：力量来源与原理、自低到高的完整层级 / 境界阶梯、晋升路径与所需资源、晋升代价与瓶颈、流派 / 职业分类与相克、能力边界与规则红线（杜绝后期"体系外凭空能力"）；只对"最高层级 / 力量源头终极真相"留白。只立体系框架，某角色具体拥有的技能 / 招式属【人物档案】不在此处。若题材无超凡力量，则写清竞争规则、资源与晋升通道体系
 - core_conflicts: 核心冲突设计（主角的核心矛盾、对抗势力、贯穿全书的主要张力，完整成段，可直接作为正式设定使用）
 
 对话信息不足的字段，请基于已有方向合理补全，不要留空。
 
 输出示例：
 ```json
-{{"novel_name": "...", "genre": "...", "writing_style": "...", "target_audience": "...", "core_tone": "...", "chapter_word_count": "...", "total_word_count": "...", "core_theme": "...", "world_building": "...", "core_conflicts": "..."}}
+{{"novel_name": "...", "genre": "...", "writing_style": "...", "target_audience": "...", "core_tone": "...", "chapter_word_count": "...", "total_word_count": "...", "core_theme": "...", "world_building": "...", "power_system": "...", "core_conflicts": "..."}}
 ```
 
 【脑爆对话内容】
@@ -211,10 +216,10 @@ def brainstorm_respond(state: NovelState) -> dict:
 
 
 def brainstorm_extract(state: NovelState) -> dict:
-    """脑爆结束：从对话抽取结构化产物（7 基础字段 + 完整 core_theme + world_building + core_conflicts）写入 state。
+    """脑爆结束：从对话抽取结构化产物（7 基础字段 + core_theme + world_building + power_system + core_conflicts）写入 state。
 
     JSON 解析失败兜底返回空——7 字段空则 collect 表单让用户手填，core_theme/world_building/
-    core_conflicts 空则后续轻量确认步可手输；绝不阻断流程。
+    power_system/core_conflicts 空则后续轻量确认步可手输；绝不阻断流程。
     """
     material = "\n".join([
         f"【早期对话概要】\n{state.brainstorm_summary}" if state.brainstorm_summary else "",
@@ -239,10 +244,14 @@ def brainstorm_extract(state: NovelState) -> dict:
         data = {}
 
     out: dict = {}
-    for field_name in (*_BASIC_FIELDS, "core_theme", "world_building", "core_conflicts"):
+    for field_name in (*_BASIC_FIELDS, "core_theme", "world_building", "power_system", "core_conflicts"):
         val = data.get(field_name)
         if isinstance(val, str) and val.strip():
             out[field_name] = val.strip()
+    # 现实向题材（has_power_system=False）：即便抽出了力量体系也丢弃，与"整步跳过力量体系确认"
+    # 一致，不把该概念强加进现实题材的正式设定。genre 缺失 → 回退通用包，同样无力量体系。
+    if out.get("power_system") and not get_prompt_pack(out.get("genre", ""), "").flavor.has_power_system:
+        out.pop("power_system", None)
     return out
 
 
@@ -268,11 +277,25 @@ confirm_brainstorm_core_theme = _make_confirm(
 confirm_brainstorm_world_building = _make_confirm(
     "world_building", "世界观", InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM
 )
+confirm_brainstorm_power_system = _make_confirm(
+    "power_system", "力量体系", InterruptType.BRAINSTORM_POWER_SYSTEM_CONFIRM
+)
 confirm_brainstorm_core_conflicts = _make_confirm(
     "core_conflicts", "核心冲突", InterruptType.BRAINSTORM_CORE_CONFLICTS_CONFIRM
 )
 
 
+def route_after_confirm_world_building(state: NovelState) -> str:
+    """脑爆确认链：世界观确认后，有力量体系的题材走力量体系确认，现实向题材（has_power_system=False）
+    跳过、直连核心冲突确认。与常规链 route_after_world_building 同一开关，双链行为一致。"""
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    return (
+        "confirm_brainstorm_power_system"
+        if pack.flavor.has_power_system
+        else "confirm_brainstorm_core_conflicts"
+    )
+
+
 def route_after_collect(state: NovelState) -> str:
-    """collect_user_inputs 之后：脑爆来源走轻量确认（跳过 Phase 1 主题/世界观/核心冲突生成），否则走原流程。"""
+    """collect_user_inputs 之后：脑爆来源走轻量确认（跳过 Phase 1 主题/世界观/力量体系/核心冲突生成），否则走原流程。"""
     return "confirm_brainstorm_core_theme" if state.from_brainstorm else "prepare_core_theme"

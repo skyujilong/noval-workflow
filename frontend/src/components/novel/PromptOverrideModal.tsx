@@ -35,6 +35,7 @@ const FIELDS: { key: string; label: string; long: boolean }[] = [
   { key: "evolved_directives", label: "历史整改要点（自进化累积）", long: true },
   { key: "core_theme_focus", label: "核心主题·题材聚焦", long: false },
   { key: "world_building_focus", label: "世界观·题材聚焦", long: false },
+  { key: "power_system_focus", label: "力量体系·题材聚焦", long: false },
   { key: "core_conflicts_focus", label: "核心冲突·题材聚焦", long: false },
   { key: "character_profiles_focus", label: "角色档案·题材聚焦", long: false },
   { key: "overall_outline_focus", label: "总大纲·题材聚焦", long: false },

@@ -29,6 +29,7 @@ class _ContextState(Protocol):
     # Phase 1 — foundation results
     core_theme: str
     world_building: str
+    power_system: str
     core_conflicts: str
     overall_outline: str
     character_profiles: str
@@ -124,6 +125,8 @@ def build_foundation_context(
         parts.append(f"\n【核心主题与立意】\n{state.core_theme}")
     if state.world_building:
         parts.append(f"\n【世界观设定】\n{state.world_building}")
+    if state.power_system:
+        parts.append(f"\n【力量体系】\n{state.power_system}")
     if state.core_conflicts:
         parts.append(f"\n【核心冲突】\n{state.core_conflicts}")
     if state.overall_outline:

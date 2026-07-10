@@ -19,6 +19,7 @@ from noval_workflow.prompts import (
     FORESHADOWING_REVIEW_PROMPT,
     OVERALL_OUTLINE_REVIEW_PROMPT,
     PHASE_SUMMARY_REVIEW_PROMPT,
+    POWER_SYSTEM_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
     evolved_directives_block,
@@ -36,6 +37,7 @@ _EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline"}
 _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "core_theme": 5,
     "world_building": 5,
+    "power_system": 5,
     "core_conflicts": 5,
     "overall_outline": 5,
     "character_profiles": 5,
@@ -52,6 +54,7 @@ _HISTORY_MAX_ROUNDS_DEFAULT = 5
 _REVIEW_PROMPTS = {
     "core_theme": CORE_THEME_REVIEW_PROMPT,
     "world_building": WORLD_BUILDING_REVIEW_PROMPT,
+    "power_system": POWER_SYSTEM_REVIEW_PROMPT,
     "core_conflicts": CORE_CONFLICTS_REVIEW_PROMPT,
     "overall_outline": OVERALL_OUTLINE_REVIEW_PROMPT,
     "character_profiles": CHARACTER_PROFILES_REVIEW_PROMPT,

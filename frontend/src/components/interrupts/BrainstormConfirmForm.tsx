@@ -1,4 +1,4 @@
-// 脑爆产物轻量确认（core_theme / world_building）：展示脑爆生成的内容，
+// 脑爆产物轻量确认（core_theme / world_building / power_system / core_conflicts）：展示脑爆生成的内容，
 // 用户可直接编辑后确认。不会触发重新生成、不冲洗。
 // resume 值：编辑后的终稿文本（与原文相同即等于「直接确认」）。
 

@@ -24,13 +24,16 @@ from noval_workflow.nodes.foundation import (
     prepare_core_theme,
     prepare_initial_status,
     prepare_overall_outline,
+    prepare_power_system,
     prepare_world_building,
+    route_after_world_building,
     save_character_profiles,
     save_config,
     save_core_conflicts,
     save_core_theme,
     save_initial_status,
     save_overall_outline,
+    save_power_system,
     save_world_building,
 )
 from noval_workflow.nodes.brainstorm import (
@@ -40,9 +43,11 @@ from noval_workflow.nodes.brainstorm import (
     brainstorm_respond,
     confirm_brainstorm_core_theme,
     confirm_brainstorm_world_building,
+    confirm_brainstorm_power_system,
     confirm_brainstorm_core_conflicts,
     route_after_chat,
     route_after_collect,
+    route_after_confirm_world_building,
     route_after_gate,
 )
 from noval_workflow.nodes.consistency import (
@@ -68,6 +73,7 @@ builder.add_node("brainstorm_respond", brainstorm_respond)
 builder.add_node("brainstorm_extract", brainstorm_extract)
 builder.add_node("confirm_brainstorm_core_theme", confirm_brainstorm_core_theme)
 builder.add_node("confirm_brainstorm_world_building", confirm_brainstorm_world_building)
+builder.add_node("confirm_brainstorm_power_system", confirm_brainstorm_power_system)
 builder.add_node("confirm_brainstorm_core_conflicts", confirm_brainstorm_core_conflicts)
 
 # Phase 0
@@ -76,6 +82,7 @@ builder.add_node("collect_user_inputs", collect_user_inputs)
 # Phase 1 — prepare nodes
 builder.add_node("prepare_core_theme", prepare_core_theme)
 builder.add_node("prepare_world_building", prepare_world_building)
+builder.add_node("prepare_power_system", prepare_power_system)
 builder.add_node("prepare_core_conflicts", prepare_core_conflicts)
 builder.add_node("prepare_overall_outline", prepare_overall_outline)
 builder.add_node("prepare_character_profiles", prepare_character_profiles)
@@ -84,6 +91,7 @@ builder.add_node("prepare_initial_status", prepare_initial_status)
 # Phase 1 — review subgraphs (same compiled subgraph, different node names)
 builder.add_node("review_core_theme", review_subgraph)
 builder.add_node("review_world_building", review_subgraph)
+builder.add_node("review_power_system", review_subgraph)
 builder.add_node("review_core_conflicts", review_subgraph)
 builder.add_node("review_overall_outline", review_subgraph)
 builder.add_node("review_character_profiles", review_subgraph)
@@ -92,6 +100,7 @@ builder.add_node("review_initial_status", review_subgraph)
 # Phase 1 — save nodes
 builder.add_node("save_core_theme", save_core_theme)
 builder.add_node("save_world_building", save_world_building)
+builder.add_node("save_power_system", save_power_system)
 builder.add_node("save_core_conflicts", save_core_conflicts)
 builder.add_node("save_overall_outline", save_overall_outline)
 builder.add_node("save_character_profiles", save_character_profiles)
@@ -151,10 +160,19 @@ builder.add_conditional_edges(
         "prepare_core_theme": "prepare_core_theme",
     },
 )
-# 轻量确认链（主题→世界观→核心冲突）→ 汇合到「核心冲突后边的环节」prepare_overall_outline
-# （脑爆已产出 core_theme/world_building/core_conflicts，整段跳过对应的 prepare/review/save）
+# 轻量确认链（主题→世界观→[力量体系]→核心冲突）→ 汇合到 prepare_overall_outline
+# （脑爆已产出对应字段，整段跳过对应的 prepare/review/save）。力量体系确认按题材条件插入：
+# 现实向题材（has_power_system=False）在世界观确认后直连核心冲突确认。
 builder.add_edge("confirm_brainstorm_core_theme", "confirm_brainstorm_world_building")
-builder.add_edge("confirm_brainstorm_world_building", "confirm_brainstorm_core_conflicts")
+builder.add_conditional_edges(
+    "confirm_brainstorm_world_building",
+    route_after_confirm_world_building,
+    {
+        "confirm_brainstorm_power_system": "confirm_brainstorm_power_system",
+        "confirm_brainstorm_core_conflicts": "confirm_brainstorm_core_conflicts",
+    },
+)
+builder.add_edge("confirm_brainstorm_power_system", "confirm_brainstorm_core_conflicts")
 builder.add_edge("confirm_brainstorm_core_conflicts", "prepare_overall_outline")
 
 # Phase 1 chain
@@ -164,7 +182,19 @@ builder.add_edge("save_core_theme", "prepare_world_building")
 
 builder.add_edge("prepare_world_building", "review_world_building")
 builder.add_edge("review_world_building", "save_world_building")
-builder.add_edge("save_world_building", "prepare_core_conflicts")
+# 力量体系：依赖世界观、喂给核心冲突/大纲/人物，故插在世界观之后、核心冲突之前。
+# 按题材条件插入：现实向题材（has_power_system=False）在世界观定稿后直连核心冲突，整步跳过。
+builder.add_conditional_edges(
+    "save_world_building",
+    route_after_world_building,
+    {
+        "prepare_power_system": "prepare_power_system",
+        "prepare_core_conflicts": "prepare_core_conflicts",
+    },
+)
+builder.add_edge("prepare_power_system", "review_power_system")
+builder.add_edge("review_power_system", "save_power_system")
+builder.add_edge("save_power_system", "prepare_core_conflicts")
 
 builder.add_edge("prepare_core_conflicts", "review_core_conflicts")
 builder.add_edge("review_core_conflicts", "save_core_conflicts")

@@ -44,6 +44,7 @@ export interface NovelState {
   // Phase 1：基础设定
   core_theme: string;
   world_building: string;
+  power_system: string;
   core_conflicts: string;
   overall_outline: string;
   character_profiles: string;
@@ -92,6 +93,7 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   llm_review_count: 0,
   core_theme: "",
   world_building: "",
+  power_system: "",
   core_conflicts: "",
   overall_outline: "",
   character_profiles: "",
@@ -113,6 +115,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   foundation: "基础设定",
   core_theme: "核心主题",
   world_building: "世界观",
+  power_system: "力量体系",
   core_conflicts: "核心冲突",
   overall_outline: "整体大纲",
   character_profiles: "人物档案",
