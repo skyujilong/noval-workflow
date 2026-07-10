@@ -126,9 +126,9 @@ class GenreFlavor:
     实际运行时决策统一读 state 字段。默认 True（有超凡力量 / 等级 / 流派的题材：玄幻 / 科幻 / 末日等）；
     现实向题材（都市 / 两性情感 / 通用）置 False。
 
-    脑爆路径由 brainstorm_extract 按抽出的 genre 查此字段填入 state.has_power_system，
+    脑爆路径由 brainstorm_finalize 按抽出的 genre 查此字段填入 state.has_power_system，
     用户可在 brainstorm_extract_review 抽屉里 checkbox 覆盖；直接填表路径由 collect_user_inputs
-    按 genre 查此字段兜底写入 state。三个消费点（route_after_world_building / brainstorm_extract
+    按 genre 查此字段兜底写入 state。三个消费点（route_after_world_building / brainstorm_finalize
     抽后剔除 / brainstorm_extract_review payload）都读 state.has_power_system，本字段不再是运行时开关。"""
 
     # ── 可选：各创作步骤的题材聚焦补充（默认空串）──────────────────────────

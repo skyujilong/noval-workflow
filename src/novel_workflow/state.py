@@ -45,6 +45,11 @@ class NovelState:
     # 只在 brainstorm_extract_review 节点内写；供 route_after_extract_review 决定去 collect_user_inputs 还是回 brainstorm_chat。
     brainstorm_review_advance: bool = False
     from_brainstorm: bool = False   # 入口分叉标志：True=经脑爆而来。破除 collect 跳过短路 + collect 后路由。全程不重置。
+    # 脑爆结束轮 AI 自然语言收尾原文。brainstorm_finalize 节点写入 → brainstorm_extract_review
+    # payload 透传给前端 review 面板顶部展示；用户看到的收尾话与聊天里 AI 的最后一段流式内容一致。
+    # 覆盖语义，无 reducer；back_to_chat 再次结束脑爆时被新一轮覆盖，节点入口会顺便剥掉 brainstorm_history
+    # 里遗留的旧收尾话避免堆叠（见 brainstorm_finalize 注释）。
+    finalize_summary: str = ""
 
     # ── Phase 0：用户输入 ────────────────────────────────────────────────────────
     novel_name: str = ""            # 小说名称
@@ -57,8 +62,8 @@ class NovelState:
 
     # 作品是否包含独立【力量体系】——从题材默认建议（GenreFlavor.has_power_system）初始化，
     # 脑爆 review 抽屉里用户可覆盖。三个消费点统一读它（route_after_world_building /
-    # brainstorm_extract 抽后剔除 / brainstorm_extract_review payload），题材属性降级为默认值来源。
-    # 直接填表路径由 collect_user_inputs 按题材默认写入；脑爆路径由 brainstorm_extract 初始化 → review 抽屉可覆盖。
+    # brainstorm_finalize 抽后剔除 / brainstorm_extract_review payload），题材属性降级为默认值来源。
+    # 直接填表路径由 collect_user_inputs 按题材默认写入；脑爆路径由 brainstorm_finalize 初始化 → review 抽屉可覆盖。
     has_power_system: bool = False
 
     # ── 子图桥接字段（字段名与 ReviewSubState 完全一致，供 LangGraph 自动映射）────

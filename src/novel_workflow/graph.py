@@ -38,8 +38,8 @@ from noval_workflow.nodes.foundation import (
 )
 from noval_workflow.nodes.brainstorm import (
     brainstorm_chat,
-    brainstorm_extract,
     brainstorm_extract_review,
+    brainstorm_finalize,
     brainstorm_gate,
     brainstorm_respond,
     route_after_chat,
@@ -67,7 +67,7 @@ builder = StateGraph(NovelState)
 builder.add_node("brainstorm_gate", brainstorm_gate)
 builder.add_node("brainstorm_chat", brainstorm_chat)
 builder.add_node("brainstorm_respond", brainstorm_respond)
-builder.add_node("brainstorm_extract", brainstorm_extract)
+builder.add_node("brainstorm_finalize", brainstorm_finalize)
 # 脑爆产物整合 review：一次性 review + 编辑 4 字段，取代原 4 个逐项 confirm。
 builder.add_node("brainstorm_extract_review", brainstorm_extract_review)
 
@@ -141,11 +141,12 @@ builder.add_conditional_edges(
 builder.add_conditional_edges(
     "brainstorm_chat",
     route_after_chat,
-    {"brainstorm_respond": "brainstorm_respond", "brainstorm_extract": "brainstorm_extract"},
+    {"brainstorm_respond": "brainstorm_respond", "brainstorm_finalize": "brainstorm_finalize"},
 )
 builder.add_edge("brainstorm_respond", "brainstorm_chat")
-# 抽取产物 → 一次性 review interrupt → 分支到 collect（推进）或回 chat（继续脑爆）
-builder.add_edge("brainstorm_extract", "brainstorm_extract_review")
+# 结束轮 finalize 节点（可视自然语言收尾 + nostream JSON 抽取合并）→ 一次性 review interrupt
+# → 分支到 collect（推进）或回 chat（继续脑爆）
+builder.add_edge("brainstorm_finalize", "brainstorm_extract_review")
 builder.add_conditional_edges(
     "brainstorm_extract_review",
     route_after_extract_review,

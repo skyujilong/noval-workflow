@@ -10,6 +10,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from "react";
 import { GraphView } from "./graph/GraphView";
@@ -118,32 +119,37 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const [editorOpen, setEditorOpen] = useState(false);
     // 提示词进化抽屉开关（把人工打回意见提炼进本书提示词 / 整改库复用）
     const [evolveOpen, setEvolveOpen] = useState(false);
+    // back_to_chat 转换桥接：用户点击「返回脑爆」后，在 setRunning(false) 与
+    // setInterrupt(BRAINSTORM_CHAT) 之间的渲染间隙保持 inBrainstorm=true，避免闪烁旧抽屉。
+    const transitioningToChatRef = useRef(false);
 
-    // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond）
+    // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond / brainstorm_finalize）
     // 两态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
     const interruptType =
       interrupt && typeof interrupt.payload === "object" && interrupt.payload
         ? (interrupt.payload as { type?: string }).type
         : undefined;
-    // 仅聊天循环（chat/respond/extract/extract_review）命中连续视图；gate 与 extract_review interrupt 走抽屉表单。
+    // 仅聊天循环（chat/respond/finalize/extract_review）命中连续视图；gate 与 extract_review interrupt 走抽屉表单。
     // 注意：extract_review interrupt 到来时 interruptType 会切到 BRAINSTORM_EXTRACT_REVIEW（不匹配这里的
     // BRAINSTORM_CHAT），右侧会自动切到 InterruptHandler 承载抽屉；running 期覆盖只是为了避免
-    // brainstorm_extract → brainstorm_extract_review 中间那一拍 UI 从聊天视图闪到 loading。
+    // brainstorm_finalize → brainstorm_extract_review 中间那一拍 UI 从聊天视图闪到 loading。
     const inBrainstorm =
       interruptType === InterruptType.BRAINSTORM_CHAT ||
+      transitioningToChatRef.current ||
       (running &&
         (currentNode === "brainstorm_chat" ||
           currentNode === "brainstorm_respond" ||
-          currentNode === "brainstorm_extract" ||
+          currentNode === "brainstorm_finalize" ||
           currentNode === "brainstorm_extract_review" ||
-          streamingNode === "brainstorm_respond"));
+          streamingNode === "brainstorm_respond" ||
+          streamingNode === "brainstorm_finalize"));
 
-    // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且非 extract 节点即显示。
+    // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且流式节点属于 chat 视图允许展示的白名单（respond / finalize）。
     //
-    // 不强绑 streamingNode === "brainstorm_respond" 精确匹配——回复期间 streamingNode 常被
-    // 上一拍 brainstorm_chat 的 updates 事件占着，精确匹配会一直 false，导致 token 在
-    // streamingContent 里累积却从不渲染（最终只在 refresh 后以历史气泡整段出现）。
-    // 用 streamingNode 显式排除 extract（其产出是 JSON，不该进聊天气泡）。
+    // 旧实现用黑名单 `streamingNode !== "brainstorm_extract"`——那时 extract 节点跑一次隐藏 LLM，
+    // chunks 需要被过滤掉。新实现里 finalize 节点的自然语言收尾 chunks 是**要展示**的（用户在 chat
+    // 气泡里看到 AI 说"好，我来收尾……"的完整过程），而 finalize 内的 JSON 抽取步已用 tags=["nostream"]
+    // 从后端源头屏蔽，前端根本收不到——故改成正向白名单：respond（多轮对话中间的正常回复）+ finalize（结束轮收尾）。
     //
     // ⚠️ 刻意**不**加 !streamingFinalized 闸门（曾试过，会引入空白 bug）：
     // brainstorm_respond 节点内 LLM 流完（finalized=true）后，若历史超过 _KEEP_MESSAGES，
@@ -156,7 +162,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const brainstormStreaming =
       running &&
       streamingContent.length > 0 &&
-      streamingNode !== "brainstorm_extract";
+      (streamingNode === "brainstorm_respond" || streamingNode === "brainstorm_finalize");
 
     // 所有「会 resume 本 thread」的输入（中断表单的确认通过 / 脑爆发送）统一的禁用闸：
     // 本地 running 之外，再叠加 summary 轮询的 busy（同 thread_id 后端正忙）。本地 running 只
@@ -208,6 +214,13 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       continueRun,
       onAutoContinueConsumed,
     ]);
+
+    // back_to_chat 转换结束：interruptType 离开 EXTRACT_REVIEW（切到 BRAINSTORM_CHAT 成功）或出错时清除桥接标记
+    useEffect(() => {
+      if (interruptType !== InterruptType.BRAINSTORM_EXTRACT_REVIEW || error) {
+        transitioningToChatRef.current = false;
+      }
+    }, [interruptType, error]);
 
     // collect_user_inputs 完成后，把 novel_name 回填到 thread metadata
     useEffect(() => {
@@ -287,7 +300,17 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               )}
               <InterruptHandler
                 payload={interrupt.payload}
-                onSubmit={(value) => void resume(value)}
+                onSubmit={(value) => {
+                  if (
+                    typeof value === "object" &&
+                    value !== null &&
+                    "action" in value &&
+                    (value as { action: string }).action === "back_to_chat"
+                  ) {
+                    transitioningToChatRef.current = true;
+                  }
+                  void resume(value);
+                }}
                 disabled={inputDisabled}
                 novelState={state}
               />

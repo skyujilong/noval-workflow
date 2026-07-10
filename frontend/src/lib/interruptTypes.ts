@@ -99,10 +99,13 @@ export interface BrainstormConfirmPayload {
  * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段。
  * has_power_system 反映 state 里的作品级决策（初始由题材默认建议，用户可在抽屉里覆盖），
  * 前端据此决定 checkbox 初始状态与力量体系编辑区显隐。
+ * finalize_summary 是结束脑爆时 AI 自然语言收尾原文（chat 气泡里那段流式内容的同一份），
+ * 面板顶部只读展示——旧 thread 缺失时前端隐藏该展示区，向后兼容。
  */
 export interface BrainstormExtractReviewPayload {
   type: InterruptTypeValue;
   message: string;
+  finalize_summary?: string;
   core_theme: string;
   world_building: string;
   power_system: string;

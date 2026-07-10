@@ -27,7 +27,6 @@ from langgraph.types import interrupt
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import invoke_json
 from noval_workflow.llm import get_llm
-from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -115,6 +114,24 @@ JSON 字段：
 ```
 
 【脑爆对话内容】
+{material}"""
+
+# ── 结束脑爆·自然语言收尾 prompt ────────────────────────────────────────────
+# 第一步 finalize：让 AI 用一段自然语言给脑爆做收尾，chunks 天然经 messages-tuple 流到
+# 前端 chat 气泡（与 brainstorm_respond 同一渲染通道）——用户在结束脑爆前看到的最后一段
+# AI 说话就是这段；随后 brainstorm_extract_review payload 里的 finalize_summary 是同一段
+# 原文，review 面板顶部展示，与 chat 气泡视觉一致。
+_FINALIZE_SYSTEM_PROMPT = "你是资深小说策划，正在为用户完成一轮灵感脑爆的收尾。"
+
+_FINALIZE_PROMPT = """以下是你与用户刚刚进行的灵感脑爆对话（含早期概要与近期对话）。
+用户已表示要结束脑爆。请用**一段自然、亲切的中文短文**（约 200-350 字）做一次收尾：
+1. 先用一句话肯定用户和你共同敲定的方向；
+2. 依次点出这部小说已经成型的：核心主题、世界观舞台{power_line}、核心冲突；
+3. 结尾一句：邀请用户到下一步的「产物 review」面板逐项过一遍、可直接编辑。
+
+严禁输出 JSON、编号列表、Markdown 表格；就是一段可读的收尾话。
+
+【脑爆对话】
 {material}"""
 
 
@@ -219,7 +236,7 @@ def brainstorm_chat(state: NovelState) -> dict:
 
 
 def route_after_chat(state: NovelState) -> str:
-    return "brainstorm_extract" if state.brainstorm_done else "brainstorm_respond"
+    return "brainstorm_finalize" if state.brainstorm_done else "brainstorm_respond"
 
 
 def brainstorm_respond(state: NovelState) -> dict:
@@ -252,48 +269,129 @@ def brainstorm_respond(state: NovelState) -> dict:
     return {"brainstorm_history": new_history, "brainstorm_summary": new_summary}
 
 
-def brainstorm_extract(state: NovelState) -> dict:
-    """脑爆结束：从对话抽取结构化产物（7 基础字段 + core_theme + world_building + power_system + core_conflicts）写入 state。
+def _finalize_material(state: NovelState, history: list[dict]) -> str:
+    """把「早期概要 + 传入的对话历史」拼成 finalize / extract 两步共用的对话材料。
 
-    JSON 解析失败兜底返回空——7 字段空则 collect 表单让用户手填，core_theme/world_building/
-    power_system/core_conflicts 空则后续轻量确认步可手输；绝不阻断流程。
-
-    has_power_system 由聊天页 switch 在脑爆过程中实时写回 state，本节点**只读不写**——
-    读 state.has_power_system 决定是否保留抽出的 power_system 字段。
+    history 独立传入而非直接读 state.brainstorm_history——finalize 节点入口会先剥掉遗留的 AI 收尾话，
+    剥完后的 history 才是要送 LLM 看的版本；直接读 state 会把旧收尾话也算进对话材料。
     """
-    material = "\n".join([
+    return "\n".join([
         f"【早期对话概要】\n{state.brainstorm_summary}" if state.brainstorm_summary else "",
-        _entries_to_text(state.brainstorm_history),
+        _entries_to_text(history),
     ]).strip()
+
+
+def brainstorm_finalize(state: NovelState) -> dict:
+    """脑爆结束轮：两步 LLM 一站式完成「AI 自然语言收尾（可视流式）+ 结构化字段抽取（nostream）」。
+
+    取代旧 brainstorm_extract 的「隐藏抽取 JSON」范式——旧节点跑一次 LLM 只用于抽 JSON，
+    chunks 经 messages-tuple 流到前端但被 NovelWorkspace 门控隐藏，用户体感为「点结束脑爆
+    → chat 空转几秒 → 突然弹 review」，且 review 面板内容与 chat 里最后一段 AI 说的话没有
+    直观关联。本节点合并为两步：
+
+    - 第一步 finalize（可视流式）：拿 chat 历史让 AI 用一段自然语言收尾，chunks 天然经
+      messages-tuple 广播（不打 nostream tag），前端 NovelWorkspace 白名单里 brainstorm_finalize
+      → chat 气泡实时打字机，这段原文就是 finalize_summary，写入 state + 追加到 brainstorm_history
+      末尾（让 back_to_chat 回聊天时历史连续）。
+    - 第二步 extract（nostream 屏蔽）：沿用原 EXTRACT prompt + invoke_json 抽 4 个正式字段，
+      材料里追加 finalize_summary 让抽取与收尾话保持一致。绑 tags=["nostream"] 从源头屏蔽 chunks
+      广播；invoke_json 无 config 参数，只能在 runnable 层 bind（.bind(tags=...)）——
+      ChatOpenAI 是 RunnableSerializable，tag 会随 invoke_json 内部的 .invoke 与回喂重试一起继承。
+
+    两步失败降级独立：finalize 失败 → finalize_summary="" + 不改 history；extract 失败 → 4 字段
+    留空由用户在 review 面板手填。互不阻断，绝不因一步失败卡住整条脑爆链。
+
+    历史清洗：若 state.finalize_summary 非空且 brainstorm_history 末条 AI 与之相等 → 剥掉。
+    治理 back_to_chat 后立刻再结束脑爆时 AI 收尾话堆两条的问题；若中间又有 respond 回复过，
+    末条不再是旧收尾话 → 不剥，正确。
+
+    has_power_system 由聊天页 switch 决定并写回 state，本节点只读不写——第一步 prompt 拼装
+    是否提力量体系，第二步抽后按此 flag 剔除 power_system 字段（与旧 brainstorm_extract 一致）。
+    """
+    # ── 历史清洗（治理堆叠）──
+    history = state.brainstorm_history
+    if (
+        state.finalize_summary
+        and history
+        and history[-1].get("role") == "ai"
+        and history[-1].get("content") == state.finalize_summary
+    ):
+        history = history[:-1]
+
+    material = _finalize_material(state, history)
+
+    # ── 第一步：自然语言收尾（可视流式）──
     try:
-        # 抽取是「结束脑爆」后的一次性重格式化（对话里已有内容），不需深度思考；关闭避免
-        # 切到表单前再空等一截。质量由后续表单 + 轻量确认步强制复核兜底。
-        llm = get_llm(temperature=0.4, label="brainstorm_extract", thinking="disabled")
-        # invoke_json：先修复脏 JSON，失败则回喂报错重试一次；仍失败抛错 → 下方兜底捕获。
+        finalize_llm = get_llm(
+            temperature=0.6,
+            label="brainstorm_finalize",
+            thinking="disabled",  # 结束脑爆是交互式收尾，不能让用户先空等十几秒 reasoning
+        )
+        # 力量体系开关关闭时，收尾话里显式不提"力量体系"这项，与 _POWER_SYSTEM_OFF_RULE 一致
+        power_line = "、力量体系" if state.has_power_system else ""
+        finalize_msg = finalize_llm.invoke([
+            SystemMessage(content=_FINALIZE_SYSTEM_PROMPT),
+            HumanMessage(content=_FINALIZE_PROMPT.format(power_line=power_line, material=material)),
+        ])
+        finalize_summary = _content_to_str(finalize_msg.content).strip()
+        # 收尾话追加到聊天历史末尾——back_to_chat 回聊天时 BrainstormChat 从 payload
+        # 拿到的 history 里就有这条 AI 消息，跟真实 chat 气泡一一对应。
+        new_history = history + [{"role": "ai", "content": finalize_summary}] if finalize_summary else history
+    except Exception as e:  # noqa: BLE001 — finalize 失败不阻断 extract
+        _logger.error("脑爆收尾自然语言生成失败：%s", e)
+        finalize_summary = ""
+        new_history = history
+
+    # ── 第二步：JSON 抽取（nostream 屏蔽 chunks）──
+    material_for_extract = material
+    if finalize_summary:
+        material_for_extract += f"\n\n【AI 刚生成的收尾总结（结构化字段需与其保持一致）】\n{finalize_summary}"
+    try:
+        extract_llm = get_llm(temperature=0.4, label="brainstorm_extract", thinking="disabled")
+        # invoke_json 未暴露 config 参数（不能像 _compress 那样直接 config={"tags":["nostream"]}），
+        # 只能在 runnable 层 bind——ChatOpenAI.bind(tags=...) 是 LangChain 官方约定，tag 会随
+        # invoke_json 内部 .invoke() 与回喂重试一起继承。
+        extract_llm_nostream = extract_llm.bind(tags=["nostream"])
         data = invoke_json(
-            llm,
+            extract_llm_nostream,
             [
                 SystemMessage(content=_EXTRACT_SYSTEM_PROMPT),
-                HumanMessage(content=_EXTRACT_PROMPT.format(material=material)),
+                HumanMessage(content=_EXTRACT_PROMPT.format(material=material_for_extract)),
             ],
             kind=dict,
             label="brainstorm_extract",
         )
-    except Exception as e:  # noqa: BLE001 — 抽取失败兜底，表单/确认步手填
+    except Exception as e:  # noqa: BLE001 — 抽取失败兜底空 dict，4 字段留空由 review 面板手填
         _logger.error("脑爆产物抽取失败：%s", e)
         data = {}
 
-    out: dict = {}
+    out: dict = {
+        "finalize_summary": finalize_summary,
+        "brainstorm_history": new_history,
+    }
     for field_name in (*_BASIC_FIELDS, "core_theme", "world_building", "power_system", "core_conflicts"):
         val = data.get(field_name)
         if isinstance(val, str) and val.strip():
             out[field_name] = val.strip()
 
-    # 用户在聊天页 switch 决定的 has_power_system 才是权威（已写回 state）。开关关闭时即便对话
-    # 里聊过力量体系、LLM 抽出了内容也丢弃——尊重用户"本作不单列力量体系"的显式决定。
+    # 聊天页 switch 决定的 has_power_system 才是权威。开关关闭时即便抽出了 power_system 也丢弃——
+    # 尊重用户"本作不单列力量体系"的显式决定，与旧 brainstorm_extract 一致。
     if out.get("power_system") and not state.has_power_system:
         out.pop("power_system", None)
     return out
+
+
+def _content_to_str(content: object) -> str:
+    """把 LLM 返回内容归一为纯文本（兼容 str 与内容块列表）。与 json_utils._content_to_text 同套路。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        ]
+        return "".join(parts)
+    return str(content)
 
 
 def _make_confirm(field: str, label: str, itype: InterruptType) -> Callable[[NovelState], dict]:
@@ -343,6 +441,9 @@ def brainstorm_extract_review(state: NovelState) -> dict:
     answer = interrupt({
         "type": InterruptType.BRAINSTORM_EXTRACT_REVIEW.value,
         "message": "请审阅并按需修改脑爆生成的正式设定；保存并推进将跳过逐项确认，直接进入基础参数填写。",
+        # 结束脑爆 finalize 步生成的自然语言收尾原文，透传给前端 review 面板顶部展示——
+        # 与 chat 里 AI 最后一段流式内容一致（同一 LLM 调用的产物），让 review 和 chat 有直观关联。
+        "finalize_summary": state.finalize_summary,
         "core_theme": state.core_theme,
         "world_building": state.world_building,
         "power_system": state.power_system,

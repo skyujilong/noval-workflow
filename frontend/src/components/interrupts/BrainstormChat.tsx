@@ -1,7 +1,7 @@
 // 灵感脑爆连续聊天视图。
-// 同时服务两种运行态：等待用户输入（brainstorm_chat interrupt）与 AI 流式回复（brainstorm_respond）。
-// 由 NovelWorkspace 在 interrupt↔running 间持续挂载（不加变化的 key），故本组件的本地态
-// （输入框、滚动位置、乐观气泡）跨态保留，聊天体验连续。
+// 同时服务三种运行态：等待用户输入（brainstorm_chat interrupt）、AI 多轮回复流式（brainstorm_respond）、
+// 结束脑爆的自然语言收尾流式（brainstorm_finalize）。由 NovelWorkspace 在 interrupt↔running 间
+// 持续挂载（不加变化的 key），故本组件的本地态（输入框、滚动位置、乐观气泡）跨态保留，聊天体验连续。
 //
 // 乐观渲染：用户发出消息后，running 期间后端 state.brainstorm_history 尚未刷新回来，
 // 用本地 pendingUserMsg 先把这条消息渲染出来；当 history 回填包含它后自动隐藏（派生判断，
@@ -9,7 +9,7 @@
 //
 // 底部「本作包含独立力量体系」开关：作品级决策承载点。切换时先 optimistic 更新本地态，再 await
 // 父层写回 state（updateThreadState + refreshValues，不清 interrupt）；失败则回滚。开关同时
-// 影响 AI 引导风格（system prompt 硬规则）与 brainstorm_extract 抽取时是否保留力量体系正文。
+// 影响 AI 引导风格（system prompt 硬规则）与 brainstorm_finalize 抽取时是否保留力量体系正文。
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
