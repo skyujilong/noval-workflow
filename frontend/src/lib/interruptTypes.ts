@@ -9,6 +9,9 @@ export const InterruptType = {
   // Phase -1：灵感脑爆（可选，入口分叉）
   BRAINSTORM_GATE: "brainstorm_gate",
   BRAINSTORM_CHAT: "brainstorm_chat",
+  // 脑爆结束后的整合 review：一次性 review + 编辑 4 个正式设定字段，取代下面 4 个逐项 confirm
+  BRAINSTORM_EXTRACT_REVIEW: "brainstorm_extract_review",
+  // 以下 4 个 confirm 已被 BRAINSTORM_EXTRACT_REVIEW 合并接管；类型与组件保留供快速回滚
   BRAINSTORM_CORE_THEME_CONFIRM: "brainstorm_core_theme_confirm",
   BRAINSTORM_WORLD_BUILDING_CONFIRM: "brainstorm_world_building_confirm",
   BRAINSTORM_POWER_SYSTEM_CONFIRM: "brainstorm_power_system_confirm",
@@ -87,6 +90,21 @@ export interface BrainstormConfirmPayload {
   message: string;
   field: string;
   content: string;
+}
+
+/**
+ * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段。
+ * has_power_system 由后端 flavor 判定，前端据此决定是否渲染 power_system 编辑区，
+ * 不依赖内容是否为空（避免"内容空 == 现实向题材"的错误推断）。
+ */
+export interface BrainstormExtractReviewPayload {
+  type: InterruptTypeValue;
+  message: string;
+  core_theme: string;
+  world_building: string;
+  power_system: string;
+  core_conflicts: string;
+  has_power_system: boolean;
 }
 export interface AskContinuePayload {
   type: InterruptTypeValue;
@@ -184,6 +202,7 @@ export type FormKind =
   | "brainstorm_gate"
   | "brainstorm_chat"
   | "brainstorm_confirm"
+  | "brainstorm_extract_review"
   | "user_inputs"
   | "human_review"
   | "ask_continue"
@@ -206,6 +225,7 @@ export type FormKind =
 const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.BRAINSTORM_GATE]: "brainstorm_gate",
   [InterruptType.BRAINSTORM_CHAT]: "brainstorm_chat",
+  [InterruptType.BRAINSTORM_EXTRACT_REVIEW]: "brainstorm_extract_review",
   [InterruptType.BRAINSTORM_CORE_THEME_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_POWER_SYSTEM_CONFIRM]: "brainstorm_confirm",
@@ -353,4 +373,45 @@ export function buildConsistencyApplyResume(
 /** 放弃修订：不改动任何设定，折返回闸门。 */
 export function buildConsistencyDiscardResume(): ConsistencyDiffDiscard {
   return { action: "discard" };
+}
+
+// ── 脑爆产物整合 review 的 resume 值（与后端 brainstorm_extract_review 节点对齐）─────
+/**
+ * 脑爆产物整合 review 的结构化 resume 值。
+ * - advance：用户 review 完成，携带编辑后 4 字段 → 后端覆写 state + 推进到 collect_user_inputs
+ *   （power_system 仅在 has_power_system=true 时携带；后端也会兜底剔除防漂移）
+ * - back_to_chat：用户想再和 AI 聊几轮 → 后端不写字段、复位 brainstorm_done → 回 brainstorm_chat
+ */
+export interface BrainstormReviewAdvance {
+  action: "advance";
+  core_theme: string;
+  world_building: string;
+  power_system?: string;
+  core_conflicts: string;
+}
+export interface BrainstormReviewBackToChat {
+  action: "back_to_chat";
+}
+export type BrainstormReviewResume = BrainstormReviewAdvance | BrainstormReviewBackToChat;
+
+/** 构造「保存并推进」resume 值。 */
+export function buildBrainstormReviewAdvanceResume(fields: {
+  core_theme: string;
+  world_building: string;
+  power_system?: string;
+  core_conflicts: string;
+}): BrainstormReviewAdvance {
+  const out: BrainstormReviewAdvance = {
+    action: "advance",
+    core_theme: fields.core_theme.trim(),
+    world_building: fields.world_building.trim(),
+    core_conflicts: fields.core_conflicts.trim(),
+  };
+  if (fields.power_system !== undefined) out.power_system = fields.power_system.trim();
+  return out;
+}
+
+/** 构造「返回脑爆继续修改」resume 值。 */
+export function buildBrainstormReviewBackResume(): BrainstormReviewBackToChat {
+  return { action: "back_to_chat" };
 }

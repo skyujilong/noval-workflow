@@ -6,6 +6,7 @@ import { formKindOfPayload } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
+import { BrainstormExtractReview } from "./BrainstormExtractReview";
 import { BrainstormGateForm } from "./BrainstormGateForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
@@ -52,6 +53,16 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Pr
         <BrainstormConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof BrainstormConfirmForm>[0]["payload"]}
+          onSubmit={(v) => onSubmit(v)}
+          disabled={disabled}
+        />
+      );
+
+    case "brainstorm_extract_review":
+      return (
+        <BrainstormExtractReview
+          key={formKey}
+          payload={payload as Parameters<typeof BrainstormExtractReview>[0]["payload"]}
           onSubmit={(v) => onSubmit(v)}
           disabled={disabled}
         />

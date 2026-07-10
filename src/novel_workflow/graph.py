@@ -39,15 +39,12 @@ from noval_workflow.nodes.foundation import (
 from noval_workflow.nodes.brainstorm import (
     brainstorm_chat,
     brainstorm_extract,
+    brainstorm_extract_review,
     brainstorm_gate,
     brainstorm_respond,
-    confirm_brainstorm_core_theme,
-    confirm_brainstorm_world_building,
-    confirm_brainstorm_power_system,
-    confirm_brainstorm_core_conflicts,
     route_after_chat,
     route_after_collect,
-    route_after_confirm_world_building,
+    route_after_extract_review,
     route_after_gate,
 )
 from noval_workflow.nodes.consistency import (
@@ -71,10 +68,8 @@ builder.add_node("brainstorm_gate", brainstorm_gate)
 builder.add_node("brainstorm_chat", brainstorm_chat)
 builder.add_node("brainstorm_respond", brainstorm_respond)
 builder.add_node("brainstorm_extract", brainstorm_extract)
-builder.add_node("confirm_brainstorm_core_theme", confirm_brainstorm_core_theme)
-builder.add_node("confirm_brainstorm_world_building", confirm_brainstorm_world_building)
-builder.add_node("confirm_brainstorm_power_system", confirm_brainstorm_power_system)
-builder.add_node("confirm_brainstorm_core_conflicts", confirm_brainstorm_core_conflicts)
+# 脑爆产物整合 review：一次性 review + 编辑 4 字段，取代原 4 个逐项 confirm。
+builder.add_node("brainstorm_extract_review", brainstorm_extract_review)
 
 # Phase 0
 builder.add_node("collect_user_inputs", collect_user_inputs)
@@ -149,31 +144,24 @@ builder.add_conditional_edges(
     {"brainstorm_respond": "brainstorm_respond", "brainstorm_extract": "brainstorm_extract"},
 )
 builder.add_edge("brainstorm_respond", "brainstorm_chat")
-builder.add_edge("brainstorm_extract", "collect_user_inputs")
+# 抽取产物 → 一次性 review interrupt → 分支到 collect（推进）或回 chat（继续脑爆）
+builder.add_edge("brainstorm_extract", "brainstorm_extract_review")
+builder.add_conditional_edges(
+    "brainstorm_extract_review",
+    route_after_extract_review,
+    {"collect_user_inputs": "collect_user_inputs", "brainstorm_chat": "brainstorm_chat"},
+)
 
-# collect 之后条件路由：脑爆来源走轻量确认（整段跳过 Phase 1 主题/世界观生成），否则走原流程
+# collect 之后条件路由：脑爆来源已在 review 抽屉里确认过 4 字段，直连 prepare_overall_outline
+# （整段跳过 Phase 1 主题/世界观/力量体系/核心冲突生成 + 原 4 个 confirm）；否则走原流程。
 builder.add_conditional_edges(
     "collect_user_inputs",
     route_after_collect,
     {
-        "confirm_brainstorm_core_theme": "confirm_brainstorm_core_theme",
+        "prepare_overall_outline": "prepare_overall_outline",
         "prepare_core_theme": "prepare_core_theme",
     },
 )
-# 轻量确认链（主题→世界观→[力量体系]→核心冲突）→ 汇合到 prepare_overall_outline
-# （脑爆已产出对应字段，整段跳过对应的 prepare/review/save）。力量体系确认按题材条件插入：
-# 现实向题材（has_power_system=False）在世界观确认后直连核心冲突确认。
-builder.add_edge("confirm_brainstorm_core_theme", "confirm_brainstorm_world_building")
-builder.add_conditional_edges(
-    "confirm_brainstorm_world_building",
-    route_after_confirm_world_building,
-    {
-        "confirm_brainstorm_power_system": "confirm_brainstorm_power_system",
-        "confirm_brainstorm_core_conflicts": "confirm_brainstorm_core_conflicts",
-    },
-)
-builder.add_edge("confirm_brainstorm_power_system", "confirm_brainstorm_core_conflicts")
-builder.add_edge("confirm_brainstorm_core_conflicts", "prepare_overall_outline")
 
 # Phase 1 chain
 builder.add_edge("prepare_core_theme", "review_core_theme")

@@ -17,10 +17,13 @@ class InterruptType(str, Enum):
     # ============================================================
     BRAINSTORM_GATE = "brainstorm_gate"  # 入口门：进脑爆 / 直接填表
     BRAINSTORM_CHAT = "brainstorm_chat"  # 多轮聊天等待用户消息
-    BRAINSTORM_CORE_THEME_CONFIRM = "brainstorm_core_theme_confirm"  # 核心主题轻量确认
-    BRAINSTORM_WORLD_BUILDING_CONFIRM = "brainstorm_world_building_confirm"  # 世界观轻量确认
-    BRAINSTORM_POWER_SYSTEM_CONFIRM = "brainstorm_power_system_confirm"  # 力量体系轻量确认
-    BRAINSTORM_CORE_CONFLICTS_CONFIRM = "brainstorm_core_conflicts_confirm"  # 核心冲突轻量确认
+    # 脑爆结束后的整合 review：一次性 review + 编辑 4 个正式设定字段，取代原 4 个逐项 confirm
+    BRAINSTORM_EXTRACT_REVIEW = "brainstorm_extract_review"
+    # 以下 4 个 confirm 已被 BRAINSTORM_EXTRACT_REVIEW 合并接管；节点函数与枚举保留，图上不再挂，以便回滚
+    BRAINSTORM_CORE_THEME_CONFIRM = "brainstorm_core_theme_confirm"  # 核心主题轻量确认（已合并到 EXTRACT_REVIEW）
+    BRAINSTORM_WORLD_BUILDING_CONFIRM = "brainstorm_world_building_confirm"  # 世界观轻量确认（已合并到 EXTRACT_REVIEW）
+    BRAINSTORM_POWER_SYSTEM_CONFIRM = "brainstorm_power_system_confirm"  # 力量体系轻量确认（已合并到 EXTRACT_REVIEW）
+    BRAINSTORM_CORE_CONFLICTS_CONFIRM = "brainstorm_core_conflicts_confirm"  # 核心冲突轻量确认（已合并到 EXTRACT_REVIEW）
 
     # ============================================================
     # 用户输入阶段（新建小说）

@@ -125,13 +125,17 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       interrupt && typeof interrupt.payload === "object" && interrupt.payload
         ? (interrupt.payload as { type?: string }).type
         : undefined;
-    // 仅聊天循环（chat/respond/extract）命中连续视图；gate 与 confirm 走普通表单，故排除。
+    // 仅聊天循环（chat/respond/extract/extract_review）命中连续视图；gate 与 extract_review interrupt 走抽屉表单。
+    // 注意：extract_review interrupt 到来时 interruptType 会切到 BRAINSTORM_EXTRACT_REVIEW（不匹配这里的
+    // BRAINSTORM_CHAT），右侧会自动切到 InterruptHandler 承载抽屉；running 期覆盖只是为了避免
+    // brainstorm_extract → brainstorm_extract_review 中间那一拍 UI 从聊天视图闪到 loading。
     const inBrainstorm =
       interruptType === InterruptType.BRAINSTORM_CHAT ||
       (running &&
         (currentNode === "brainstorm_chat" ||
           currentNode === "brainstorm_respond" ||
           currentNode === "brainstorm_extract" ||
+          currentNode === "brainstorm_extract_review" ||
           streamingNode === "brainstorm_respond"));
 
     // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且非 extract 节点即显示。

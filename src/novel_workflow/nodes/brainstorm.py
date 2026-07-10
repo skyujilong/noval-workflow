@@ -267,7 +267,10 @@ def brainstorm_extract(state: NovelState) -> dict:
 
 
 def _make_confirm(field: str, label: str, itype: InterruptType) -> Callable[[NovelState], dict]:
-    """轻量确认节点工厂：展示脑爆生成的内容，用户确认或编辑（不重新生成、不冲洗）。"""
+    """轻量确认节点工厂：展示脑爆生成的内容，用户确认或编辑（不重新生成、不冲洗）。
+
+    ⚠️ 已被 brainstorm_extract_review 合并接管，图上不再挂。保留定义仅便于快速回滚。
+    """
     def _confirm(state: NovelState) -> dict:
         edited = interrupt({
             "type": itype.value,
@@ -296,9 +299,65 @@ confirm_brainstorm_core_conflicts = _make_confirm(
 )
 
 
+def brainstorm_extract_review(state: NovelState) -> dict:
+    """脑爆产物整合 review：把 4 个正式设定字段一次性交给用户 review + 编辑，取代原 4 个逐项 confirm。
+
+    resume 值为 dict（前端 BrainstormExtractReview 提交）：
+      - {"action": "advance", ...4 字段} → 覆写字段 + 置 brainstorm_review_advance=True → 路由到 collect_user_inputs
+      - {"action": "back_to_chat"}       → 不写回字段，把 brainstorm_done 置回 False → 路由回 brainstorm_chat 继续聊天
+
+    payload 里显式携带 has_power_system 布尔标志，前端据此决定是否渲染力量体系编辑区，
+    避免"内容为空 == 现实向题材"的错误推断（沿用 brainstorm_extract 已有的题材判定）。
+    """
+    has_power_system = get_prompt_pack(state.genre, state.novel_name).flavor.has_power_system
+
+    answer = interrupt({
+        "type": InterruptType.BRAINSTORM_EXTRACT_REVIEW.value,
+        "message": "请审阅并按需修改脑爆生成的正式设定；保存并推进将跳过逐项确认，直接进入基础参数填写。",
+        "core_theme": state.core_theme,
+        "world_building": state.world_building,
+        "power_system": state.power_system,
+        "core_conflicts": state.core_conflicts,
+        "has_power_system": has_power_system,
+    })
+
+    # 契约：前端必发 dict。非 dict 视为契约故障，回炉聊天避免坑住图；不试图猜测意图。
+    if not isinstance(answer, dict):
+        _logger.error("brainstorm_extract_review 收到非 dict resume：%r，回炉聊天", answer)
+        return {"brainstorm_done": False, "brainstorm_review_advance": False}
+
+    action = answer.get("action")
+    if action == "back_to_chat":
+        # 不写回 4 字段（丢弃抽屉里未保存编辑），复位 brainstorm_done 让 route_after_chat 重新收用户消息
+        return {"brainstorm_done": False, "brainstorm_review_advance": False}
+
+    if action == "advance":
+        out: dict = {"brainstorm_review_advance": True}
+        for field_name in ("core_theme", "world_building", "power_system", "core_conflicts"):
+            val = answer.get(field_name)
+            if isinstance(val, str) and val.strip():
+                out[field_name] = val.strip()
+        # 现实向题材防御性剔除 power_system（与 brainstorm_extract 一致），前端已不渲染但仍防前端契约漂移
+        if not has_power_system:
+            out.pop("power_system", None)
+        return out
+
+    # action 未识别：契约故障，回炉聊天
+    _logger.error("brainstorm_extract_review 收到未知 action：%r，回炉聊天", action)
+    return {"brainstorm_done": False, "brainstorm_review_advance": False}
+
+
+def route_after_extract_review(state: NovelState) -> str:
+    """review 节点后分支：advance → 进 collect_user_inputs；back_to_chat → 回 brainstorm_chat。"""
+    return "collect_user_inputs" if state.brainstorm_review_advance else "brainstorm_chat"
+
+
 def route_after_confirm_world_building(state: NovelState) -> str:
     """脑爆确认链：世界观确认后，有力量体系的题材走力量体系确认，现实向题材（has_power_system=False）
-    跳过、直连核心冲突确认。与常规链 route_after_world_building 同一开关，双链行为一致。"""
+    跳过、直连核心冲突确认。与常规链 route_after_world_building 同一开关，双链行为一致。
+
+    ⚠️ 已被 brainstorm_extract_review 合并接管，图上不再挂。保留定义仅便于快速回滚。
+    """
     pack = get_prompt_pack(state.genre, state.novel_name)
     return (
         "confirm_brainstorm_power_system"
@@ -308,5 +367,6 @@ def route_after_confirm_world_building(state: NovelState) -> str:
 
 
 def route_after_collect(state: NovelState) -> str:
-    """collect_user_inputs 之后：脑爆来源走轻量确认（跳过 Phase 1 主题/世界观/力量体系/核心冲突生成），否则走原流程。"""
-    return "confirm_brainstorm_core_theme" if state.from_brainstorm else "prepare_core_theme"
+    """collect_user_inputs 之后：脑爆来源直连 prepare_overall_outline（4 字段已在 review 抽屉里由用户确认，
+    整段跳过 Phase 1 主题/世界观/力量体系/核心冲突生成 + 4 个 confirm）；否则走原流程。"""
+    return "prepare_overall_outline" if state.from_brainstorm else "prepare_core_theme"

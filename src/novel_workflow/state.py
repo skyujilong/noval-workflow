@@ -41,6 +41,9 @@ class NovelState:
     # 覆盖语义（节点每次返回完整新 list）——切勿加 operator.add，否则压缩无法移除旧条目。
     brainstorm_summary: str = ""    # 早期对话轮次的 LLM 压缩概要（滑出保留窗口的部分并入此处）
     brainstorm_done: bool = False   # 用户已结束脑爆（brainstorm_chat 路由用）
+    # 脑爆产物 review 分支标志：True=用户在 review 抽屉里选「保存并推进」；False=选「返回脑爆继续修改」。
+    # 只在 brainstorm_extract_review 节点内写；供 route_after_extract_review 决定去 collect_user_inputs 还是回 brainstorm_chat。
+    brainstorm_review_advance: bool = False
     from_brainstorm: bool = False   # 入口分叉标志：True=经脑爆而来。破除 collect 跳过短路 + collect 后路由。全程不重置。
 
     # ── Phase 0：用户输入 ────────────────────────────────────────────────────────
