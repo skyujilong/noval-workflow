@@ -1,6 +1,7 @@
 // 小说详情面板：展示当前 state 的关键进度（基础设定成果 + 章节进度 + 快照）。
 
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { reviewTypeLabel, type NovelState } from "../../lib/types";
 
 interface Props {
@@ -13,7 +14,7 @@ function Field({ label, value }: { label: string; value?: string }) {
     <div>
       <div className="mb-0.5 text-xs font-medium text-gray-500">{label}</div>
       <div className="prose prose-sm max-w-none max-h-48 overflow-y-auto rounded border border-gray-200 bg-white p-2">
-        <ReactMarkdown>{value}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{value}</ReactMarkdown>
       </div>
     </div>
   );

@@ -78,6 +78,10 @@ export function useRun(threadId: string): UseRunResult {
   const [pendingResume, setPendingResume] = useState<string | null>(null);
   // 防止同一小说并发 run
   const runningRef = useRef(false);
+  // 防止并发 refresh 调用（StrictMode 双挂载、递归 refresh 竞态等）
+  const refreshingRef = useRef(false);
+  // 活跃流的 AbortController：卸载或新 run 前 abort，关闭底层 SSE 连接。
+  const abortRef = useRef<AbortController | null>(null);
   // 实例存活标记：卸载后丢弃后台 run 仍在产生的流式回调。
   // ⚠️ 必须在 setup 里把它重新置 true（root-cause fix）：
   // React 18 StrictMode（dev）挂载会跑 setup→cleanup→setup，cleanup 把它置 false 后，
@@ -89,6 +93,7 @@ export function useRun(threadId: string): UseRunResult {
     aliveRef.current = true;
     return () => {
       aliveRef.current = false;
+      abortRef.current?.abort();
     };
   }, []);
 
@@ -106,6 +111,10 @@ export function useRun(threadId: string): UseRunResult {
   );
 
   const refresh = useCallback(async () => {
+    // 并发守卫：StrictMode 双挂载、递归 refresh 竞态等会导致两个 refresh 同时跑，
+    // 两者都通过 !runningRef.current 检查后各自 joinRunStream → 重复 SSE 连接。
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     try {
       const { interrupt: it, next } = await load(threadId);
       if (it) {
@@ -119,20 +128,29 @@ export function useRun(threadId: string): UseRunResult {
           setPendingResume(null);
           runningRef.current = true;
           setRunning(true);
+          // 为 join 创建独立的 AbortController，挂到 abortRef 供卸载/新 run 时取消。
+          abortRef.current?.abort();
+          const ac = new AbortController();
+          abortRef.current = ac;
           try {
             // 从头 replay 前显式清零累加器。fresh mount 下 ref 本就是空；但 refresh()
             // 存在递归调用（本函数末尾），上一次 join 结束后 ref 可能残留最后一段 content，
             // 显式清零保证下一次 join 首个 chunk 走「新节点覆盖」路径，避免旧尾 + 新头拼接。
             resetStreaming();
-            await joinRunStream(threadId, activeRuns[0].run_id, onEvent);
+            await joinRunStream(threadId, activeRuns[0].run_id, onEvent, {
+              signal: ac.signal,
+            });
           } catch (e) {
+            if (ac.signal.aborted) return;
             setError(`等待运行完成失败：${(e as Error).message}`);
           } finally {
-            runningRef.current = false;
-            setRunning(false);
+            if (!ac.signal.aborted) {
+              runningRef.current = false;
+              setRunning(false);
+            }
           }
           // run 结束后重新拉取状态（可能已产生新中断）
-          await refresh();
+          if (!ac.signal.aborted) await refresh();
           return;
         }
         // 无 interrupt + 无活跃 run，但 next 非空 —— pending 卡住场景（重启后残留）。
@@ -142,6 +160,8 @@ export function useRun(threadId: string): UseRunResult {
       setError(null);
     } catch (e) {
       setError(`获取状态失败：${(e as Error).message}`);
+    } finally {
+      refreshingRef.current = false;
     }
   }, [threadId, load, setCurrentNode, onEvent, resetStreaming]);
 
@@ -164,7 +184,7 @@ export function useRun(threadId: string): UseRunResult {
   // → 执行 → 成功后 refresh；失败 setError（resume/replay 还需 refresh 还原中断）→ 收尾。
   const runGuarded = useCallback(
     async (
-      exec: () => Promise<void>,
+      exec: (signal: AbortSignal) => Promise<void>,
       errLabel: string,
       opts?: { restoreOnError?: boolean; clearInterrupt?: boolean }
     ) => {
@@ -175,15 +195,22 @@ export function useRun(threadId: string): UseRunResult {
       setPendingResume(null); // 任何主动 run 都清掉 pending 提示
       if (opts?.clearInterrupt) setInterrupt(null);
       resetStreaming();
+      // 中止前一个活跃流（如递归 refresh 挂的 join），为新 run 让路。
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
       try {
-        await exec();
-        await refresh();
+        await exec(ac.signal);
+        if (!ac.signal.aborted) await refresh();
       } catch (e) {
+        if (ac.signal.aborted) return;
         setError(`${errLabel}：${(e as Error).message}`);
         if (opts?.restoreOnError) await refresh();
       } finally {
-        runningRef.current = false;
-        setRunning(false);
+        if (!ac.signal.aborted) {
+          runningRef.current = false;
+          setRunning(false);
+        }
       }
     },
     [refresh, resetStreaming, setInterrupt]
@@ -191,7 +218,11 @@ export function useRun(threadId: string): UseRunResult {
 
   // 新 run 必须传非 null 的 input（{}），否则平台报 EmptyInputError。
   const start = useCallback(
-    () => runGuarded(() => runStream(threadId, onEvent, { input: {} }), "启动失败"),
+    () =>
+      runGuarded(
+        (signal) => runStream(threadId, onEvent, { input: {}, signal }),
+        "启动失败"
+      ),
     [runGuarded, threadId, onEvent]
   );
 
@@ -200,16 +231,22 @@ export function useRun(threadId: string): UseRunResult {
   // disabled），成功后由 refresh 更新/清空，失败时由 refresh 还原。
   const resume = useCallback(
     (value: unknown) =>
-      runGuarded(() => runStream(threadId, onEvent, { resumeValue: value }), "恢复失败", {
-        restoreOnError: true,
-      }),
+      runGuarded(
+        (signal) => runStream(threadId, onEvent, { resumeValue: value, signal }),
+        "恢复失败",
+        { restoreOnError: true }
+      ),
     [runGuarded, threadId, onEvent]
   );
 
   // 「继续执行」：无 interrupt + next 非空的 pending 场景。等价于新 run 无 resume（input:{}），
   // langgraph 会从 checkpoint 的 next 节点继续跑，不会重复执行已完成节点。
   const continueRun = useCallback(
-    () => runGuarded(() => runStream(threadId, onEvent, { input: {} }), "继续执行失败"),
+    () =>
+      runGuarded(
+        (signal) => runStream(threadId, onEvent, { input: {}, signal }),
+        "继续执行失败"
+      ),
     [runGuarded, threadId, onEvent]
   );
 
@@ -217,7 +254,8 @@ export function useRun(threadId: string): UseRunResult {
   const replay = useCallback(
     (checkpointId: string) =>
       runGuarded(
-        () => replayFromCheckpoint(threadId, checkpointId, onEvent),
+        (signal) =>
+          replayFromCheckpoint(threadId, checkpointId, onEvent, { signal }),
         "重跑失败",
         { restoreOnError: true, clearInterrupt: true }
       ),

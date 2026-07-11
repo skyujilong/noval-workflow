@@ -13,22 +13,32 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface ChatEntry {
   role: "human" | "ai";
   content: string;
+  /** v3 pin 标记：后端 brainstorm_finalize 追加完整版气泡时打上 "finalize_draft"，前端据此在气泡
+   *  顶部渲染分隔条「已被驳回的旧整理」提示用户这不是当前状态，只是修改参考锚点。缺省视为普通聊天。 */
+  kind?: "chat" | "finalize_draft";
 }
 
 interface Props {
   summary: string;
   history: ChatEntry[];
-  /** 是否正在流式输出 AI 回复（running 且节点为 brainstorm_respond） */
+  /** 是否正在流式输出 AI 回复（running 且节点为 brainstorm_respond 或 brainstorm_finalize） */
   streaming: boolean;
   streamingContent: string;
   /** 是否停在 brainstorm_chat interrupt（可发送） */
   awaitingInput: boolean;
   onSend: (msg: string) => void;
   onEnd: () => void;
+  /** v2 结束轮完整版确认：停在 brainstorm_finalize_confirm interrupt 时为 true——
+   *  在最后一条 AI 气泡下方渲染「使用这份产物 / 返回脑爆继续」两个按钮。
+   *  此 interrupt 期间 awaitingInput=false，底部输入区自然禁用（无需额外闸）。 */
+  finalizeConfirm: boolean;
+  /** 完整版确认按钮回调：由 NovelWorkspace 转成 resume(buildFinalizeConfirm...) */
+  onFinalizeConfirm: (action: "use" | "back_to_chat") => void;
   /** 作品级：是否含独立力量体系（来自 state.has_power_system） */
   hasPowerSystem: boolean;
   /** 切换开关时的写回回调（父层负责 updateThreadState + refreshValues）；返回 Promise 便于失败回滚 */
@@ -45,6 +55,8 @@ export function BrainstormChat({
   awaitingInput,
   onSend,
   onEnd,
+  finalizeConfirm,
+  onFinalizeConfirm,
   hasPowerSystem,
   onHasPowerSystemChange,
   disabled,
@@ -157,15 +169,49 @@ export function BrainstormChat({
           </div>
         )}
 
-        {history.map((m, i) => (
-          <Bubble key={i} role={m.role} content={m.content} />
-        ))}
+        {(() => {
+          // v3 分隔条挂载策略：finalize_draft 条目只在"已被驳回"时才显示「参考旧整理」提示。
+          // 判定：finalizeConfirm=true（当前正停在 finalize_confirm interrupt）时，历史里最后一条
+          // finalize_draft 是当前候选（还没被驳回，等用户按 use/back），不加分隔条；其余 finalize_draft
+          // 一律加分隔条——它们都是历次点了「返回脑爆继续」被驳回的旧稿。
+          let lastDraftIdx = -1;
+          for (let k = history.length - 1; k >= 0; k--) {
+            if (history[k].kind === "finalize_draft") {
+              lastDraftIdx = k;
+              break;
+            }
+          }
+          return history.map((m, i) => {
+            const isDraft = m.kind === "finalize_draft";
+            const isCurrentCandidate = finalizeConfirm && i === lastDraftIdx;
+            const showRejectedBanner = isDraft && !isCurrentCandidate;
+            return (
+              <Bubble
+                key={i}
+                role={m.role}
+                content={m.content}
+                kind={showRejectedBanner ? "finalize_draft" : "chat"}
+              />
+            );
+          });
+        })()}
 
         {/* 乐观渲染：running 期间展示用户刚发出的消息 */}
         {pendingShown && <Bubble role="human" content={pendingUserMsg} />}
 
         {/* AI 流式回复气泡 */}
         {streamingShown && <Bubble role="ai" content={streamingContent || "…"} />}
+
+        {/* v2 结束轮完整版确认卡：finalize_confirm interrupt 期间挂在最后一条 AI 气泡下方。
+            使用 → 后端纯 python 切分那份 markdown 到 4 字段 → 进 review 面板；
+            返回脑爆 → 后端剥掉这条完整版 AI 气泡 + 复位 brainstorm_done → 回聊天。 */}
+        {finalizeConfirm && !streamingShown && (
+          <FinalizeConfirmCard
+            disabled={!!disabled}
+            onUse={() => onFinalizeConfirm("use")}
+            onBack={() => onFinalizeConfirm("back_to_chat")}
+          />
+        )}
       </div>
 
       {/* 力量体系开关（作品级决策，影响 AI 引导 + 抽取保留） */}
@@ -235,7 +281,18 @@ export function BrainstormChat({
   );
 }
 
-function Bubble({ role, content }: { role: "human" | "ai"; content: string }) {
+function Bubble({
+  role,
+  content,
+  kind,
+}: {
+  role: "human" | "ai";
+  content: string;
+  /** v3：finalize_draft 标记 AI 气泡顶部加分隔条，明确告诉用户这是已被驳回的旧整理。
+   *  只对历史条目生效；流式 streamingContent 那条气泡不传 kind，因此正在流的完整版不会
+   *  错误地显示"被驳回"标签（那时还没被驳回呢）。 */
+  kind?: "chat" | "finalize_draft";
+}) {
   if (role === "human") {
     return (
       <div className="flex justify-end">
@@ -248,8 +305,59 @@ function Bubble({ role, content }: { role: "human" | "ai"; content: string }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] rounded-lg rounded-bl-sm bg-gray-100 px-3 py-2 text-sm text-gray-800">
+        {kind === "finalize_draft" && (
+          <div className="mb-2 -mx-3 -mt-2 rounded-t-lg border-b border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+            📋 以下是已被驳回的旧整理，仅供参考修改
+          </div>
+        )}
         <div className="prose prose-sm max-w-none [&_p]:my-1">
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// v2 结束轮完整版确认卡：贴在最后一条 AI 气泡下方，两个按钮二选一。本地 submitting 状态避免
+// 重复点击（父层 disabled 是 running 期通用闸；点击后立即禁用两个按钮直到 interrupt 消费完毕）。
+function FinalizeConfirmCard({
+  disabled,
+  onUse,
+  onBack,
+}: {
+  disabled: boolean;
+  onUse: () => void;
+  onBack: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const isDisabled = disabled || submitting;
+  const handle = (fn: () => void) => {
+    setSubmitting(true);
+    fn();
+  };
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[85%] rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+        <div className="mb-2 text-xs text-gray-600">
+          👆 上面这份就是即将进入 review 的完整版。整理无误就使用；有想改的就返回聊天继续。
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => handle(onUse)}
+            disabled={isDisabled}
+            className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
+          >
+            {submitting ? "⏳ 提交中…" : "✓ 使用这份产物"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handle(onBack)}
+            disabled={isDisabled}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            ← 返回脑爆继续
+          </button>
         </div>
       </div>
     </div>

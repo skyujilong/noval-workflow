@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import type { ArcDirectionPayload, MessageOnlyPayload } from "../../lib/interruptTypes";
 import { directionTitleOf } from "../../lib/interruptTypes";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Props {
   payload: MessageOnlyPayload | ArcDirectionPayload;
@@ -45,7 +46,7 @@ export function DirectionForm({ payload, onSubmit, disabled }: Props) {
         <div className="rounded border border-gray-200 bg-white p-3">
           <div className="mb-1 text-xs font-medium text-gray-500">当前弧线大纲</div>
           <div className="prose prose-sm max-w-none">
-            <ReactMarkdown>{arc}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{arc}</ReactMarkdown>
           </div>
         </div>
       )}

@@ -619,7 +619,11 @@ export function processJoinStreamChunk(
 export async function runStream(
   threadId: string,
   onEvent: (e: StreamEvent) => void,
-  opts?: { resumeValue?: unknown; input?: Record<string, unknown> | null }
+  opts?: {
+    resumeValue?: unknown;
+    input?: Record<string, unknown> | null;
+    signal?: AbortSignal;
+  }
 ): Promise<void> {
   const assistantId = await getAssistantId();
   const streamRes = client.runs.stream(threadId, assistantId, {
@@ -633,6 +637,7 @@ export async function runStream(
     // joinRunStream 显式带 lastEventId="-" 触发从头 replay，useStreamingDisplay 在
     // 节点首个 chunk 处清空累加器，天然无内容翻倍。
     streamResumable: true,
+    signal: opts?.signal,
   });
 
   for await (const chunk of streamRes) {
@@ -666,12 +671,13 @@ export async function joinRunStream(
   threadId: string,
   runId: string,
   onEvent: (e: StreamEvent) => void,
-  opts?: { lastEventId?: string }
+  opts?: { lastEventId?: string; signal?: AbortSignal }
 ): Promise<void> {
   const stream = client.runs.joinStream(threadId, runId, {
     streamMode: [...STREAM_MODES],
     cancelOnDisconnect: false,
     lastEventId: opts?.lastEventId ?? "-",
+    signal: opts?.signal,
   });
   for await (const chunk of stream) {
     processJoinStreamChunk(chunk, onEvent);
@@ -686,7 +692,8 @@ export async function joinRunStream(
 export async function replayFromCheckpoint(
   threadId: string,
   checkpointId: string,
-  onEvent: (e: StreamEvent) => void
+  onEvent: (e: StreamEvent) => void,
+  opts?: { signal?: AbortSignal }
 ): Promise<void> {
   const assistantId = await getAssistantId();
   const streamRes = client.runs.stream(threadId, assistantId, {
@@ -703,6 +710,7 @@ export async function replayFromCheckpoint(
     // 与 runStream 一致开启断线续传：replay 出的 run 也需要能在「切走再切回」场景 join 时
     // 从头 replay 全量事件（否则回到中途看到的是残缺流）。
     streamResumable: true,
+    signal: opts?.signal,
   });
 
   for await (const chunk of streamRes) {

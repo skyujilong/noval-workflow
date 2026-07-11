@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   ArcConfirmErrorPayload,
   ArcConfirmPayload,
@@ -63,7 +64,7 @@ export function ArcConfirmForm({ payload, onSubmit, disabled }: Props) {
         <div className="rounded border border-gray-200 bg-white p-3">
           <div className="mb-1 text-xs font-medium text-gray-500">AI 生成的新弧线大纲</div>
           <div className="prose prose-sm max-w-none">
-            <ReactMarkdown>{aiArc}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiArc}</ReactMarkdown>
           </div>
         </div>
       )}

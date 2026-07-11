@@ -9,6 +9,9 @@ export const InterruptType = {
   // Phase -1：灵感脑爆（可选，入口分叉）
   BRAINSTORM_GATE: "brainstorm_gate",
   BRAINSTORM_CHAT: "brainstorm_chat",
+  // 脑爆结束轮的完整版确认闸门：finalize 流式生成 markdown 完整版后停下，让用户从 AI 气泡下方
+  // 「使用这份产物」/「返回脑爆继续」二选一。此 interrupt 期间禁用聊天输入，避免语义混乱。
+  BRAINSTORM_FINALIZE_CONFIRM: "brainstorm_finalize_confirm",
   // 脑爆结束后的整合 review：一次性 review + 编辑 4 个正式设定字段，取代下面 4 个逐项 confirm
   BRAINSTORM_EXTRACT_REVIEW: "brainstorm_extract_review",
   // 以下 4 个 confirm 已被 BRAINSTORM_EXTRACT_REVIEW 合并接管；类型与组件保留供快速回滚
@@ -99,17 +102,29 @@ export interface BrainstormConfirmPayload {
  * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段。
  * has_power_system 反映 state 里的作品级决策（初始由题材默认建议，用户可在抽屉里覆盖），
  * 前端据此决定 checkbox 初始状态与力量体系编辑区显隐。
- * finalize_summary 是结束脑爆时 AI 自然语言收尾原文（chat 气泡里那段流式内容的同一份），
- * 面板顶部只读展示——旧 thread 缺失时前端隐藏该展示区，向后兼容。
+ * missing_fields 由 v2 finalize_confirm 节点纯 python 切分后累积——切不到内容的字段名列表，
+ * 前端在对应 FieldBlock 头部挂黄色警告，提示用户手填或返回脑爆补充。
  */
 export interface BrainstormExtractReviewPayload {
   type: InterruptTypeValue;
   message: string;
-  finalize_summary?: string;
   core_theme: string;
   world_building: string;
   power_system: string;
   core_conflicts: string;
+  has_power_system: boolean;
+  missing_fields: string[];
+}
+
+/**
+ * 脑爆结束轮完整版确认闸门 payload。finalize 节点已经把这份 markdown 流式打到聊天页 AI 气泡末尾，
+ * 前端主要靠此 interrupt 的存在决定「在聊天页 AI 气泡下方渲染两个按钮 + 禁用输入框」。
+ * finalize_markdown 冗余透传，供前端自查 / 调试；正常渲染路径直接读 state.brainstorm_history 末条。
+ */
+export interface BrainstormFinalizeConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  finalize_markdown: string;
   has_power_system: boolean;
 }
 export interface AskContinuePayload {
@@ -209,6 +224,7 @@ export type FormKind =
   | "brainstorm_chat"
   | "brainstorm_confirm"
   | "brainstorm_extract_review"
+  | "brainstorm_finalize_confirm"
   | "user_inputs"
   | "human_review"
   | "ask_continue"
@@ -231,6 +247,7 @@ export type FormKind =
 const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.BRAINSTORM_GATE]: "brainstorm_gate",
   [InterruptType.BRAINSTORM_CHAT]: "brainstorm_chat",
+  [InterruptType.BRAINSTORM_FINALIZE_CONFIRM]: "brainstorm_finalize_confirm",
   [InterruptType.BRAINSTORM_EXTRACT_REVIEW]: "brainstorm_extract_review",
   [InterruptType.BRAINSTORM_CORE_THEME_CONFIRM]: "brainstorm_confirm",
   [InterruptType.BRAINSTORM_WORLD_BUILDING_CONFIRM]: "brainstorm_confirm",
@@ -419,5 +436,31 @@ export function buildBrainstormReviewAdvanceResume(fields: {
 
 /** 构造「返回脑爆继续修改」resume 值。 */
 export function buildBrainstormReviewBackResume(): BrainstormReviewBackToChat {
+  return { action: "back_to_chat" };
+}
+
+// ── 脑爆完整版确认闸门 resume 值（与后端 brainstorm_finalize_confirm 节点对齐）──
+/**
+ * finalize_confirm 闸门的两种 resume 分支。**都是 dict**（后端契约要求）：
+ * - use          → 后端纯 python 切分完整版 markdown → 覆盖 4 字段 → 进 extract_review
+ * - back_to_chat → 后端剥掉 history 末条（那份完整版）+ 复位 brainstorm_done → 回聊天
+ */
+export interface BrainstormFinalizeConfirmUse {
+  action: "use";
+}
+export interface BrainstormFinalizeConfirmBackToChat {
+  action: "back_to_chat";
+}
+export type BrainstormFinalizeConfirmResume =
+  | BrainstormFinalizeConfirmUse
+  | BrainstormFinalizeConfirmBackToChat;
+
+/** 构造「使用这份产物」resume 值。 */
+export function buildFinalizeConfirmUse(): BrainstormFinalizeConfirmUse {
+  return { action: "use" };
+}
+/** 构造「返回脑爆继续」resume 值。语义上与 review 面板的 back_to_chat 等价，但走的是不同节点，
+ * 为了类型明确保留独立 builder。 */
+export function buildFinalizeConfirmBackToChat(): BrainstormFinalizeConfirmBackToChat {
   return { action: "back_to_chat" };
 }

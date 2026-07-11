@@ -23,7 +23,12 @@ import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
 import { updateThreadMeta, updateThreadState } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
-import { BRAINSTORM_END, InterruptType } from "../lib/interruptTypes";
+import {
+  BRAINSTORM_END,
+  InterruptType,
+  buildFinalizeConfirmBackToChat,
+  buildFinalizeConfirmUse,
+} from "../lib/interruptTypes";
 import type { NovelState } from "../lib/types";
 import { EVOLVABLE_REVIEW_TYPES } from "../lib/types";
 
@@ -123,33 +128,38 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     // setInterrupt(BRAINSTORM_CHAT) 之间的渲染间隙保持 inBrainstorm=true，避免闪烁旧抽屉。
     const transitioningToChatRef = useRef(false);
 
-    // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond / brainstorm_finalize）
-    // 两态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
+    // 脑爆聊天连续视图：等输入（brainstorm_chat interrupt）或 AI 流式回复（brainstorm_respond）
+    // 或结束轮完整版确认（brainstorm_finalize_confirm interrupt）
+    // 三态都命中，使 BrainstormChat 跨态持续挂载，输入/滚动态不丢。confirm 步与 gate 走普通表单。
     const interruptType =
       interrupt && typeof interrupt.payload === "object" && interrupt.payload
         ? (interrupt.payload as { type?: string }).type
         : undefined;
-    // 仅聊天循环（chat/respond/finalize/extract_review）命中连续视图；gate 与 extract_review interrupt 走抽屉表单。
-    // 注意：extract_review interrupt 到来时 interruptType 会切到 BRAINSTORM_EXTRACT_REVIEW（不匹配这里的
-    // BRAINSTORM_CHAT），右侧会自动切到 InterruptHandler 承载抽屉；running 期覆盖只是为了避免
-    // brainstorm_finalize → brainstorm_extract_review 中间那一拍 UI 从聊天视图闪到 loading。
+    // 聊天循环（chat/respond/finalize/finalize_confirm/extract_review）命中连续视图；
+    // gate 与 extract_review interrupt 走抽屉表单。
+    // brainstorm_finalize 现改回**可视流式**（v2 保真度改造：LLM 输出的完整版 markdown 会以 AI 气泡打字机
+    // 效果流到聊天页），故 streamingNode 白名单里加回它；currentNode 也保留在覆盖列表里避免过渡拍闪烁。
+    // finalize_confirm interrupt 也归本视图——按钮渲染在聊天页 AI 气泡下方，不走 InterruptHandler。
     const inBrainstorm =
       interruptType === InterruptType.BRAINSTORM_CHAT ||
+      interruptType === InterruptType.BRAINSTORM_FINALIZE_CONFIRM ||
       transitioningToChatRef.current ||
       (running &&
         (currentNode === "brainstorm_chat" ||
           currentNode === "brainstorm_respond" ||
           currentNode === "brainstorm_finalize" ||
+          currentNode === "brainstorm_finalize_confirm" ||
           currentNode === "brainstorm_extract_review" ||
           streamingNode === "brainstorm_respond" ||
           streamingNode === "brainstorm_finalize"));
 
-    // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且流式节点属于 chat 视图允许展示的白名单（respond / finalize）。
+    // 脑爆 AI 回复的流式打字机门控：running 中、有增量内容、且流式节点是 brainstorm_respond
+    // （多轮对话中间的正常回复）或 brainstorm_finalize（v2 结束轮生成完整版 markdown）。
     //
-    // 旧实现用黑名单 `streamingNode !== "brainstorm_extract"`——那时 extract 节点跑一次隐藏 LLM，
-    // chunks 需要被过滤掉。新实现里 finalize 节点的自然语言收尾 chunks 是**要展示**的（用户在 chat
-    // 气泡里看到 AI 说"好，我来收尾……"的完整过程），而 finalize 内的 JSON 抽取步已用 tags=["nostream"]
-    // 从后端源头屏蔽，前端根本收不到——故改成正向白名单：respond（多轮对话中间的正常回复）+ finalize（结束轮收尾）。
+    // brainstorm_finalize 现在走**可视流式**（无 nostream tag）——LLM 整理的完整版 markdown 会
+    // 增量流到 AI 气泡末尾，让用户能亲眼看到即将变成 review 内容的原文。流完后节点会 return
+    // 到 finalize_confirm interrupt，前端 pipeline：running → 落库到 history → interrupt payload 到位，
+    // 中间那一拍靠 BrainstormChat 的 streamingShown 派生自动接管，不闪烁。
     //
     // ⚠️ 刻意**不**加 !streamingFinalized 闸门（曾试过，会引入空白 bug）：
     // brainstorm_respond 节点内 LLM 流完（finalized=true）后，若历史超过 _KEEP_MESSAGES，
@@ -162,7 +172,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const brainstormStreaming =
       running &&
       streamingContent.length > 0 &&
-      (streamingNode === "brainstorm_respond" || streamingNode === "brainstorm_finalize");
+      (streamingNode === "brainstorm_respond" ||
+        streamingNode === "brainstorm_finalize");
 
     // 所有「会 resume 本 thread」的输入（中断表单的确认通过 / 脑爆发送）统一的禁用闸：
     // 本地 running 之外，再叠加 summary 轮询的 busy（同 thread_id 后端正忙）。本地 running 只
@@ -253,6 +264,16 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               awaitingInput={interruptType === InterruptType.BRAINSTORM_CHAT}
               onSend={(m) => void resume(m)}
               onEnd={() => void resume(BRAINSTORM_END)}
+              // v2 结束轮：finalize_confirm interrupt 到达时，聊天页在最后一条 AI 气泡下方渲染两个按钮，
+              // 输入框此期间禁用（awaitingInput=false 已经覆盖，此 prop 是让按钮显示）。
+              finalizeConfirm={interruptType === InterruptType.BRAINSTORM_FINALIZE_CONFIRM}
+              onFinalizeConfirm={(action) =>
+                void resume(
+                  action === "use"
+                    ? buildFinalizeConfirmUse()
+                    : buildFinalizeConfirmBackToChat()
+                )
+              }
               hasPowerSystem={!!state.has_power_system}
               onHasPowerSystemChange={async (v) => {
                 // 就地 update_state：LangGraph 会清 interrupts 两源但保留 next；用 refreshValues

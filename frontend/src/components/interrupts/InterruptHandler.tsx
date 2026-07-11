@@ -37,7 +37,8 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Pr
   const formKey = String((payload as { type?: unknown })?.type ?? "unknown");
 
   switch (kind) {
-    // brainstorm_chat 不在此处渲染——由 NovelWorkspace 接管为连续聊天视图。
+    // brainstorm_chat / brainstorm_finalize_confirm 都不在此处渲染——由 NovelWorkspace 接管为连续聊天视图。
+    // 若因意外走到这里（如 inBrainstorm 判定漏了），落到 default 的 unknown 兜底显式暴露契约故障。
     case "brainstorm_gate":
       return (
         <BrainstormGateForm

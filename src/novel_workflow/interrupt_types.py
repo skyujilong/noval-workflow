@@ -17,6 +17,8 @@ class InterruptType(str, Enum):
     # ============================================================
     BRAINSTORM_GATE = "brainstorm_gate"  # 入口门：进脑爆 / 直接填表
     BRAINSTORM_CHAT = "brainstorm_chat"  # 多轮聊天等待用户消息
+    # 脑爆结束轮的完整版确认闸门：finalize 流式生成 markdown 完整版后停下，让用户确认「使用」或「返回聊天」
+    BRAINSTORM_FINALIZE_CONFIRM = "brainstorm_finalize_confirm"
     # 脑爆结束后的整合 review：一次性 review + 编辑 4 个正式设定字段，取代原 4 个逐项 confirm
     BRAINSTORM_EXTRACT_REVIEW = "brainstorm_extract_review"
     # 以下 4 个 confirm 已被 BRAINSTORM_EXTRACT_REVIEW 合并接管；节点函数与枚举保留，图上不再挂，以便回滚

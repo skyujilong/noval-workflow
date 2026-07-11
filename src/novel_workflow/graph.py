@@ -40,11 +40,13 @@ from noval_workflow.nodes.brainstorm import (
     brainstorm_chat,
     brainstorm_extract_review,
     brainstorm_finalize,
+    brainstorm_finalize_confirm,
     brainstorm_gate,
     brainstorm_respond,
     route_after_chat,
     route_after_collect,
     route_after_extract_review,
+    route_after_finalize_confirm,
     route_after_gate,
 )
 from noval_workflow.nodes.consistency import (
@@ -68,6 +70,9 @@ builder.add_node("brainstorm_gate", brainstorm_gate)
 builder.add_node("brainstorm_chat", brainstorm_chat)
 builder.add_node("brainstorm_respond", brainstorm_respond)
 builder.add_node("brainstorm_finalize", brainstorm_finalize)
+# v2 保真度改造：finalize 流式生成的完整版 markdown 交给用户在聊天页确认使用 / 返回。
+# 该节点用 interrupt 停下，不跑 LLM——只做纯 python 切分或 back_to_chat 剥离。
+builder.add_node("brainstorm_finalize_confirm", brainstorm_finalize_confirm)
 # 脑爆产物整合 review：一次性 review + 编辑 4 字段，取代原 4 个逐项 confirm。
 builder.add_node("brainstorm_extract_review", brainstorm_extract_review)
 
@@ -144,9 +149,15 @@ builder.add_conditional_edges(
     {"brainstorm_respond": "brainstorm_respond", "brainstorm_finalize": "brainstorm_finalize"},
 )
 builder.add_edge("brainstorm_respond", "brainstorm_chat")
-# 结束轮 finalize 节点（可视自然语言收尾 + nostream JSON 抽取合并）→ 一次性 review interrupt
-# → 分支到 collect（推进）或回 chat（继续脑爆）
-builder.add_edge("brainstorm_finalize", "brainstorm_extract_review")
+# 结束轮 finalize 节点（可视流式生成完整版 markdown，不再抽 JSON）→ 用户确认闸门 →
+# 分支到 extract_review（use，纯 python 切分好的字段已覆写到 state）或回 chat（back_to_chat，
+# 完整版历史已被剥掉）
+builder.add_edge("brainstorm_finalize", "brainstorm_finalize_confirm")
+builder.add_conditional_edges(
+    "brainstorm_finalize_confirm",
+    route_after_finalize_confirm,
+    {"brainstorm_extract_review": "brainstorm_extract_review", "brainstorm_chat": "brainstorm_chat"},
+)
 builder.add_conditional_edges(
     "brainstorm_extract_review",
     route_after_extract_review,

@@ -45,11 +45,18 @@ class NovelState:
     # 只在 brainstorm_extract_review 节点内写；供 route_after_extract_review 决定去 collect_user_inputs 还是回 brainstorm_chat。
     brainstorm_review_advance: bool = False
     from_brainstorm: bool = False   # 入口分叉标志：True=经脑爆而来。破除 collect 跳过短路 + collect 后路由。全程不重置。
-    # 脑爆结束轮 AI 自然语言收尾原文。brainstorm_finalize 节点写入 → brainstorm_extract_review
-    # payload 透传给前端 review 面板顶部展示；用户看到的收尾话与聊天里 AI 的最后一段流式内容一致。
-    # 覆盖语义，无 reducer；back_to_chat 再次结束脑爆时被新一轮覆盖，节点入口会顺便剥掉 brainstorm_history
-    # 里遗留的旧收尾话避免堆叠（见 brainstorm_finalize 注释）。
-    finalize_summary: str = ""
+
+    # ── Phase -1.5：脑爆结束轮的"完整版 markdown + 用户确认"闸门 ────────────────
+    # v2 保真度改造：brainstorm_finalize 让 LLM 流式输出「用户已认可的完整版」markdown（含
+    # `# 核心主题 / # 世界观 / # 力量体系 / # 核心冲突` 一级标题分节），写入 finalize_markdown
+    # 并追加进 brainstorm_history 的末条 AI 气泡——用户能在聊天页亲眼看到即将变成 review 内容的
+    # 那份原文。brainstorm_finalize_confirm 拦一道 interrupt：
+    #   - action=use → 纯 python 按 `# 标题` 正则切分 → 覆盖 4 个正式设定字段（绝无二次 LLM 改写）
+    #   - action=back_to_chat → 剥掉 history 末条 finalize markdown + 复位 done + 清空这里的字段
+    # 切不到的字段名累积到 finalize_missing_fields，供 brainstorm_extract_review 面板对应字段头部
+    # 挂黄色警告条提示用户手填。
+    finalize_markdown: str = ""            # 完整版 markdown 原文（供 confirm 闸门与 back_to_chat 剥离比对）
+    finalize_missing_fields: list = field(default_factory=list)  # 切分不到的字段名子集（core_theme/world_building/power_system/core_conflicts）
 
     # ── Phase 0：用户输入 ────────────────────────────────────────────────────────
     novel_name: str = ""            # 小说名称
