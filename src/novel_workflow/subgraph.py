@@ -24,13 +24,15 @@ from noval_workflow.prompts import (
     TITLES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
     evolved_directives_block,
+    get_evolved_directives,
     get_prompt_pack,
 )
 from noval_workflow.state import ReviewSubState
 
-# 自进化整改仅对「会重复生成」的正文/弧线环节注入：打回重跑时从该书 overrides 新鲜读取，
-# 使当前这一章/批的打回重跑立即遵循刚提炼应用（或整理消解）的最新整改。
-_EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline"}
+# 自进化整改注入白名单:「会重复生成」的三个环节,打回重跑时从该书 overrides 新鲜读取对应桶,
+# 使当前这一次的打回重跑立即遵循刚提炼应用(或整理消解)的最新整改。
+# 三桶隔离(base.py::_REVIEW_TYPE_TO_EVOLVED_FIELD):chapter/arc_outline/scene_beats 各读各的。
+_EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline", "scene_beats"}
 
 # Max review rounds kept in history, per review_type.
 # core_theme/titles 等短内容：5 轮可负担；chapter 草稿长（~2000 字/篇），3 轮控制 token。
@@ -140,7 +142,9 @@ def generate(state: ReviewSubState) -> dict:
         # 遵循刚提炼应用（或整理消解）的整改。
         if state.review_type in _EVOLVABLE_REVIEW_TYPES:
             flavor = get_prompt_pack(state.genre, state.novel_name).flavor
-            regen_instruction += evolved_directives_block(flavor.evolved_directives)
+            regen_instruction += evolved_directives_block(
+                get_evolved_directives(flavor, state.review_type)
+            )
         messages.append(HumanMessage(content=regen_instruction))
         new_user_msg = state.review_feedback  # 历史只存原始 feedback，不含 instruction
     else:

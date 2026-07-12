@@ -43,6 +43,27 @@ def _clean(overrides: dict) -> dict[str, str]:
     }
 
 
+def _migrate_legacy_evolved(clean: dict[str, str]) -> dict[str, str]:
+    """老 prompt_overrides.json 单桶 `evolved_directives` → 新三桶迁移(仅内存)。
+
+    历史遗留字段 `evolved_directives` 被拆成 chapter/arc_outline/scene_beats 三桶后,
+    老数据统一归到 chapter(正文影响面最大、最安全的默认桶)。**只在新桶完全为空时迁移**——
+    避免用户已经开始使用新桶后被老字段覆盖。不改磁盘,让下一次 save 自然沉淀到新形态。
+    """
+    legacy = clean.get("evolved_directives", "").strip()
+    if not legacy:
+        return clean
+    has_new_bucket = any(
+        clean.get(k, "").strip()
+        for k in ("evolved_directives_chapter", "evolved_directives_arc_outline", "evolved_directives_scene_beats")
+    )
+    if has_new_bucket:
+        return clean
+    migrated = dict(clean)
+    migrated["evolved_directives_chapter"] = legacy
+    return migrated
+
+
 def load_overrides(novel_name: str) -> dict[str, str]:
     """读取该小说的覆盖项；文件缺失/损坏/格式非法时返回 {}。"""
     if not novel_name:
@@ -58,7 +79,7 @@ def load_overrides(novel_name: str) -> dict[str, str]:
     if not isinstance(data, dict):
         _logger.warning("Prompt overrides at %s is not a JSON object; ignoring.", path)
         return {}
-    return _clean(data)
+    return _migrate_legacy_evolved(_clean(data))
 
 
 def apply_overrides(flavor: GenreFlavor, overrides: dict) -> GenreFlavor:

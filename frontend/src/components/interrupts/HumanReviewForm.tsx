@@ -63,8 +63,12 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
       void recordReject(novelState.novel_name, novelState.genre, {
         review_type: reviewType,
         feedback: feedback.trim(),
+        // chapter / scene_beats 都是「每章一次」的环节，落库时带章号让台账可按章检索;
+        // arc_outline 是每批一次，与章号不 1:1 绑定，故不带。
         chapter_index:
-          reviewType === "chapter" ? novelState.total_chapters_written + 1 : null,
+          reviewType === "chapter" || reviewType === "scene_beats"
+            ? novelState.total_chapters_written + 1
+            : null,
       }).catch(() => {
         // 落库是辅助功能，失败静默降级，不打断打回重跑
       });

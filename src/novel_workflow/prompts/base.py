@@ -150,14 +150,46 @@ class GenreFlavor:
     arc_focus: str = ""
     """故事弧步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
 
-    # ── 自进化：历次人工反馈沉淀的强制整改要点（默认空）──────────────────────
+    # ── 自进化：历次人工反馈沉淀的强制整改要点（按 review_type 分桶）──────────
+    # 三桶各存对应环节的历史整改要点，chapter/arc_outline/scene_beats 相互独立；
+    # 一个整改条目可以显式「分发」到多个桶——写入侧决定,消费侧只读自己那一桶。
+    evolved_directives_chapter: str = ""
+    """章节正文创作的历史整改要点。追加到 chapter_prompt 末尾（最高优先级段）。"""
+    evolved_directives_arc_outline: str = ""
+    """弧线大纲创作的历史整改要点。追加到 arc_outline_prompt 末尾。"""
+    evolved_directives_scene_beats: str = ""
+    """章前 scene beats 生成的历史整改要点。追加到 scene_beats_prompt 末尾。"""
+
+    # 老字段（deprecated）：仅用于兼容旧 prompt_overrides.json——加载时会在
+    # overrides.py::load_overrides 里迁移到 evolved_directives_chapter。字段本身保留
+    # 只为 dataclass 反序列化容错，prompt 组装侧不再读它。
     evolved_directives: str = ""
-    """按小说累积的「历史整改要点」，来源于人工打回意见的提炼/整改库导入。
-    追加到 chapter_prompt 末尾并声明为最高优先级：与上文冲突时以本节为准，
-    本节内多条冲突时以更靠后（更新）者为准。默认空 → 对现有题材零影响。"""
+    """[DEPRECATED] 老单桶字段，加载时迁移到 evolved_directives_chapter；prompt 组装侧不再读。"""
 
 
 # ── PromptPack：通用脚手架 + 风味组装 ─────────────────────────────────────────
+
+
+# review_type → 对应 evolved_directives 字段名。这是「按 type 分桶」的唯一映射表——
+# prompt 组装侧、subgraph.generate 打回重跑、HTTP apply/reconcile 全走它,避免各处硬编码。
+_REVIEW_TYPE_TO_EVOLVED_FIELD: dict[str, str] = {
+    "chapter": "evolved_directives_chapter",
+    "arc_outline": "evolved_directives_arc_outline",
+    "scene_beats": "evolved_directives_scene_beats",
+}
+
+# 所有已接入自进化的 evolved_directives 桶字段名——供 overrides/HTTP 层遍历。
+EVOLVED_DIRECTIVES_FIELDS: frozenset[str] = frozenset(_REVIEW_TYPE_TO_EVOLVED_FIELD.values())
+
+
+def evolved_field_for(review_type: str) -> str:
+    """把 review_type 映射到 GenreFlavor 字段名。未知类型回退到 chapter(最保守默认)。"""
+    return _REVIEW_TYPE_TO_EVOLVED_FIELD.get(review_type, "evolved_directives_chapter")
+
+
+def get_evolved_directives(flavor: "GenreFlavor", review_type: str) -> str:
+    """按 review_type 从 flavor 里取对应桶的文本;未知类型走 chapter 桶。"""
+    return getattr(flavor, evolved_field_for(review_type), "")
 
 
 def evolved_directives_block(directives: str) -> str:
@@ -359,9 +391,14 @@ class PromptPack:
 
 请直接输出{BATCH_SIZE}个标题，每行一个。"""
 
-    def _evolved_directives_section(self) -> str:
-        """本 pack 当前 flavor 的整改段（章节正文/弧线大纲共用）。见 evolved_directives_block。"""
-        return evolved_directives_block(self.flavor.evolved_directives)
+    def _evolved_directives_section(self, review_type: str = "chapter") -> str:
+        """本 pack 当前 flavor 的整改段——按 review_type 分派到对应字段。
+
+        三桶隔离:chapter/arc_outline/scene_beats 各读自己那份。老数据加载时会被
+        overrides.py 迁移到 chapter 桶,故未知 review_type 一律走 chapter(最安全默认)。
+        """
+        directives = get_evolved_directives(self.flavor, review_type)
+        return evolved_directives_block(directives)
 
     def chapter_prompt(
         self,
@@ -392,8 +429,8 @@ class PromptPack:
         if chapter_context:
             context_section = f"\n\n【前文内容参考】\n{chapter_context}"
 
-        # 自进化整改要点段（章节正文/弧线大纲共用），置于全文末尾＝收尾约束、最高优先级。
-        evolved_section = self._evolved_directives_section()
+        # 章节正文创作专属整改要点(chapter 桶),置于全文末尾＝收尾约束、最高优先级。
+        evolved_section = self._evolved_directives_section("chapter")
 
         # 弧线大纲锚点：显式告知 LLM 当前是本批第几章，并把对应分章大纲抽出作为首要依据。
         arc_section = ""
@@ -521,4 +558,4 @@ class PromptPack:
 ## 补充兜底规则
 1. 若上一批衔接信息缺失，优先沿用最近主线冲突、人物状态、场景位置续写。
 2. 关键反派、核心配角的行为保持前后一致，恩怨、矛盾持续延续。
-3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。{self._evolved_directives_section()}"""
+3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。{self._evolved_directives_section("arc_outline")}"""

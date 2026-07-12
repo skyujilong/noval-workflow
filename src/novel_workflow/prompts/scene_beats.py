@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from noval_workflow.prompts.base import _extract_arc_chapter_block
+from noval_workflow.prompts.base import (
+    _extract_arc_chapter_block,
+    evolved_directives_block,
+    get_evolved_directives,
+)
+from noval_workflow.prompts.registry import get_prompt_pack
 
 if TYPE_CHECKING:
     from noval_workflow.state import NovelState
@@ -190,6 +195,14 @@ def scene_beats_prompt(state: "NovelState", chapter_context: str = "") -> str:
     if chapter_context:
         chapter_context_section = f"\n【前文章节参考】\n{chapter_context}"
 
+    # 历史整改要点(自进化闭环):本书 prompt_overrides 里 scene_beats 桶累积的打回意见提炼。
+    # 三桶隔离后,scene_beats 只读自己那份;chapter/arc_outline 的整改若用户显式勾选「分发到」
+    # scene_beats,会在 apply 时同步写入本桶——LLM 视角把它当"最高优先级补充规则"读。
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    directives_section = evolved_directives_block(
+        get_evolved_directives(pack.flavor, "scene_beats")
+    )
+
     return SCENE_BEATS_PROMPT.format(
         chapter_num=chapter_num,
         title=title,
@@ -197,7 +210,7 @@ def scene_beats_prompt(state: "NovelState", chapter_context: str = "") -> str:
         chapter_word_count=state.chapter_word_count or "（未设定，按 2000-3000 规划）",
         arc_section=arc_section,
         chapter_context_section=chapter_context_section,
-    )
+    ) + directives_section
 
 
 # ── 结构化 beats → markdown 表（供 chapter_prompt 注入下游正文创作使用）──────────

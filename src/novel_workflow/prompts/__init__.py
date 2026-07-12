@@ -9,10 +9,13 @@ import 路径 noval_workflow.prompts 与改造前的单文件一致，旧调用�
 
 from noval_workflow.prompts.base import (
     ARC_CHAPTER_FORMAT,
+    EVOLVED_DIRECTIVES_FIELDS,
     SUMMARY_PROMPT,
     GenreFlavor,
     PromptPack,
     evolved_directives_block,
+    evolved_field_for,
+    get_evolved_directives,
 )
 from noval_workflow.prompts.ledger import (
     _format_foreshadowing_for_context,
@@ -81,6 +84,9 @@ __all__ = [
     "PromptPack",
     "GenreFlavor",
     "evolved_directives_block",
+    "evolved_field_for",
+    "get_evolved_directives",
+    "EVOLVED_DIRECTIVES_FIELDS",
     # 按小说提示词覆盖
     "load_overrides",
     "apply_overrides",

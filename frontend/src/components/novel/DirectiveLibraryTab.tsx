@@ -9,11 +9,12 @@ import { EditableDirectiveCard } from "./EditableDirectiveCard";
 interface Props {
   novelName: string;
   genre: string;
+  reviewType: string;
   open: boolean;
 }
 
-export function DirectiveLibraryTab({ novelName, genre, open }: Props) {
-  const lib = useDirectiveLibrary(novelName, genre, open);
+export function DirectiveLibraryTab({ novelName, genre, reviewType, open }: Props) {
+  const lib = useDirectiveLibrary(novelName, genre, reviewType, open);
 
   return (
     <div className="space-y-5">

@@ -71,6 +71,7 @@ export function PromptEvolutionModal({
             <DirectiveLibraryTab
               novelName={novelName}
               genre={genre}
+              reviewType={reviewType}
               open={open && tab === "library"}
             />
           )}
