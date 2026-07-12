@@ -20,6 +20,7 @@ from noval_workflow.prompts import (
     OVERALL_OUTLINE_REVIEW_PROMPT,
     PHASE_SUMMARY_REVIEW_PROMPT,
     POWER_SYSTEM_REVIEW_PROMPT,
+    SCENE_BEATS_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
     evolved_directives_block,
@@ -48,6 +49,7 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "character_relations": 3,
     "foreshadowing": 3,
     "phase_summary": 3,
+    "scene_beats": 3,
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
@@ -65,6 +67,7 @@ _REVIEW_PROMPTS = {
     "character_relations": CHARACTER_RELATIONS_REVIEW_PROMPT,
     "foreshadowing": FORESHADOWING_REVIEW_PROMPT,
     "phase_summary": PHASE_SUMMARY_REVIEW_PROMPT,
+    "scene_beats": SCENE_BEATS_REVIEW_PROMPT,
 }
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}

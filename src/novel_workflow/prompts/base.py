@@ -372,12 +372,17 @@ class PromptPack:
         arc_outline: str = "",
         batch_pos: int = 0,
         batch_total: int = 0,
+        scene_beats: list[dict] | None = None,
     ) -> str:
         """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。
 
         arc_outline/batch_pos/batch_total 用于把「本批弧线大纲」中专属本章的那一段
         显式锚定到任务提示词里：batch_pos 为本章在当前批次内的序号（1-based），
         batch_total 为本批章节数。整批弧线大纲仍在 system_context 中，供铺垫参考。
+
+        scene_beats（可选）：本章 scene beats 节拍表；非空时作为「首要依据」注入正文创作
+        提示词，并追加第 7 条硬约束「Scene beats 对齐」——逐 beat 展开、打脸四拍必须齐全、
+        章尾钩必须落在末 beat 上。为空则走原路径不注入，行为与旧图完全一致。
         """
         all_titles_text = "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
@@ -413,12 +418,34 @@ class PromptPack:
                 "同时为本批后续章节所需的人物、关系、线索与伏笔做好必要的前置铺垫，让分章之间自然咬合。"
             )
 
+        # Scene beats 节拍表（章级可选）：非空时作为「首要依据」注入，比弧线锚点更细一层。
+        # 弧线锚点说「本章要发生什么」，scene beats 说「本章 3-7 个 beat 逐一怎么演」。
+        beats_section = ""
+        beats_rule = ""
+        if scene_beats:
+            # 惰性 import 避免循环：scene_beats.py 依赖 base.py 的 _extract_arc_chapter_block。
+            from noval_workflow.prompts.scene_beats import format_beats_for_chapter_prompt
+            beats_md = format_beats_for_chapter_prompt(scene_beats)
+            beats_section = (
+                f"\n\n【本章 Scene Beats（章内节拍表，首要依据，逐 beat 展开正文）】\n{beats_md}\n"
+                "（以上是本章的场景节拍表。每个 beat 是一段独立场景，beat 之间用空行分场；"
+                "beat 的 device_tags 决定该段的叙事装置：setup/buildup/release=三段式爽感；"
+                "slap_*=打脸四拍；hook_opening/hook_chapter_end=钩子；foreshadow_*=伏笔；"
+                "buffer=缓冲。严格按 beat 顺序与 target_words 分配写作。）"
+            )
+            beats_rule = (
+                "\n7. Scene beats 对齐（硬约束）：逐 beat 落实各 beat 的 goal-obstacle-outcome-cost 与"
+                " device_tags；不得漏拍、不得越界写非本章 beat 内容；"
+                "打脸桥段（含任一 slap_* tag）必须四拍完整（嘲讽→沉默→碾压→围观）；"
+                "章尾钩（hook_chapter_end）必须落在最后一个 beat 上，在情绪/动作最高点前一秒断章。"
+            )
+
         return f"""{self.flavor.system_identity}
 
 请撰写第{chapter_num}章：《{title}》
 
 全书章节目录（供参考）：
-{all_titles_text}{context_section}{arc_section}
+{all_titles_text}{context_section}{arc_section}{beats_section}
 
 ### 核心创作强制规则
 1. 人设严格合规：100%遵循全书官方人物档案，守住角色性格、行事底线、核心动机，**严禁OOC、人设崩坏、性格前后矛盾**；人物关系、阵营、立场保持连贯统一。专属小动作、外形标识、口头禅等标志特征，仅在情绪转折或剧情关键点自然露出，普通场景中禁止高频复读。
@@ -426,7 +453,7 @@ class PromptPack:
 3. 文体风格：
 {self.flavor.chapter_style_rules}
 4. 章节节奏：单章结构完整，中段设置小冲突/悬念/情绪波动，**章节结尾预留剧情钩子**，引导下一章内容；全章字数贴近预设单章标准字数。
-5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}
+5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}{beats_rule}
 
 ### 【关键去机械化：人物动作克制规则】
 角色专属癖好、标志性小动作、口头禅、信物特征，**禁止高频、机械、重复性刷人设**。

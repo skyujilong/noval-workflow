@@ -89,11 +89,25 @@ export function useRun(threadId: string): UseRunResult {
   // 丢弃所有流式事件 → 打字机永不更新，内容只在末尾 refresh 整段冒出。生产环境无此双调用，
   // 但仍应对称地在 setup 置位，保证语义正确、且 dev 行为与生产一致。
   const aliveRef = useRef(true);
+  // 延迟 abort 计时器：StrictMode 假 cleanup 后 React 会同一宏任务里立刻重跑 setup，
+  // 真卸载则不会。故 cleanup 里 setTimeout(0) 排队 abort、setup 里 clearTimeout 撤销 ——
+  // 假 cleanup 被 setup 抢先撤销（abort 不发生），真卸载 timer 触发（abort 发生）。
+  // 代价：真卸载后 SSE 多存活 <1ms 才被 abort，业务无感。
+  const deferredAbortRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     aliveRef.current = true;
+    // 撤销上次 cleanup 排下的延迟 abort：若为 StrictMode 假 cleanup，setup 紧接着重跑到这里
+    // 时 timer 还未触发，能被 clear 掉；真卸载不会跑到 setup，clear 不会发生 → timer 正常触发。
+    if (deferredAbortRef.current) {
+      clearTimeout(deferredAbortRef.current);
+      deferredAbortRef.current = null;
+    }
     return () => {
       aliveRef.current = false;
-      abortRef.current?.abort();
+      deferredAbortRef.current = setTimeout(() => {
+        abortRef.current?.abort();
+        deferredAbortRef.current = null;
+      }, 0);
     };
   }, []);
 

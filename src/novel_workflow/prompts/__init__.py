@@ -45,6 +45,14 @@ from noval_workflow.prompts.overrides import (
     save_overrides,
 )
 from noval_workflow.prompts.registry import available_genres, get_prompt_pack
+from noval_workflow.prompts.scene_beats import (
+    ALL_DEVICE_TAGS,
+    SCENE_BEATS_PROMPT,
+    SCENE_BEATS_REVIEW_PROMPT,
+    format_beats_for_chapter_prompt,
+    scene_beats_prompt,
+    validate_beats,
+)
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_REVIEW_PROMPT,
@@ -111,6 +119,13 @@ __all__ = [
     "CONSISTENCY_AUDIT_PROMPT",
     "CONSISTENCY_REVISE_SYSTEM_PROMPT",
     "CONSISTENCY_REVISE_PROMPT",
+    # scene beats（章级节拍表）
+    "SCENE_BEATS_PROMPT",
+    "SCENE_BEATS_REVIEW_PROMPT",
+    "ALL_DEVICE_TAGS",
+    "scene_beats_prompt",
+    "format_beats_for_chapter_prompt",
+    "validate_beats",
     # 台账类提示词函数
     "character_status_prompt",
     "character_relations_prompt",

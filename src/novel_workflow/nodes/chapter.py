@@ -76,6 +76,11 @@ def prepare_chapter(state: NovelState) -> dict:
     # 故 batch_pos = index + 1；据此把「本批弧线大纲」中对应本章的那一段锚定到提示词。
     batch_pos = state.current_chapter_index + 1
     batch_total = len(state.current_batch_titles)
+    # scene beats 消费：严格核对 beats_chapter_index == chapter_num 才注入；不匹配（跳过 gate
+    # / 上一章残留 / save_chapter 清零后）时视同无 beats，走原路径不注入。
+    scene_beats_for_prompt = None
+    if state.current_chapter_beats and state.beats_chapter_index == chapter_num:
+        scene_beats_for_prompt = state.current_chapter_beats
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
@@ -87,6 +92,7 @@ def prepare_chapter(state: NovelState) -> dict:
             arc_outline=state.current_arc_outline,
             batch_pos=batch_pos,
             batch_total=batch_total,
+            scene_beats=scene_beats_for_prompt,
         ),
         "review_type": "chapter",
         **reset_review_fields(),
@@ -121,6 +127,10 @@ def save_chapter(state: NovelState) -> dict:
     return {
         "current_chapter_index": state.current_chapter_index + 1,
         "total_chapters_written": chapter_num,
+        # 清零 scene beats：本章已写完保存，下一章 gate 若跳过则不应误用本章 beats
+        # （prepare_chapter 双重保险：还会核对 beats_chapter_index==chapter_num）。
+        "current_chapter_beats": [],
+        "beats_chapter_index": -1,
     }
 
 
@@ -207,8 +217,10 @@ def ask_continue(state: NovelState) -> dict:
 # ── routers ───────────────────────────────────────────────────────────────────
 
 def route_chapter_or_continue(state: NovelState) -> str:
+    # 本批未完 → 回到 scene_beats_step（每章都进 gate，用户可选择跳过或做 beats）
+    # 本批完 → ask_continue 询问是否继续下一批
     if state.current_chapter_index < len(state.current_batch_titles):
-        return "prepare_chapter"
+        return "scene_beats_step"
     return "ask_continue"
 
 

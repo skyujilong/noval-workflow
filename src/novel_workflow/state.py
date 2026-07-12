@@ -122,6 +122,17 @@ class NovelState:
     current_arc_outline: str = ""
     # 本批章节的故事弧线大纲（每批开始时由 save_arc_outline 覆盖写入，直接注入 system_context）
 
+    # ── Phase 2.7：章级 scene beats（可跳步骤，写正文前先规划本章节拍）──────────
+    # 章级 transient：每章由 scene_beats_step 覆盖写入（可跳过），供 prepare_chapter 注入
+    # chapter_prompt；save_chapter 之后由 chapter loop 清零，防止下一章跳过 gate 时误用上一章的 beats。
+    # 结构：list[dict]，每个 beat 含 id / scene / goal / obstacle / outcome / cost / emotion_arc /
+    # device_tags / target_words 字段，落地格式详见 prompts/scene_beats.py。
+    current_chapter_beats: list = field(default_factory=list)
+    # 章号锚定：记录 current_chapter_beats 是为哪一章生成的（1-based 全书章号）。prepare_chapter
+    # 严格核对 beats_chapter_index == chapter_num 才注入；不匹配（跳过 gate / 上一章残留）时视同无 beats。
+    # 初始 -1 = 从未生成过。
+    beats_chapter_index: int = -1
+
     # ── Phase 2.5：动态状态库（每次覆盖写入最新快照）────────────────────────────
     character_status: str = ""
     # 人物动态状态（主角 + 主要配角的当前位置/情绪/目标/处境）
