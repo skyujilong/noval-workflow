@@ -64,6 +64,11 @@ class InterruptType(str, Enum):
     PHASE_SUMMARY_DIRECTION_INPUT = "phase_summary_direction_input"  # 阶段数据调整方向输入
     PHASE_SUMMARY_REVIEW = "phase_summary_review"  # 阶段固化数据审核
 
+    # 章级 scene beats（章前节拍表，可跳步骤；插在 save_titles 之后、prepare_chapter 之前）
+    SCENE_BEATS_ENTRY_GATE = "scene_beats_entry_gate"  # 是否为本章生成 scene beats
+    SCENE_BEATS_DIRECTION_INPUT = "scene_beats_direction_input"  # scene beats 调整方向输入（预留）
+    SCENE_BEATS_REVIEW = "scene_beats_review"  # scene beats 审核
+
     # ============================================================
     # arc_edit_subgraph 独立使用的标题确认
     # ============================================================
@@ -102,6 +107,7 @@ _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
     "foreshadowing": InterruptType.FORESHADOWING_REVIEW,
     "phase_summary": InterruptType.PHASE_SUMMARY_REVIEW,
     "chapter": InterruptType.REVIEW_CHAPTER,
+    "scene_beats": InterruptType.SCENE_BEATS_REVIEW,
     # 以下 review_type 共用通用审核表单，归入 REVIEW_GENERIC：
     #   foundation / core_theme / world_building / core_conflicts /
     #   overall_outline / character_profiles / titles / arc_outline

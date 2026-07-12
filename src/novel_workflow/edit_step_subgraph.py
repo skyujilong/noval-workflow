@@ -110,6 +110,7 @@ def make_edit_step_subgraph(
     llm_review_max: int = 3,
     ask_direction: bool = False,
     enable_prune: bool = False,  # 是否启用伏笔精简流程
+    state_cls: type = EditStepSubState,  # 允许子图携带额外写回字段（如 scene_beats 的 current_chapter_beats）
 ):
     """Build and compile a single chapter-edit step subgraph.
 
@@ -127,6 +128,12 @@ def make_edit_step_subgraph(
         ask_direction:     If True, interrupt after entry to collect a direction
                            string before calling prepare_fn.
         enable_prune:      If True, enable foreshadowing prune flow after human review.
+        state_cls:         Sub-state dataclass used by this compiled subgraph. Defaults
+                           to EditStepSubState. Provide a subclass when save_fn writes
+                           fields not present in EditStepSubState (e.g. scene_beats
+                           writes current_chapter_beats & beats_chapter_index)—those
+                           fields must exist in the compiled StateGraph schema, otherwise
+                           langgraph drops them on update.
     """
 
     # ── node closures ──────────────────────────────────────────────────────────
@@ -307,7 +314,7 @@ def make_edit_step_subgraph(
 
     # ── graph assembly ─────────────────────────────────────────────────────────
 
-    builder = StateGraph(EditStepSubState)
+    builder = StateGraph(state_cls)
 
     builder.add_node("step_entry", step_entry)
     if ask_direction:

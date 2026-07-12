@@ -62,6 +62,7 @@ from noval_workflow.nodes.inputs import collect_user_inputs
 from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
 from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
+from noval_workflow.scene_beats_subgraph import scene_beats_step
 
 builder = StateGraph(NovelState)
 
@@ -129,6 +130,9 @@ builder.add_node("review_chapter", review_subgraph)
 builder.add_node("save_chapter", save_chapter)
 builder.add_node("generate_summary", generate_summary)
 builder.add_node("ask_continue", ask_continue)
+
+# Phase 2.7 — scene beats（章前节拍表，可跳步骤：save_titles 之后、prepare_chapter 之前）
+builder.add_node("scene_beats_step", scene_beats_step)
 
 # Phase 2 — chapter edit subgraph
 builder.add_node("chapter_edit_subgraph", chapter_edit_subgraph)
@@ -249,7 +253,10 @@ builder.add_edge("save_arc_outline", "prepare_titles")
 # Phase 2 — titles chain
 builder.add_edge("prepare_titles", "review_titles")
 builder.add_edge("review_titles", "save_titles")
-builder.add_edge("save_titles", "prepare_chapter")
+# save_titles → scene_beats_step（可跳步骤：用户可跳过直接进 prepare_chapter）→ prepare_chapter
+# 章循环回跳（route_chapter_or_continue）也会回到 scene_beats_step，让每章都进 gate。
+builder.add_edge("save_titles", "scene_beats_step")
+builder.add_edge("scene_beats_step", "prepare_chapter")
 
 # Phase 2 — chapter loop
 builder.add_edge("prepare_chapter", "review_chapter")
@@ -261,7 +268,7 @@ builder.add_edge("generate_summary", "chapter_edit_subgraph")
 builder.add_conditional_edges(
     "chapter_edit_subgraph",
     route_chapter_or_continue,
-    {"prepare_chapter": "prepare_chapter", "ask_continue": "ask_continue"},
+    {"scene_beats_step": "scene_beats_step", "ask_continue": "ask_continue"},
 )
 
 builder.add_conditional_edges(

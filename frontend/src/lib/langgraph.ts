@@ -251,6 +251,24 @@ export interface EvolutionProposal {
   text: string;
   rationale: string;
   conflicts_with: string; // 非空＝覆盖某条原规则
+  applies_to: string[]; // 除主 field 外,还要分发到的桶(evolved_directives_* 三选二)
+}
+
+/** apply 时提交的单条选中整改。also_apply_to 是主 field 之外要一次写入的桶(evolved_directives_* 三选二)。 */
+export interface SelectedDirective {
+  field: string;
+  text: string;
+  op: string; // "append" | "replace"
+  also_apply_to?: string[];
+}
+
+/** 三桶并排预览响应(GET /prompt-overrides/all-evolved),用于「预览总体」抽屉。 */
+export interface AllEvolvedResponse {
+  chapter: string;
+  arc_outline: string;
+  scene_beats: string;
+  /** 同一行(strip)在多个桶都出现的条目——UI 用来高亮"跨环节重复整改"。 */
+  cross_bucket_overlaps: Array<{ text: string; buckets: string[] }>;
 }
 
 export interface EvolutionEvent {
@@ -286,13 +304,6 @@ export interface RefinedCandidate {
   title: string;
   text: string;
   tags: string[];
-}
-
-/** apply 时提交的单条选中整改 */
-export interface SelectedDirective {
-  field: string;
-  text: string;
-  op: string; // "append" | "replace"
 }
 
 async function postJson<T>(url: string, body: unknown, errLabel: string): Promise<T> {
@@ -367,29 +378,36 @@ export async function restorePromptEvolution(novelName: string, eventId: string)
   await postJson(url, { event_id: eventId }, "还原");
 }
 
-/** 整理消解预览：把累积整改去重、消解矛盾成自洽全集（不落盘，供确认后再应用）。 */
+/** 整理消解预览:把某桶累积整改去重、消解矛盾成自洽全集(不落盘,供确认后再应用)。
+ *
+ * 三桶隔离下,reconcile 只作用于当前 review_type 对应的桶。response 附带 field 让前端
+ * 明确整理的是哪一桶,apply 时回传同一 field。
+ */
 export interface ReconcilePreview {
   before: string;
   after: string;
   summary: string;
   resolved: string[];
+  /** 对应的桶字段名(evolved_directives_chapter / _arc_outline / _scene_beats)。 */
+  field: string;
+  review_type: string;
 }
 
 export async function reconcilePreview(
   novelName: string,
-  genre: string
+  genre: string,
+  reviewType: string
 ): Promise<ReconcilePreview> {
-  const url = `${API_URL}/prompt-evolution/reconcile?novel=${encodeURIComponent(
-    novelName
-  )}&genre=${encodeURIComponent(genre)}`;
+  const params = new URLSearchParams({ novel: novelName, genre, review_type: reviewType });
+  const url = `${API_URL}/prompt-evolution/reconcile?${params.toString()}`;
   return postJson(url, {}, "整理消解预览");
 }
 
-/** 应用整理后的自洽整改（整段 REPLACE，记一条 reconcile 事件，可还原）。 */
+/** 应用整理后的自洽整改(整段 REPLACE 到 field 对应桶,记一条 reconcile 事件,可还原)。 */
 export async function applyReconciled(
   novelName: string,
   genre: string,
-  input: { text: string; before: string; summary: string }
+  input: { text: string; before: string; summary: string; review_type: string; field: string }
 ): Promise<{ overrides: Record<string, string>; event: EvolutionEvent }> {
   const url = `${API_URL}/prompt-evolution/reconcile/apply?novel=${encodeURIComponent(
     novelName
@@ -397,14 +415,14 @@ export async function applyReconciled(
   return postJson(url, input, "应用整理");
 }
 
-/** 把某小说累积的整改精炼拆成候选条目（不落库）。 */
+/** 把某小说某桶累积的整改精炼拆成候选条目(不落库)。 */
 export async function refineToLibrary(
   novelName: string,
-  genre: string
+  genre: string,
+  reviewType: string
 ): Promise<RefinedCandidate[]> {
-  const url = `${API_URL}/prompt-library/refine?novel=${encodeURIComponent(
-    novelName
-  )}&genre=${encodeURIComponent(genre)}`;
+  const params = new URLSearchParams({ novel: novelName, genre, review_type: reviewType });
+  const url = `${API_URL}/prompt-library/refine?${params.toString()}`;
   const data = await postJson<{ items: RefinedCandidate[] }>(url, {}, "精炼");
   return data.items;
 }
@@ -442,16 +460,30 @@ export async function listLibrary(
   return data.items;
 }
 
-/** 把选中的库条目导入某小说的 evolved_directives（去重追加）。 */
+/** 把选中的库条目导入某小说的 evolved_directives 某桶(去重追加)。 */
 export async function importLibraryItems(
   novelName: string,
   genre: string,
-  itemIds: string[]
+  itemIds: string[],
+  reviewType: string
 ): Promise<{ imported: number }> {
   const url = `${API_URL}/prompt-library/import?novel=${encodeURIComponent(
     novelName
   )}&genre=${encodeURIComponent(genre)}`;
-  return postJson(url, { item_ids: itemIds }, "导入");
+  return postJson(url, { item_ids: itemIds, review_type: reviewType }, "导入");
+}
+
+/** 并排拉取三桶 evolved_directives 及跨桶重复条目——用于「预览总体」抽屉。 */
+export async function getAllEvolvedDirectives(
+  novelName: string,
+  genre: string
+): Promise<AllEvolvedResponse> {
+  const params = new URLSearchParams({ novel: novelName, genre });
+  const res = await fetch(`${API_URL}/prompt-overrides/all-evolved?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`读取总体历史整改要点失败 (${res.status})：${await res.text()}`);
+  }
+  return (await res.json()) as AllEvolvedResponse;
 }
 
 // ── Run（执行 / 恢复）─────────────────────────────────────────────────────────

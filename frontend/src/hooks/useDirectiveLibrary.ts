@@ -41,6 +41,7 @@ interface UseDirectiveLibrary {
 export function useDirectiveLibrary(
   novelName: string,
   genre: string,
+  reviewType: string,
   open: boolean
 ): UseDirectiveLibrary {
   const [items, setItems] = useState<DirectiveItem[]>([]);
@@ -96,11 +97,11 @@ export function useDirectiveLibrary(
     setImporting(true);
     setError(null);
     try {
-      const { imported } = await importLibraryItems(novelName, genre, [...selectedIds]);
+      const { imported } = await importLibraryItems(novelName, genre, [...selectedIds], reviewType);
       setStatus(
         imported > 0
-          ? `已导入 ${imported} 条到本书，下一章生成即生效`
-          : "选中的条目均已存在，无新增"
+          ? `已导入 ${imported} 条到本书当前环节,下一次生成即生效`
+          : "选中的条目均已存在,无新增"
       );
       setSelectedIds(new Set());
     } catch (e) {
@@ -108,22 +109,22 @@ export function useDirectiveLibrary(
     } finally {
       setImporting(false);
     }
-  }, [selectedIds, novelName, genre]);
+  }, [selectedIds, novelName, genre, reviewType]);
 
   const refine = useCallback(async () => {
     setRefining(true);
     setError(null);
     setStatus(null);
     try {
-      const cands = await refineToLibrary(novelName, genre);
+      const cands = await refineToLibrary(novelName, genre, reviewType);
       setCandidates(cands.map((c) => ({ ...c, selected: true })));
-      setStatus(cands.length ? `已精炼出 ${cands.length} 条候选` : "本书暂无可精炼的历史整改");
+      setStatus(cands.length ? `已精炼出 ${cands.length} 条候选` : "本书当前环节暂无可精炼的历史整改");
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
     } finally {
       setRefining(false);
     }
-  }, [novelName, genre]);
+  }, [novelName, genre, reviewType]);
 
   const toggleCandidate = useCallback((index: number) => {
     setCandidates((prev) =>

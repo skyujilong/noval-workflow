@@ -150,14 +150,46 @@ class GenreFlavor:
     arc_focus: str = ""
     """故事弧步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
 
-    # ── 自进化：历次人工反馈沉淀的强制整改要点（默认空）──────────────────────
+    # ── 自进化：历次人工反馈沉淀的强制整改要点（按 review_type 分桶）──────────
+    # 三桶各存对应环节的历史整改要点，chapter/arc_outline/scene_beats 相互独立；
+    # 一个整改条目可以显式「分发」到多个桶——写入侧决定,消费侧只读自己那一桶。
+    evolved_directives_chapter: str = ""
+    """章节正文创作的历史整改要点。追加到 chapter_prompt 末尾（最高优先级段）。"""
+    evolved_directives_arc_outline: str = ""
+    """弧线大纲创作的历史整改要点。追加到 arc_outline_prompt 末尾。"""
+    evolved_directives_scene_beats: str = ""
+    """章前 scene beats 生成的历史整改要点。追加到 scene_beats_prompt 末尾。"""
+
+    # 老字段（deprecated）：仅用于兼容旧 prompt_overrides.json——加载时会在
+    # overrides.py::load_overrides 里迁移到 evolved_directives_chapter。字段本身保留
+    # 只为 dataclass 反序列化容错，prompt 组装侧不再读它。
     evolved_directives: str = ""
-    """按小说累积的「历史整改要点」，来源于人工打回意见的提炼/整改库导入。
-    追加到 chapter_prompt 末尾并声明为最高优先级：与上文冲突时以本节为准，
-    本节内多条冲突时以更靠后（更新）者为准。默认空 → 对现有题材零影响。"""
+    """[DEPRECATED] 老单桶字段，加载时迁移到 evolved_directives_chapter；prompt 组装侧不再读。"""
 
 
 # ── PromptPack：通用脚手架 + 风味组装 ─────────────────────────────────────────
+
+
+# review_type → 对应 evolved_directives 字段名。这是「按 type 分桶」的唯一映射表——
+# prompt 组装侧、subgraph.generate 打回重跑、HTTP apply/reconcile 全走它,避免各处硬编码。
+_REVIEW_TYPE_TO_EVOLVED_FIELD: dict[str, str] = {
+    "chapter": "evolved_directives_chapter",
+    "arc_outline": "evolved_directives_arc_outline",
+    "scene_beats": "evolved_directives_scene_beats",
+}
+
+# 所有已接入自进化的 evolved_directives 桶字段名——供 overrides/HTTP 层遍历。
+EVOLVED_DIRECTIVES_FIELDS: frozenset[str] = frozenset(_REVIEW_TYPE_TO_EVOLVED_FIELD.values())
+
+
+def evolved_field_for(review_type: str) -> str:
+    """把 review_type 映射到 GenreFlavor 字段名。未知类型回退到 chapter(最保守默认)。"""
+    return _REVIEW_TYPE_TO_EVOLVED_FIELD.get(review_type, "evolved_directives_chapter")
+
+
+def get_evolved_directives(flavor: "GenreFlavor", review_type: str) -> str:
+    """按 review_type 从 flavor 里取对应桶的文本;未知类型走 chapter 桶。"""
+    return getattr(flavor, evolved_field_for(review_type), "")
 
 
 def evolved_directives_block(directives: str) -> str:
@@ -359,9 +391,14 @@ class PromptPack:
 
 请直接输出{BATCH_SIZE}个标题，每行一个。"""
 
-    def _evolved_directives_section(self) -> str:
-        """本 pack 当前 flavor 的整改段（章节正文/弧线大纲共用）。见 evolved_directives_block。"""
-        return evolved_directives_block(self.flavor.evolved_directives)
+    def _evolved_directives_section(self, review_type: str = "chapter") -> str:
+        """本 pack 当前 flavor 的整改段——按 review_type 分派到对应字段。
+
+        三桶隔离:chapter/arc_outline/scene_beats 各读自己那份。老数据加载时会被
+        overrides.py 迁移到 chapter 桶,故未知 review_type 一律走 chapter(最安全默认)。
+        """
+        directives = get_evolved_directives(self.flavor, review_type)
+        return evolved_directives_block(directives)
 
     def chapter_prompt(
         self,
@@ -372,12 +409,17 @@ class PromptPack:
         arc_outline: str = "",
         batch_pos: int = 0,
         batch_total: int = 0,
+        scene_beats: list[dict] | None = None,
     ) -> str:
         """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。
 
         arc_outline/batch_pos/batch_total 用于把「本批弧线大纲」中专属本章的那一段
         显式锚定到任务提示词里：batch_pos 为本章在当前批次内的序号（1-based），
         batch_total 为本批章节数。整批弧线大纲仍在 system_context 中，供铺垫参考。
+
+        scene_beats（可选）：本章 scene beats 节拍表；非空时作为「首要依据」注入正文创作
+        提示词，并追加第 7 条硬约束「Scene beats 对齐」——逐 beat 展开、打脸四拍必须齐全、
+        章尾钩必须落在末 beat 上。为空则走原路径不注入，行为与旧图完全一致。
         """
         all_titles_text = "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
@@ -387,8 +429,8 @@ class PromptPack:
         if chapter_context:
             context_section = f"\n\n【前文内容参考】\n{chapter_context}"
 
-        # 自进化整改要点段（章节正文/弧线大纲共用），置于全文末尾＝收尾约束、最高优先级。
-        evolved_section = self._evolved_directives_section()
+        # 章节正文创作专属整改要点(chapter 桶),置于全文末尾＝收尾约束、最高优先级。
+        evolved_section = self._evolved_directives_section("chapter")
 
         # 弧线大纲锚点：显式告知 LLM 当前是本批第几章，并把对应分章大纲抽出作为首要依据。
         arc_section = ""
@@ -413,12 +455,34 @@ class PromptPack:
                 "同时为本批后续章节所需的人物、关系、线索与伏笔做好必要的前置铺垫，让分章之间自然咬合。"
             )
 
+        # Scene beats 节拍表（章级可选）：非空时作为「首要依据」注入，比弧线锚点更细一层。
+        # 弧线锚点说「本章要发生什么」，scene beats 说「本章 3-7 个 beat 逐一怎么演」。
+        beats_section = ""
+        beats_rule = ""
+        if scene_beats:
+            # 惰性 import 避免循环：scene_beats.py 依赖 base.py 的 _extract_arc_chapter_block。
+            from noval_workflow.prompts.scene_beats import format_beats_for_chapter_prompt
+            beats_md = format_beats_for_chapter_prompt(scene_beats)
+            beats_section = (
+                f"\n\n【本章 Scene Beats（章内节拍表，首要依据，逐 beat 展开正文）】\n{beats_md}\n"
+                "（以上是本章的场景节拍表。每个 beat 是一段独立场景，beat 之间用空行分场；"
+                "beat 的 device_tags 决定该段的叙事装置：setup/buildup/release=三段式爽感；"
+                "slap_*=打脸四拍；hook_opening/hook_chapter_end=钩子；foreshadow_*=伏笔；"
+                "buffer=缓冲。严格按 beat 顺序与 target_words 分配写作。）"
+            )
+            beats_rule = (
+                "\n7. Scene beats 对齐（硬约束）：逐 beat 落实各 beat 的 goal-obstacle-outcome-cost 与"
+                " device_tags；不得漏拍、不得越界写非本章 beat 内容；"
+                "打脸桥段（含任一 slap_* tag）必须四拍完整（嘲讽→沉默→碾压→围观）；"
+                "章尾钩（hook_chapter_end）必须落在最后一个 beat 上，在情绪/动作最高点前一秒断章。"
+            )
+
         return f"""{self.flavor.system_identity}
 
 请撰写第{chapter_num}章：《{title}》
 
 全书章节目录（供参考）：
-{all_titles_text}{context_section}{arc_section}
+{all_titles_text}{context_section}{arc_section}{beats_section}
 
 ### 核心创作强制规则
 1. 人设严格合规：100%遵循全书官方人物档案，守住角色性格、行事底线、核心动机，**严禁OOC、人设崩坏、性格前后矛盾**；人物关系、阵营、立场保持连贯统一。专属小动作、外形标识、口头禅等标志特征，仅在情绪转折或剧情关键点自然露出，普通场景中禁止高频复读。
@@ -426,7 +490,7 @@ class PromptPack:
 3. 文体风格：
 {self.flavor.chapter_style_rules}
 4. 章节节奏：单章结构完整，中段设置小冲突/悬念/情绪波动，**章节结尾预留剧情钩子**，引导下一章内容；全章字数贴近预设单章标准字数。
-5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}
+5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}{beats_rule}
 
 ### 【关键去机械化：人物动作克制规则】
 角色专属癖好、标志性小动作、口头禅、信物特征，**禁止高频、机械、重复性刷人设**。
@@ -494,4 +558,4 @@ class PromptPack:
 ## 补充兜底规则
 1. 若上一批衔接信息缺失，优先沿用最近主线冲突、人物状态、场景位置续写。
 2. 关键反派、核心配角的行为保持前后一致，恩怨、矛盾持续延续。
-3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。{self._evolved_directives_section()}"""
+3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记。{self._evolved_directives_section("arc_outline")}"""

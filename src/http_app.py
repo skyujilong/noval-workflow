@@ -79,6 +79,41 @@ async def put_prompt_overrides(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "overrides": saved})
 
 
+async def get_all_evolved_directives(request: Request) -> JSONResponse:
+    """并排返回该小说三桶 evolved_directives 当前生效值——供「预览总体」抽屉使用。
+
+    query: novel, genre。
+    resp: {chapter: str, arc_outline: str, scene_beats: str, cross_bucket_overlaps: [...]}
+    cross_bucket_overlaps:同一条(按行 hash)在多个桶都出现的整改,供 UI 高亮"跨环节重复"。
+    """
+    from noval_workflow.prompts import get_evolved_directives, get_prompt_pack
+
+    novel = request.query_params.get("novel", "")
+    genre = request.query_params.get("genre", "")
+    if not novel:
+        return JSONResponse({"error": "missing novel"}, status_code=400)
+    flavor = await asyncio.to_thread(lambda: get_prompt_pack(genre, novel).flavor)
+    buckets = {
+        "chapter": get_evolved_directives(flavor, "chapter"),
+        "arc_outline": get_evolved_directives(flavor, "arc_outline"),
+        "scene_beats": get_evolved_directives(flavor, "scene_beats"),
+    }
+    # 跨桶重复检测:按行(strip)聚合,同一行在多个桶出现则记为一条 overlap 项。
+    line_to_buckets: dict[str, list[str]] = {}
+    for bucket, text in buckets.items():
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            line_to_buckets.setdefault(line, []).append(bucket)
+    overlaps = [
+        {"text": line, "buckets": bkts}
+        for line, bkts in line_to_buckets.items()
+        if len(bkts) >= 2
+    ]
+    return JSONResponse({**buckets, "cross_bucket_overlaps": overlaps})
+
+
 # ── 提示词自进化接口（按小说：提炼 / 应用 / 还原） ───────────────────────────────
 # 把人工打回的修改要求提炼成整改，经确认写进该小说 prompt_overrides.json 的
 # evolved_directives（下一次 prepare_chapter 新鲜读取即生效）；台账与可复用整改库落在
@@ -86,7 +121,12 @@ async def put_prompt_overrides(request: Request) -> JSONResponse:
 
 
 def _current_prompt(genre: str, novel: str):
-    """读取某小说当前生效（已合并覆盖）的相关提示词字段，供提炼去重/冲突判断。"""
+    """读取某小说当前生效(已合并覆盖)的相关提示词字段,供提炼去重/冲突判断。
+
+    三桶隔离:分别把 chapter/arc_outline/scene_beats 三桶的 evolved_directives 传给 LLM,
+    让它能全局去重(避免同一条规则在三个桶里重复出现)。distill 内部会按 review_type 把
+    产出的 field 归一到当前环节对应桶。
+    """
     from noval_workflow.prompts import get_prompt_pack
     from noval_workflow.prompts.evolution import CurrentPrompt
 
@@ -94,7 +134,9 @@ def _current_prompt(genre: str, novel: str):
     return CurrentPrompt(
         chapter_style_rules=flavor.chapter_style_rules,
         chapter_review_checklist=flavor.chapter_review_checklist,
-        evolved_directives=flavor.evolved_directives,
+        evolved_directives_chapter=flavor.evolved_directives_chapter,
+        evolved_directives_arc_outline=flavor.evolved_directives_arc_outline,
+        evolved_directives_scene_beats=flavor.evolved_directives_scene_beats,
     )
 
 
@@ -117,6 +159,7 @@ def _event_to_json(ev) -> dict:
                 "text": p.text,
                 "rationale": p.rationale,
                 "conflicts_with": p.conflicts_with,
+                "applies_to": list(p.applies_to),
             }
             for p in ev.proposals
         ],
@@ -246,9 +289,16 @@ async def post_prompt_evolution_reject(request: Request) -> JSONResponse:
 def _apply_selected(novel: str, genre: str, selected: list[dict]) -> tuple[dict, dict, dict]:
     """把选中的整改合并进该小说覆盖并落盘。返回 (落盘后 overrides, applied, 应用前快照)。
 
-    纯合并 + IO 编排：应用前快照当前覆盖（供还原），基于当前生效字段做 append/replace。
+    支持「分发到多桶」:每项 selected 除了 field 主字段,还可带 also_apply_to=[<桶字段名>...],
+    合并时对每个目标字段独立做 append/replace,让一条整改一次写入多桶。
     """
-    from noval_workflow.prompts import GenreFlavor, get_prompt_pack, load_overrides, save_overrides
+    from noval_workflow.prompts import (
+        EVOLVED_DIRECTIVES_FIELDS,
+        GenreFlavor,
+        get_prompt_pack,
+        load_overrides,
+        save_overrides,
+    )
 
     allowed = {f.name for f in fields(GenreFlavor)}
     prompt_before = load_overrides(novel)
@@ -256,14 +306,19 @@ def _apply_selected(novel: str, genre: str, selected: list[dict]) -> tuple[dict,
     merged = dict(prompt_before)
     applied: dict[str, str] = {}
     for item in selected:
-        field_name = str(item.get("field", "evolved_directives"))
+        field_name = str(item.get("field", "evolved_directives_chapter"))
         text = str(item.get("text", "")).strip()
         if field_name not in allowed or not text:
             continue
         op = str(item.get("op", "append"))
-        base = merged.get(field_name) or getattr(flavor, field_name, "")
-        merged[field_name] = _merge_field(base, text, op)
-        applied[field_name] = merged[field_name]
+        # 主字段 + 分发目标一次性合并;分发目标限定在 evolved_directives_* 三桶(避免误分发到风格/审核清单)。
+        raw_also = item.get("also_apply_to", [])
+        also = [f for f in raw_also if isinstance(f, str) and f in EVOLVED_DIRECTIVES_FIELDS]
+        targets = [field_name] + [f for f in also if f != field_name]
+        for target in targets:
+            base = merged.get(target) or getattr(flavor, target, "")
+            merged[target] = _merge_field(base, text, op)
+            applied[target] = merged[target]
     saved = save_overrides(novel, merged)
     return saved, applied, prompt_before
 
@@ -335,20 +390,26 @@ async def post_prompt_evolution_restore(request: Request) -> JSONResponse:
 
 
 async def post_prompt_evolution_reconcile(request: Request) -> JSONResponse:
-    """预览：把该小说累积的 evolved_directives 整理消解成去重、无矛盾的自洽全集（不落盘）。
+    """预览:把该小说某桶累积的 evolved_directives 整理消解成去重、无矛盾的自洽全集(不落盘)。
 
-    query: novel, genre；body: {}。返回 {before, after, summary, resolved}，供前端确认后再应用。
+    query: novel, genre, review_type(可选,默认 chapter);body: {}。
+    返回 {before, after, summary, resolved, field},field 告诉前端整理的是哪一桶。
     """
+    from noval_workflow.prompts import evolved_field_for, get_evolved_directives, get_prompt_pack
     from noval_workflow.prompts.evolution import reconcile
 
     novel = request.query_params.get("novel", "")
     genre = request.query_params.get("genre", "")
+    review_type = request.query_params.get("review_type", "chapter")
     if not novel:
         return JSONResponse({"error": "missing novel"}, status_code=400)
-    current = await asyncio.to_thread(_current_prompt, genre, novel)
-    before = current.evolved_directives.strip()
+    flavor = await asyncio.to_thread(lambda: get_prompt_pack(genre, novel).flavor)
+    before = get_evolved_directives(flavor, review_type).strip()
+    field = evolved_field_for(review_type)
     if not before:
-        return JSONResponse({"error": "no evolved_directives to reconcile"}, status_code=400)
+        return JSONResponse(
+            {"error": f"no {field} to reconcile"}, status_code=400
+        )
     result = await asyncio.to_thread(reconcile, before, genre)
     return JSONResponse(
         {
@@ -356,26 +417,32 @@ async def post_prompt_evolution_reconcile(request: Request) -> JSONResponse:
             "after": result.reconciled,
             "summary": result.summary,
             "resolved": list(result.resolved),
+            "field": field,
+            "review_type": review_type,
         }
     )
 
 
-def _apply_reconciled(novel: str, genre: str, text: str) -> tuple[dict, dict]:
-    """把整理后的 directives 全量 REPLACE 写进该小说覆盖并落盘。返回 (overrides, 应用前快照)。"""
-    from noval_workflow.prompts import load_overrides, save_overrides
+def _apply_reconciled(novel: str, genre: str, text: str, field: str) -> tuple[dict, dict]:
+    """把整理后的 directives 全量 REPLACE 写进该小说覆盖某桶并落盘。返回 (overrides, 应用前快照)。"""
+    from noval_workflow.prompts import EVOLVED_DIRECTIVES_FIELDS, load_overrides, save_overrides
 
+    if field not in EVOLVED_DIRECTIVES_FIELDS:
+        raise ValueError(f"reconcile 目标字段不合法: {field}")
     prompt_before = load_overrides(novel)
     merged = dict(prompt_before)
-    merged["evolved_directives"] = text.strip()
+    merged[field] = text.strip()
     saved = save_overrides(novel, merged)
     return saved, prompt_before
 
 
 async def post_prompt_evolution_reconcile_apply(request: Request) -> JSONResponse:
-    """把整理后的 directives 全量 REPLACE 写进覆盖，记一条 reconcile 事件（含应用前快照，可还原）。
+    """把整理后的 directives 全量 REPLACE 写进对应桶,记一条 reconcile 事件(含应用前快照,可还原)。
 
-    query: novel, genre；body: {text, before?, summary?}。text 为用户确认（可能编辑过）的整理结果。
+    query: novel, genre;body: {text, before?, summary?, review_type?, field?}。
+    field 优先,缺省用 review_type 映射;两者都缺按 chapter 桶处理。
     """
+    from noval_workflow.prompts import evolved_field_for
     from noval_workflow.prompts.evolution_store import (
         EventStatus,
         EventTrigger,
@@ -396,25 +463,29 @@ async def post_prompt_evolution_reconcile_apply(request: Request) -> JSONRespons
         return JSONResponse({"error": "missing text"}, status_code=400)
     before = str(body.get("before", ""))
     summary = str(body.get("summary", "")).strip()
+    review_type = str(body.get("review_type", "chapter"))
+    field = str(body.get("field", "")) or evolved_field_for(review_type)
 
-    saved, prompt_before = await asyncio.to_thread(_apply_reconciled, novel, genre, text)
+    saved, prompt_before = await asyncio.to_thread(
+        _apply_reconciled, novel, genre, text, field
+    )
     event = EvolutionEvent(
         novel_name=novel,
         genre=genre,
         trigger=EventTrigger.RECONCILE,
-        review_type="chapter",
+        review_type=review_type,
         source_feedback=summary or "整理消解累积整改要点",
         rejected_excerpt=before,
         proposals=(
             Proposal(
-                field="evolved_directives",
+                field=field,
                 text=text,
                 op=ProposalOp.REPLACE,
-                rationale="整理消解：去重 + 消解矛盾 + 后者优先",
+                rationale="整理消解:去重 + 消解矛盾 + 后者优先",
             ),
         ),
         status=EventStatus.APPLIED,
-        applied={"evolved_directives": saved.get("evolved_directives", "")},
+        applied={field: saved.get(field, "")},
         prompt_before=prompt_before,
         applied_at=_now(),
     )
@@ -426,18 +497,21 @@ async def post_prompt_evolution_reconcile_apply(request: Request) -> JSONRespons
 
 
 async def post_prompt_library_refine(request: Request) -> JSONResponse:
-    """把某小说累积的 evolved_directives 精炼拆成候选原子条目（不落库，供前端勾选）。
+    """把某小说某桶累积的 evolved_directives 精炼拆成候选原子条目(不落库,供前端勾选)。
 
-    query: novel, genre。resp: {items:[{title,text,tags}]}
+    query: novel, genre, review_type(默认 chapter)。resp: {items:[{title,text,tags}]}
     """
+    from noval_workflow.prompts import get_evolved_directives, get_prompt_pack
     from noval_workflow.prompts.evolution import refine_to_items
 
     novel = request.query_params.get("novel", "")
     genre = request.query_params.get("genre", "")
+    review_type = request.query_params.get("review_type", "chapter")
     if not novel:
         return JSONResponse({"error": "missing novel"}, status_code=400)
-    current = await asyncio.to_thread(_current_prompt, genre, novel)
-    items = await asyncio.to_thread(refine_to_items, current.evolved_directives, genre)
+    flavor = await asyncio.to_thread(lambda: get_prompt_pack(genre, novel).flavor)
+    directives = get_evolved_directives(flavor, review_type)
+    items = await asyncio.to_thread(refine_to_items, directives, genre)
     return JSONResponse(
         {"items": [{"title": it.title, "text": it.text, "tags": list(it.tags)} for it in items]}
     )
@@ -481,15 +555,24 @@ async def get_prompt_library(request: Request) -> JSONResponse:
     return JSONResponse({"items": [_directive_to_json(d) for d in items]})
 
 
-def _import_directives(novel: str, genre: str, item_ids: list[str]) -> tuple[dict, dict, int]:
-    """取库条目、去重追加进该小说 evolved_directives 并落盘。返回 (overrides, 应用前快照, 导入数)。"""
-    from noval_workflow.prompts import get_prompt_pack, load_overrides, save_overrides
+def _import_directives(
+    novel: str, genre: str, item_ids: list[str], field: str
+) -> tuple[dict, dict, int]:
+    """取库条目、去重追加进该小说某桶 evolved_directives 并落盘。返回 (overrides, 应用前快照, 导入数)。"""
+    from noval_workflow.prompts import (
+        EVOLVED_DIRECTIVES_FIELDS,
+        get_prompt_pack,
+        load_overrides,
+        save_overrides,
+    )
     from noval_workflow.prompts.evolution_store import bump_usage, get_directives
 
+    if field not in EVOLVED_DIRECTIVES_FIELDS:
+        raise ValueError(f"import 目标字段不合法: {field}")
     directives = get_directives(item_ids)
     prompt_before = load_overrides(novel)
     flavor = get_prompt_pack(genre, novel).flavor
-    current = prompt_before.get("evolved_directives") or flavor.evolved_directives
+    current = prompt_before.get(field) or getattr(flavor, field, "")
     merged = current
     added = 0
     for d in directives:
@@ -499,17 +582,18 @@ def _import_directives(novel: str, genre: str, item_ids: list[str]) -> tuple[dic
     if added == 0:
         return prompt_before, prompt_before, 0
     overrides = dict(prompt_before)
-    overrides["evolved_directives"] = merged
+    overrides[field] = merged
     saved = save_overrides(novel, overrides)
     bump_usage([d.id for d in directives])
     return saved, prompt_before, added
 
 
 async def post_prompt_library_import(request: Request) -> JSONResponse:
-    """把选中的库条目导入某小说的 evolved_directives（去重追加），记一条 import 事件。
+    """把选中的库条目导入某小说某桶 evolved_directives(去重追加),记一条 import 事件。
 
-    query: novel, genre；body: {item_ids:[...]}
+    query: novel, genre;body: {item_ids:[...], review_type?, field?}
     """
+    from noval_workflow.prompts import evolved_field_for
     from noval_workflow.prompts.evolution_store import (
         EventStatus,
         EventTrigger,
@@ -526,9 +610,11 @@ async def post_prompt_library_import(request: Request) -> JSONResponse:
     item_ids = body.get("item_ids", [])
     if not isinstance(item_ids, list) or not item_ids:
         return JSONResponse({"error": "missing item_ids"}, status_code=400)
+    review_type = str(body.get("review_type", "chapter"))
+    field = str(body.get("field", "")) or evolved_field_for(review_type)
 
     saved, prompt_before, added = await asyncio.to_thread(
-        _import_directives, novel, genre, [str(i) for i in item_ids]
+        _import_directives, novel, genre, [str(i) for i in item_ids], field
     )
     if added == 0:
         return JSONResponse({"ok": True, "overrides": saved, "imported": 0})
@@ -536,9 +622,9 @@ async def post_prompt_library_import(request: Request) -> JSONResponse:
         novel_name=novel,
         genre=genre,
         trigger=EventTrigger.IMPORT,
-        review_type="chapter",
-        source_feedback=f"从整改库导入 {added} 条",
-        applied={"evolved_directives": saved.get("evolved_directives", "")},
+        review_type=review_type,
+        source_feedback=f"从整改库导入 {added} 条 → {field}",
+        applied={field: saved.get(field, "")},
         prompt_before=prompt_before,
         status=EventStatus.APPLIED,
         applied_at=_now(),
@@ -632,6 +718,7 @@ async def get_novels_summary(request: Request) -> JSONResponse:
 routes = [
     Route("/prompt-overrides", get_prompt_overrides, methods=["GET"]),
     Route("/prompt-overrides", put_prompt_overrides, methods=["PUT"]),
+    Route("/prompt-overrides/all-evolved", get_all_evolved_directives, methods=["GET"]),
     # 提示词自进化（按小说：提炼 / 应用 / 还原）
     Route("/prompt-evolution", get_prompt_evolution, methods=["GET"]),
     Route("/prompt-evolution/reject", post_prompt_evolution_reject, methods=["POST"]),

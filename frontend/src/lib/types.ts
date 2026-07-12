@@ -131,12 +131,15 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   character_relations: "人物关系/势力格局",
   foreshadowing: "伏笔台账",
   phase_summary: "阶段固化数据",
+  scene_beats: "章节 scene beats",
 };
 
 export function reviewTypeLabel(t: string): string {
   return REVIEW_TYPE_LABELS[t] ?? t;
 }
 
-/** 自进化闭环生效的审核环节：仅这两个「会重复生成」的环节消费 evolved_directives，
- *  故只在它们打回时落库 REJECT 记录、并在中断处显示进化入口。 */
-export const EVOLVABLE_REVIEW_TYPES = new Set(["chapter", "arc_outline"]);
+/** 自进化闭环生效的审核环节：会重复生成的环节消费 evolved_directives，
+ *  故只在它们打回时落库 REJECT 记录、并在中断处显示进化入口。
+ *  scene_beats 是章前节拍表，打回意见（打脸/钩位/节奏塌）与 chapter/arc 同源，
+ *  共用 evolved_directives 字段回流到下一章 beats 与后续正文创作。 */
+export const EVOLVABLE_REVIEW_TYPES = new Set(["chapter", "arc_outline", "scene_beats"]);

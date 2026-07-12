@@ -24,11 +24,13 @@ from noval_workflow.json_utils import (
     invoke_json,
 )
 from noval_workflow.llm import get_llm
+from noval_workflow.prompts.base import EVOLVED_DIRECTIVES_FIELDS, evolved_field_for
 from noval_workflow.prompts.evolution_store import Proposal, ProposalOp
 
-# 整改提案允许落到的字段（其余一律归到 evolved_directives 累积字段）。
-_ALLOWED_FIELDS: frozenset[str] = frozenset(
-    {"evolved_directives", "chapter_review_checklist", "chapter_style_rules"}
+# 整改提案允许落到的字段：三桶 evolved_directives_* + 章节文体/审核清单。
+# 老单桶 evolved_directives 不再允许作为提案 field(会被 _coerce_field 归到当前 review_type 对应桶)。
+_ALLOWED_FIELDS: frozenset[str] = EVOLVED_DIRECTIVES_FIELDS | frozenset(
+    {"chapter_review_checklist", "chapter_style_rules"}
 )
 
 
@@ -41,11 +43,18 @@ class EvolutionParseError(ValueError):
 
 @dataclass(frozen=True)
 class CurrentPrompt:
-    """提炼时提供给 LLM 的「当前生效提示词」快照，用于去重与冲突侦测。"""
+    """提炼时提供给 LLM 的「当前生效提示词」快照,用于去重与冲突侦测。
+
+    三桶 evolved_directives 分开传给 LLM,让它知道每桶已有什么、避免重复;
+    LLM 的输出 field 会被 _coerce_field 归一到「当前 review_type 对应的桶」——
+    也就是说提炼始终写入当前环节自己的桶,分发到别桶靠前端 apply 阶段的 also_apply_to。
+    """
 
     chapter_style_rules: str = ""
     chapter_review_checklist: str = ""
-    evolved_directives: str = ""
+    evolved_directives_chapter: str = ""
+    evolved_directives_arc_outline: str = ""
+    evolved_directives_scene_beats: str = ""
 
 
 @dataclass(frozen=True)
@@ -90,9 +99,15 @@ def _invoke_json(
         raise EvolutionParseError(str(exc)) from exc
 
 
-def _coerce_field(name: object) -> str:
-    """把 LLM 给的 field 归一到允许集合；未知/非法一律归到 evolved_directives。"""
-    return name if isinstance(name, str) and name in _ALLOWED_FIELDS else "evolved_directives"
+def _coerce_field(name: object, review_type: str) -> str:
+    """归一 LLM 返回的 field:非法/未知一律归到「当前 review_type 对应的桶」。
+
+    三桶隔离后,提炼产出总是先写入当前环节自己那桶;跨桶分发由前端 apply 阶段的
+    also_apply_to 显式勾选控制,不让 LLM 自己去猜(它经常猜错桶)。
+    """
+    if isinstance(name, str) and name in _ALLOWED_FIELDS:
+        return name
+    return evolved_field_for(review_type)
 
 
 def _coerce_op(name: object) -> ProposalOp:
@@ -114,28 +129,33 @@ def _distill_prompt(
     feedback: str, review_type: str, current: CurrentPrompt, draft_excerpt: str
 ) -> str:
     excerpt = f"\n\n【被打回的正文片段（节选，供定位问题）】\n{draft_excerpt.strip()}" if draft_excerpt.strip() else ""
-    return f"""【本次人工修改意见】（review_type={review_type}）
+    target_field = evolved_field_for(review_type)
+    return f"""【本次人工修改意见】(review_type={review_type})
 {feedback.strip()}
 {excerpt}
 
-【当前已生效的相关提示词规则（用于去重与冲突判断）】
-- 章节文体风格(chapter_style_rules)：
-{current.chapter_style_rules.strip() or "（空）"}
-- 章节审核清单(chapter_review_checklist)：
-{current.chapter_review_checklist.strip() or "（空）"}
-- 历史整改要点(evolved_directives)：
-{current.evolved_directives.strip() or "（空）"}
+【当前已生效的相关提示词规则(用于去重与冲突判断)】
+- 章节文体风格(chapter_style_rules):
+{current.chapter_style_rules.strip() or "(空)"}
+- 章节审核清单(chapter_review_checklist):
+{current.chapter_review_checklist.strip() or "(空)"}
+- 章节正文历史整改要点(evolved_directives_chapter):
+{current.evolved_directives_chapter.strip() or "(空)"}
+- 弧线大纲历史整改要点(evolved_directives_arc_outline):
+{current.evolved_directives_arc_outline.strip() or "(空)"}
+- Scene beats 历史整改要点(evolved_directives_scene_beats):
+{current.evolved_directives_scene_beats.strip() or "(空)"}
 
-【任务】把上面的人工意见提炼为 1-4 条整改规则：
-- 每条规则简洁、祈使句、可直接指导后续章节写作；与「当前已生效规则」重复的不要再产出。
-- 目标字段 field 一般用 "evolved_directives"（累积历史整改要点）；若本质是审核清单项可用
-  "chapter_review_checklist"。op 用 "append"（追加）。
-- 冲突处理：若某条规则与「当前已生效规则」相矛盾（例如原来要求 A、现在要求非 A），
-  必须把 text 写成显式覆盖措辞（「将 X 改为 Y，覆盖原关于 X 的要求」），并在 conflicts_with
-  里写出被覆盖的原规则要点；不冲突则 conflicts_with 留空字符串。
+【任务】把上面的人工意见提炼为 1-4 条整改规则:
+- 每条规则简洁、祈使句、可直接指导后续同环节的生成;与「当前已生效规则」重复的不要再产出。
+- **目标字段 field 一律填 "{target_field}"**——本次意见来自 {review_type} 环节,产出的整改
+  优先写入该环节自己的桶。若本质上是审核清单项可用 "chapter_review_checklist"。op 用 "append"。
+- 冲突处理:若某条规则与「当前已生效规则」相矛盾(例如原来要求 A、现在要求非 A),
+  必须把 text 写成显式覆盖措辞(「将 X 改为 Y,覆盖原关于 X 的要求」),并在 conflicts_with
+  里写出被覆盖的原规则要点;不冲突则 conflicts_with 留空字符串。
 
-【仅输出以下 JSON，不要任何多余文字】
-{{"proposals":[{{"field":"evolved_directives","op":"append","text":"...","rationale":"...","conflicts_with":""}}],"summary":"一句话概述本次整改"}}"""
+【仅输出以下 JSON,不要任何多余文字】
+{{"proposals":[{{"field":"{target_field}","op":"append","text":"...","rationale":"...","conflicts_with":""}}],"summary":"一句话概述本次整改"}}"""
 
 
 def distill(
@@ -160,7 +180,7 @@ def distill(
     raw_proposals = data.get("proposals", []) if isinstance(data, dict) else []
     proposals = tuple(
         Proposal(
-            field=_coerce_field(p.get("field")),
+            field=_coerce_field(p.get("field"), review_type),
             text=str(p.get("text", "")).strip(),
             op=_coerce_op(p.get("op")),
             rationale=str(p.get("rationale", "")).strip(),

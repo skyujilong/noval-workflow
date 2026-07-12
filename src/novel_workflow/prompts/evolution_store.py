@@ -56,13 +56,20 @@ class ProposalOp(str, Enum):
 
 @dataclass(frozen=True)
 class Proposal:
-    """LLM 提炼出的单条整改提案。field 为 GenreFlavor 字段名。"""
+    """LLM 提炼出的单条整改提案。field 为 GenreFlavor 字段名。
+
+    applies_to:整改分发目标——除了 field 主字段外,还想把这条整改同步写到哪些桶。
+    典型场景:用户在 chapter review 里提炼出「打脸四拍必须齐全」,这条对 scene_beats 也适用,
+    apply 时显式勾选 also_apply_to=[scene_beats],让一条整改一次分发到多桶。
+    空 tuple = 只写主 field(默认,严格隔离)。取值必须是 evolved_directives_{chapter|arc_outline|scene_beats}。
+    """
 
     field: str
     text: str
     op: ProposalOp = ProposalOp.APPEND
     rationale: str = ""
     conflicts_with: str = ""  # 非空＝与既有规则冲突，text 已措辞成显式覆盖
+    applies_to: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -196,6 +203,7 @@ def _proposals_to_json(proposals: Sequence[Proposal]) -> str:
                 "op": p.op.value,
                 "rationale": p.rationale,
                 "conflicts_with": p.conflicts_with,
+                "applies_to": list(p.applies_to),
             }
             for p in proposals
         ],
@@ -231,6 +239,7 @@ def _row_to_event(row: sqlite3.Row) -> EvolutionEvent:
             op=ProposalOp(p.get("op", "append")),
             rationale=p.get("rationale", ""),
             conflicts_with=p.get("conflicts_with", ""),
+            applies_to=tuple(p.get("applies_to", []) or []),
         )
         for p in json.loads(row["proposals"] or "[]")
     )
