@@ -44,6 +44,10 @@ export const InterruptType = {
   PHASE_SUMMARY_ENTRY_GATE: "phase_summary_entry_gate",
   PHASE_SUMMARY_DIRECTION_INPUT: "phase_summary_direction_input",
   PHASE_SUMMARY_REVIEW: "phase_summary_review",
+  // 章级 scene beats（章前节拍表，可跳步骤；插在 save_titles 之后、prepare_chapter 之前）
+  SCENE_BEATS_ENTRY_GATE: "scene_beats_entry_gate",
+  SCENE_BEATS_DIRECTION_INPUT: "scene_beats_direction_input",
+  SCENE_BEATS_REVIEW: "scene_beats_review",
   // 通用审核（基础设定类、标题、弧线大纲等共用 review_generic；章节正文 review_chapter）
   REVIEW_GENERIC: "review_generic",
   REVIEW_CHAPTER: "review_chapter",
@@ -262,6 +266,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.RELATIONS_ENTRY_GATE]: "entry_gate",
   [InterruptType.FORESHADOWING_ENTRY_GATE]: "entry_gate",
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
+  [InterruptType.SCENE_BEATS_ENTRY_GATE]: "entry_gate",
 
   // 弧线方向单独识别（标题为"弧线大纲调整方向"），其余 step 方向归入 direction
   [InterruptType.ARC_DIRECTION_INPUT]: "arc_direction",
@@ -269,11 +274,13 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.RELATIONS_DIRECTION_INPUT]: "direction",
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "direction",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "direction",
+  [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "direction",
 
   [InterruptType.STATUS_REVIEW]: "human_review",
   [InterruptType.RELATIONS_REVIEW]: "human_review",
   [InterruptType.FORESHADOWING_REVIEW]: "foreshadowing_review", // 伏笔专用表单
   [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
+  [InterruptType.SCENE_BEATS_REVIEW]: "human_review",
   [InterruptType.REVIEW_GENERIC]: "human_review",
   [InterruptType.REVIEW_CHAPTER]: "human_review",
 
@@ -316,6 +323,7 @@ const DIRECTION_TITLE: Record<string, string> = {
   [InterruptType.RELATIONS_DIRECTION_INPUT]: "人物关系调整方向",
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "伏笔台账调整方向",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "阶段固化数据调整方向",
+  [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "Scene beats 调整方向",
 };
 
 /** 按 direction payload.type 查标题，未知 type 回退「调整方向」 */

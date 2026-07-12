@@ -12,6 +12,7 @@ import type { NovelState } from "../../lib/types";
 import { EVOLVABLE_REVIEW_TYPES, reviewTypeLabel } from "../../lib/types";
 import { recordReject } from "../../lib/langgraph";
 import { ChapterReviewReference } from "./ChapterReviewReference";
+import { SceneBeatsCards } from "./SceneBeatsCards";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
@@ -127,7 +128,11 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
           </button>
         </div>
         <div className="max-w-none overflow-y-auto max-h-[70vh] text-sm leading-relaxed text-gray-800 [&_p]:[text-indent:2em] [&_p]:mb-4 [&_p]:whitespace-pre-wrap">
-          {draft ? (
+          {reviewType === "scene_beats" ? (
+            // scene beats 是结构化 JSON,用卡片视图代替散文渲染,让 device_tags 分组可扫、
+            // 打脸四拍/钩子位置违规在顶部一眼可见。解析失败自动降级到纯文本。
+            <SceneBeatsCards draft={draft} />
+          ) : draft ? (
             <ArticleParagraphs text={draft} />
           ) : (
             <p className="text-gray-400">（无草稿内容）</p>
