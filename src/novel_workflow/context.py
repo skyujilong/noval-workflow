@@ -125,8 +125,18 @@ def build_foundation_context(
         parts.append(f"\n【核心主题与立意】\n{state.core_theme}")
     if state.world_building:
         parts.append(f"\n【世界观设定】\n{state.world_building}")
+    # 力量体系是本作已定稿的正式设定，被动罗列改成祈使约束——避免下游生成/审核 prompt
+    # 编造未在其中定义的境界、流派、体系名词。header 前缀仍以【力量体系 开头，
+    # 与 llm.py _SYSTEM_CONTEXT_TOP_SECTIONS 白名单同步。
     if state.power_system:
-        parts.append(f"\n【力量体系】\n{state.power_system}")
+        parts.append(
+            "\n【力量体系（本作已定稿，创作时必须严格遵循）】\n"
+            f"{state.power_system}\n"
+            "以上力量体系为本作正式设定：\n"
+            "- 所有涉及能力、修炼、晋升、体系名词的描写必须严格落入上述框架；\n"
+            "- 禁止虚构未在其中定义的新境界、新流派、新体系；\n"
+            "- 如需引入新概念，必须显式声明为在此体系内的具体位置或分支,不得自成体系。"
+        )
     if state.core_conflicts:
         parts.append(f"\n【核心冲突】\n{state.core_conflicts}")
     if state.overall_outline:

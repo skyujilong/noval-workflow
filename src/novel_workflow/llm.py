@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from typing import Any
@@ -11,6 +12,27 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
+
+# 顶层 section 白名单——必须与 novel_workflow.context.build_foundation_context /
+# build_chapter_context 里 parts.append 出现的【】标签保持一致。
+# LLM 生成的正文里也常带【子标题】（比如力量体系里的【输出天花板】、伏笔台账里的
+# 【伏笔编号】），若不白名单化会把子标题误报为独立 section，导致日志组成里出现
+# 大量重叠、嵌套的假 section（且长度层层递减）。
+_SYSTEM_CONTEXT_TOP_SECTIONS: frozenset[str] = frozenset({
+    # foundation
+    "小说名称", "小说类型", "写作风格", "目标读者", "核心基调", "每章字数", "总字数目标",
+    "核心主题与立意", "世界观设定", "力量体系（本作已定稿，创作时必须严格遵循）",
+    "核心冲突", "整体大纲与结局", "人物档案",
+    # dynamic tracking
+    "本批章节弧线大纲", "人物动态状态（最新）", "人物关系/势力动态（最新）",
+    "伏笔台账（最新）", "阶段固化数据（最新）",
+    # chapter window
+    "近期章节概要（供参考）", "最近章节完整内容（请保持情节连贯）",
+})
+
+# 顶层 section 一定以行首（或文本开头）出现，形如 `【名称】` 或 `【名称】xxx`。
+# 允许尾部带说明后缀（如"（最新）""（供参考）"），所以匹配到 】 为止即可。
+_TOP_SECTION_RE = re.compile(r"(?:^|\n)【([^】\n]+)】")
 
 
 class _PerfLogHandler(BaseCallbackHandler):
@@ -40,7 +62,7 @@ class _PerfLogHandler(BaseCallbackHandler):
         total_chars = 0
         system_chars = 0
         user_chars = 0
-        breakdown = []
+        breakdown: list[str] = []
 
         for batch in messages:
             for m in batch:
@@ -57,20 +79,7 @@ class _PerfLogHandler(BaseCallbackHandler):
 
                 # 解析 system context 的组成结构（只统计第一个 system message）
                 if msg_type == "system" and not breakdown:
-                    text = content
-                    # 提取各 section 的长度
-                    sections = []
-                    import re
-                    for match in re.finditer(r"【(.+?)】", text):
-                        section_name = match.group(1)
-                        start = match.start()
-                        # 找下一个 section 或结尾
-                        next_match = re.search(r"\n【", text[start + 1:])
-                        end = start + 1 + (next_match.start() if next_match else len(text) - start - 1)
-                        section_len = end - start
-                        sections.append(f"{section_name}: ~{section_len} 字")
-                    if sections:
-                        breakdown = sections
+                    breakdown = _parse_system_sections(content)
 
         # 打印详细组成
         self._log(f"→ 开始调用 [{self._label}]")
@@ -142,6 +151,39 @@ class _PerfLogHandler(BaseCallbackHandler):
         except (IndexError, AttributeError):
             pass
         return None
+
+
+def _parse_system_sections(text: str) -> list[str]:
+    """从 system message 里按顶层【】section 拆出「名字: ~N 字」列表。
+
+    为什么要白名单：LLM 生成的力量体系正文里也带【输出天花板】【治疗核心】这类
+    子标题，伏笔台账里更是每个条目都有【伏笔编号】/【伏笔名称】等一堆【】——若不
+    过滤，会被误当成独立 section 输出到日志里，且长度是「当前【到下一个【的距离」，
+    形成层层嵌套、加总远超实际字符数的假象。
+
+    正确做法：只承认 context.py 里 parts.append 时用过的顶层 section 名（见
+    _SYSTEM_CONTEXT_TOP_SECTIONS 白名单），长度取"当前顶层 section 起点到下一个
+    顶层 section 起点"之间的字节数。
+    """
+    # 先扫出所有可能是顶层的 (start, name) 对——出现在行首或文本开头的【】。
+    # 再按白名单过滤，同一 section 名多次出现会各自计一段（例如 fork 后两块历史都拼进来）。
+    candidates: list[tuple[int, str]] = []
+    for match in _TOP_SECTION_RE.finditer(text):
+        name = match.group(1).strip()
+        if name in _SYSTEM_CONTEXT_TOP_SECTIONS:
+            # match.start() 可能落在 '\n' 上（若不是文本开头），把起点对齐到【本身
+            start = match.start() + (0 if text[match.start()] == "【" else 1)
+            candidates.append((start, name))
+
+    if not candidates:
+        return []
+
+    # section 长度 = 从当前起点到下一个白名单顶层 section 起点（末尾一段到 text 末尾）
+    sections: list[str] = []
+    for i, (start, name) in enumerate(candidates):
+        end = candidates[i + 1][0] if i + 1 < len(candidates) else len(text)
+        sections.append(f"{name}: ~{end - start} 字")
+    return sections
 
 
 def get_llm(

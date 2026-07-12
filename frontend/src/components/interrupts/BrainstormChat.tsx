@@ -11,9 +11,79 @@
 // 父层写回 state（updateThreadState + refreshValues，不清 interrupt）；失败则回滚。开关同时
 // 影响 AI 引导风格（system prompt 硬规则）与 brainstorm_finalize 抽取时是否保留力量体系正文。
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+/**
+ * 流式内容自动跟随滚动，允许用户主动脱离与恢复。
+ *
+ * 核心：区分「人 vs 程序」不靠事件监听，而靠**物理方向**——程序化滚动永远是「往下追」
+ * （scrollTop → scrollHeight - clientHeight），所以 scroll 事件里检测到 scrollTop 变**小**，
+ * 就一定是人（拖滚动条 / 滚轮 / 触摸 / 键盘 PageUp / 惯性滚动，来源不限）。
+ *
+ * 程序化滚动前置一个 flag，scroll 事件里识别到就跳过——避免自己触发的 scroll 被误判。
+ * 这是 use-stick-to-bottom 等主流库的核心思路，实测对亚像素级小距离滑动也天然敏感。
+ *
+ * 恢复阈值 40px：用户拖回底部附近（距底 <40）视为回到贴底态；不用得太小，方便用户"松手即贴"。
+ */
+const BOTTOM_THRESHOLD = 40;
+
+function useStickToBottom() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  // 记录上一次 scroll 事件的 scrollTop，供本次比对方向
+  const lastScrollTopRef = useRef(0);
+  // 程序化滚动标记：followIfSticking / forceStick 前置置 true，下一次 scroll 事件消费并清零
+  const programmaticRef = useRef(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    lastScrollTopRef.current = el.scrollTop;
+
+    const onScroll = () => {
+      const st = el.scrollTop;
+      // 程序化滚动：跳过差值判断，只更新基线（否则会误认为自己在"往下滚"从而不影响，但仍需对齐基线）
+      if (programmaticRef.current) {
+        programmaticRef.current = false;
+        lastScrollTopRef.current = st;
+        return;
+      }
+      // 减小 = 人往上滚（阈值 0.5px 抗亚像素抖动，实测 wheel 一次滚 3-10px、拖滚动条 1px+ 都能触发）
+      if (st < lastScrollTopRef.current - 0.5) {
+        stickToBottomRef.current = false;
+      } else if (el.scrollHeight - st - el.clientHeight < BOTTOM_THRESHOLD) {
+        // 增大且距底 <40 → 用户拖回或程序推到底 → 恢复贴底
+        stickToBottomRef.current = true;
+      }
+      lastScrollTopRef.current = st;
+    };
+
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // 内容变化时调用：仅贴底态生效
+  const followIfSticking = useCallback(() => {
+    if (!stickToBottomRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    programmaticRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  // 强制回底并恢复跟随（用户主动发送新消息时调用——发送 = 明确要看新回复）
+  const forceStick = useCallback(() => {
+    stickToBottomRef.current = true;
+    const el = scrollRef.current;
+    if (!el) return;
+    programmaticRef.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  return { scrollRef, followIfSticking, forceStick };
+}
 
 interface ChatEntry {
   role: "human" | "ai";
@@ -63,7 +133,7 @@ export function BrainstormChat({
 }: Props) {
   const [input, setInput] = useState("");
   const [pendingUserMsg, setPendingUserMsg] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { scrollRef, followIfSticking, forceStick } = useStickToBottom();
 
   // 力量体系开关的 optimistic 本地态：切换后立即反映在 UI，await 写回失败则回滚为父层值。
   // 与父层 hasPowerSystem 同步：当父层拉到新 state 后覆盖本地态（幂等，非编辑中不丢已提交值）。
@@ -88,11 +158,11 @@ export function BrainstormChat({
   const streamingShown =
     streaming && !(lastEntry?.role === "ai" && lastEntry.content === streamingContent);
 
-  // 新消息 / 流式增量 / 乐观气泡变化时自动滚到底（ref 直接操作，不进 render）
+  // 新消息 / 流式增量 / 乐观气泡变化时，仅在"用户仍贴底"时自动跟随；
+  // 用户向上滚开脱离后此处 no-op，交给 useStickToBottom 内部监听 scroll 恢复。
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [history, streamingContent, pendingShown, streaming]);
+    followIfSticking();
+  }, [history, streamingContent, pendingShown, streaming, followIfSticking]);
 
   const canSend = awaitingInput && !disabled && input.trim().length > 0;
 
@@ -101,6 +171,7 @@ export function BrainstormChat({
     const msg = input.trim();
     setPendingUserMsg(msg); // 乐观渲染：running 期间 history 尚未刷新
     setInput("");
+    forceStick(); // 用户主动发送 = 明确要看新回复，即使之前已脱离也强制回底并恢复跟随
     onSend(msg);
   };
 

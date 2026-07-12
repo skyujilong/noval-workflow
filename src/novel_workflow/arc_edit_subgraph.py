@@ -48,6 +48,10 @@ class ArcEditSubState:
     total_word_count: str = ""
     core_theme: str = ""
     world_building: str = ""
+    # 力量体系降为作品级 state 后，_ContextState Protocol 要求子图必须镜像它——
+    # 缺字段则 arc_entry 走跳过分支时 build_foundation_context 会 AttributeError。
+    has_power_system: bool = False
+    power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
     character_profiles: str = ""

@@ -70,6 +70,10 @@ class EditStepSubState(ReviewSubState):
     total_word_count: str = ""
     core_theme: str = ""
     world_building: str = ""
+    # 力量体系为作品级 state，_ContextState Protocol 要求子图必须镜像它——否则
+    # prepare_fn 里的 build_foundation_context 会 AttributeError。
+    has_power_system: bool = False
+    power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
     character_profiles: str = ""

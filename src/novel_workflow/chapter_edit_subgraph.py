@@ -56,6 +56,10 @@ class ChapterEditSubState:
     # ── Phase 1 成果 ────────────────────────────────────────────────────────────
     core_theme: str = ""
     world_building: str = ""
+    # 力量体系为作品级 state，_ContextState Protocol 要求子图必须镜像它——否则
+    # _prepare_status/relations/foreshadowing/phase 里的 build_foundation_context 会 AttributeError。
+    has_power_system: bool = False
+    power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
     character_profiles: str = ""
