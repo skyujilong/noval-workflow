@@ -59,7 +59,14 @@ function tagStyle(tag: string): string {
   return "bg-white text-red-600 border-red-400 border-dashed";
 }
 
-// 单 beat 里可能出现的字段。后端契约固定 9 项，但字段值可能是空串——渲染时保持字段名可见即可。
+// pacing 色标：slow=慢(绿-蓄势感) medium=中(灰-平稳) fast=快(橙-推进感)
+const PACING_STYLE: Record<string, { label: string; cls: string }> = {
+  slow: { label: "慢", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  medium: { label: "中", cls: "bg-gray-100 text-gray-600 border-gray-200" },
+  fast: { label: "快", cls: "bg-orange-50 text-orange-700 border-orange-200" },
+};
+
+// 单 beat 里可能出现的字段。后端契约固定 11 项，但字段值可能是空串——渲染时保持字段名可见即可。
 interface Beat {
   id?: number;
   scene?: string;
@@ -68,6 +75,8 @@ interface Beat {
   outcome?: string;
   cost?: string;
   emotion_arc?: string;
+  pacing?: "slow" | "medium" | "fast" | string;
+  prose_focus?: string;
   device_tags?: string[];
   target_words?: number;
 }
@@ -103,6 +112,39 @@ function tryParseBeats(raw: string): Beat[] | null {
   } catch {
     return null;
   }
+}
+
+
+/** pacing 分布概览与反模式警告：全 fast/缺 slow 时显式标红，辅助审稿者一眼看到节奏问题。 */
+function PacingSummary({ beats }: { beats: Beat[] }) {
+  const slow = beats.filter((b) => b.pacing === "slow").length;
+  const medium = beats.filter((b) => b.pacing === "medium").length;
+  const fast = beats.filter((b) => b.pacing === "fast").length;
+  const unset = beats.length - slow - medium - fast;
+  const parts: string[] = [];
+  if (slow) parts.push(`慢×${slow}`);
+  if (medium) parts.push(`中×${medium}`);
+  if (fast) parts.push(`快×${fast}`);
+  if (unset) parts.push(`未设×${unset}`);
+  const label = parts.length ? parts.join(" ") : "未设 pacing";
+
+  // 反模式：所有 beat 全 fast → 事件堆叠赶进度
+  if (fast === beats.length && beats.length > 1) {
+    return (
+      <span className="rounded border border-red-300 bg-red-50 px-2 py-0.5 text-red-700">
+        ⚠ pacing：{label}（全快易赶进度）
+      </span>
+    );
+  }
+  // 反模式：完全没有 slow beat → 缺蓄势
+  if (slow === 0 && beats.length >= 3) {
+    return (
+      <span className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-700">
+        ⚠ pacing：{label}（缺慢拍蓄势）
+      </span>
+    );
+  }
+  return <span className="rounded bg-gray-100 px-2 py-0.5">pacing：{label}</span>;
 }
 
 /** 打脸四拍在整个 beats 序列里出现是否完整——不完整时抽屉顶部挂红条提醒审稿者。 */
@@ -161,10 +203,11 @@ export function SceneBeatsCards({ draft }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* 顶部摘要：beat 数 / 目标字数累加 / 硬约束违规提醒 */}
+      {/* 顶部摘要：beat 数 / 目标字数累加 / pacing 分布 / 硬约束违规提醒 */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
         <span className="rounded bg-gray-100 px-2 py-0.5">共 {beats.length} 个 beat</span>
         <span className="rounded bg-gray-100 px-2 py-0.5">累计目标 {totalWords} 字</span>
+        <PacingSummary beats={beats} />
         {slapMiss.length > 0 && (
           <span className="rounded border border-red-300 bg-red-50 px-2 py-0.5 text-red-700">
             打脸四拍不齐：缺 {slapMiss.map((t) => TAG_LABELS[t] ?? t).join(" / ")}
@@ -202,9 +245,22 @@ function BeatCard({ beat, index, isLast }: { beat: Beat; index: number; isLast: 
           <span className="text-gray-700">{beat.scene || <em className="text-gray-400">（未填场景）</em>}</span>
           {isLast && <span className="text-xs text-gray-400">· 末 beat</span>}
         </div>
-        {beat.target_words !== undefined && (
-          <span className="text-xs text-gray-500">目标 {beat.target_words} 字</span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {beat.pacing && (
+            <span
+              className={
+                "rounded border px-1.5 py-0.5 text-[11px] font-medium " +
+                (PACING_STYLE[beat.pacing]?.cls ?? "bg-white text-gray-600 border-gray-300")
+              }
+              title={"pacing: " + beat.pacing}
+            >
+              {PACING_STYLE[beat.pacing]?.label ?? beat.pacing}
+            </span>
+          )}
+          {beat.target_words !== undefined && (
+            <span className="text-xs text-gray-500">目标 {beat.target_words} 字</span>
+          )}
+        </div>
       </div>
 
       {/* device_tags 色标 chip 行 */}
@@ -232,11 +288,21 @@ function BeatCard({ beat, index, isLast }: { beat: Beat; index: number; isLast: 
         <FieldCell label="代价" value={beat.cost} />
       </div>
 
-      {/* 情绪曲线单独一行 */}
-      {beat.emotion_arc && (
-        <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-600">
-          <span className="font-medium text-gray-500">情绪：</span>
-          <span>{beat.emotion_arc}</span>
+      {/* 情绪曲线 + 展开重点 一行 */}
+      {(beat.emotion_arc || beat.prose_focus) && (
+        <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-600 flex flex-wrap gap-x-4 gap-y-1">
+          {beat.emotion_arc && (
+            <span>
+              <span className="font-medium text-gray-500">情绪：</span>
+              <span>{beat.emotion_arc}</span>
+            </span>
+          )}
+          {beat.prose_focus && (
+            <span>
+              <span className="font-medium text-gray-500">展开：</span>
+              <span>{beat.prose_focus}</span>
+            </span>
+          )}
         </div>
       )}
     </div>
