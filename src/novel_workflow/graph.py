@@ -63,6 +63,7 @@ from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
 from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
 from noval_workflow.scene_beats_subgraph import scene_beats_step
+from noval_workflow.character_profiles_discover_subgraph import character_profiles_discover_step
 
 builder = StateGraph(NovelState)
 
@@ -133,6 +134,9 @@ builder.add_node("ask_continue", ask_continue)
 
 # Phase 2.7 — scene beats（章前节拍表，可跳步骤：save_titles 之后、prepare_chapter 之前）
 builder.add_node("scene_beats_step", scene_beats_step)
+
+# Phase 2.8 — 角色档案发现（每章正文完成后自动，可跳步骤：generate_summary 之后、chapter_edit_subgraph 之前）
+builder.add_node("character_profiles_discover_step", character_profiles_discover_step)
 
 # Phase 2 — chapter edit subgraph
 builder.add_node("chapter_edit_subgraph", chapter_edit_subgraph)
@@ -262,7 +266,8 @@ builder.add_edge("scene_beats_step", "prepare_chapter")
 builder.add_edge("prepare_chapter", "review_chapter")
 builder.add_edge("review_chapter", "save_chapter")
 builder.add_edge("save_chapter", "generate_summary")
-builder.add_edge("generate_summary", "chapter_edit_subgraph")
+builder.add_edge("generate_summary", "character_profiles_discover_step")
+builder.add_edge("character_profiles_discover_step", "chapter_edit_subgraph")
 
 # chapter_edit_subgraph → chapter or batch end
 builder.add_conditional_edges(

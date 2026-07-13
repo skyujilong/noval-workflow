@@ -56,6 +56,11 @@ from noval_workflow.prompts.scene_beats import (
     scene_beats_prompt,
     validate_beats,
 )
+from noval_workflow.prompts.character_profiles_discover import (
+    CHARACTER_PROFILES_DISCOVER_PROMPT,
+    CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
+    character_profiles_discover_prompt,
+)
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_REVIEW_PROMPT,
@@ -132,6 +137,10 @@ __all__ = [
     "scene_beats_prompt",
     "format_beats_for_chapter_prompt",
     "validate_beats",
+    # 章级角色档案发现（每章正文完成后自动，可跳步骤）
+    "CHARACTER_PROFILES_DISCOVER_PROMPT",
+    "CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT",
+    "character_profiles_discover_prompt",
     # 台账类提示词函数
     "character_status_prompt",
     "character_relations_prompt",

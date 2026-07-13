@@ -69,6 +69,11 @@ class InterruptType(str, Enum):
     SCENE_BEATS_DIRECTION_INPUT = "scene_beats_direction_input"  # scene beats 调整方向输入（预留）
     SCENE_BEATS_REVIEW = "scene_beats_review"  # scene beats 审核
 
+    # 章级角色档案发现（每章正文完成后自动，可跳步骤；插在 generate_summary 之后、chapter_edit_subgraph 之前）
+    CHARACTER_PROFILES_DISCOVER_ENTRY_GATE = "character_profiles_discover_entry_gate"  # 是否本章发现新角色 / 补充档案
+    CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT = "character_profiles_discover_direction_input"  # 调整方向输入（预留，ask_direction=False 不触发）
+    CHARACTER_PROFILES_DISCOVER_REVIEW = "character_profiles_discover_review"  # 合流后完整档案审核
+
     # ============================================================
     # arc_edit_subgraph 独立使用的标题确认
     # ============================================================
@@ -108,6 +113,8 @@ _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
     "phase_summary": InterruptType.PHASE_SUMMARY_REVIEW,
     "chapter": InterruptType.REVIEW_CHAPTER,
     "scene_beats": InterruptType.SCENE_BEATS_REVIEW,
+    # 章级角色档案发现走专属 InterruptType（对应 human_review 表单，但需与 Phase 1 的 character_profiles 区分开）
+    "character_profiles_discover": InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW,
     # 以下 review_type 共用通用审核表单，归入 REVIEW_GENERIC：
     #   foundation / core_theme / world_building / core_conflicts /
     #   overall_outline / character_profiles / titles / arc_outline
