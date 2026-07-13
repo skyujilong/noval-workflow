@@ -55,6 +55,64 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
+# ── 打回重跑时,按 review_type 附加的「输出格式」再提醒 ─────────────────────────
+#
+# 首轮 task_prompt 里都写了输出格式,但打回重跑的 human message 会覆盖式给出一段新指令
+# ("请根据以上意见重新创作…直接输出修改后的完整正文");这段是给创作类(chapter/大纲)
+# 写的,会**误导** scene_beats 这种严格 JSON 契约的场景——LLM 更倾向遵循「最后一条」
+# 指令,首轮 task_prompt 里的 JSON 规范被稀释,轻则输出 markdown 围栏,重则直接吐散文
+# 导致下游 repair_and_parse 抛 JsonParseError。
+#
+# 此外 review_history 有 _HISTORY_MAX_ROUNDS 窗口(3–5),超窗口后首轮 task_prompt 会被
+# 裁掉,规范提醒也随之消失。因此在**每次重跑**的 regen_instruction 里,按 review_type
+# 显式追加对应的输出格式硬约束,让格式契约与「最后一条 human」绑定,不受窗口影响。
+#
+# 缺省项:创作类沿用「直接输出完整正文,不描述改动」的散文提示——这是被绝大多数 review_type
+# 使用的默认输出形态,无需逐个登记。
+_REGEN_DEFAULT_OUTPUT_HINT = (
+    "直接输出修改后的完整正文,"
+    "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言,"
+    "从正文第一句话开始输出。"
+)
+_REGEN_OUTPUT_HINTS: dict[str, str] = {
+    # scene_beats 的重跑规范:显式 JSON 结构 + 正反例。之所以把「反例」也写进来,是因为
+    # LLM 在打回情境下最常见的三种破坏(markdown 围栏 / 前置解释 / 省略字段)只靠正面
+    # 描述压不住,必须显式禁止;正例给出一个「最短合规样本」让 LLM 有明确目标。
+    "scene_beats": (
+        "**严格输出 JSON 数组,不要包裹在 ```json 里,不要有任何解释文字或前后说明**。"
+        "从第一个 `[` 开始输出,到最后一个 `]` 结束。\n\n"
+        "【必须遵守的 JSON 结构】顶层是 list,每个元素是含以下 11 个字段的 dict(缺一不可):\n"
+        "  id(int) / scene(str≤20) / goal(str≤30) / obstacle(str≤30) / outcome(str≤30) /\n"
+        "  cost(str≤30) / emotion_arc(str≤20) / pacing(slow|medium|fast) /\n"
+        "  prose_focus(str≤15) / device_tags(list[str],至少 1 个,取自 setup/buildup/release/\n"
+        "  slap_taunt/slap_silence/slap_crush/slap_witness/hook_opening/hook_chapter_end/\n"
+        "  foreshadow_plant/foreshadow_recover/buffer) / target_words(int)\n\n"
+        "【✅ 合规示例(可直接照抄结构)】\n"
+        "[\n"
+        '  {"id": 1, "scene": "客栈门口,主角与李三", "goal": "拿到王家书信", '
+        '"obstacle": "李三索要银两", "outcome": "花 5 两拿到信,身家暴露", '
+        '"cost": "暴露身家线索", "emotion_arc": "戒备→释然", "pacing": "slow", '
+        '"prose_focus": "对话/氛围", "device_tags": ["setup", "foreshadow_plant"], '
+        '"target_words": 700},\n'
+        '  {"id": 2, "scene": "回房拆信", "goal": "读懂信中密语", '
+        '"obstacle": "密语生僻", "outcome": "认出王家印记,危机浮现", '
+        '"cost": "夜不能寐", "emotion_arc": "疑惑→震惊", "pacing": "medium", '
+        '"prose_focus": "心理/信息交换", "device_tags": ["buildup"], '
+        '"target_words": 600}\n'
+        "]\n\n"
+        "【❌ 严禁的错误形态】\n"
+        "  - 包 ```json 围栏:```json\\n[...]\\n```\n"
+        "  - 输出前有解释:「好的,以下是修改后的 beats:[...]」\n"
+        "  - 输出后有说明:「[...] 已按意见调整了 pacing」\n"
+        "  - 省略字段:{\"id\":1,\"scene\":\"...\"}(缺 device_tags/target_words 等)\n"
+        "  - 输出散文/markdown 列表(- Beat 1:...)——scene_beats **不是**正文,是节拍表\n"
+        "  - 非枚举 tag:device_tags:[\"climax\"] / [\"foreshadow\"](必须严格取自上表 12 个)\n"
+        "  - pacing 用中文或其他值:pacing:\"快\" / \"急促\"(只能是 slow/medium/fast)\n\n"
+        "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
+    ),
+}
+
+
 _REVIEW_PROMPTS = {
     "core_theme": CORE_THEME_REVIEW_PROMPT,
     "world_building": WORLD_BUILDING_REVIEW_PROMPT,
@@ -132,9 +190,8 @@ def generate(state: ReviewSubState) -> dict:
                 messages.append(AIMessage(content=entry["content"]))
         regen_instruction = (
             f"{state.review_feedback}\n\n"
-            "【输出规范】请根据以上意见重新创作，直接输出修改后的完整正文，"
-            "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言，"
-            "从正文第一句话开始输出。"
+            "【输出规范】请根据以上意见重新创作,"
+            f"{_REGEN_OUTPUT_HINTS.get(state.review_type, _REGEN_DEFAULT_OUTPUT_HINT)}"
         )
         # 打回重跑不重算 chapter_prompt/arc_outline_prompt，故首轮 task_prompt 里的整改段在
         # 重跑分支缺席。这里对正文/弧线从该书 overrides 新鲜读取「当前生效」的最新整改，拼到

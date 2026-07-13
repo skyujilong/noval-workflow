@@ -236,3 +236,97 @@ def test_subgraph_review_prompts_registers_scene_beats():
     from noval_workflow.subgraph import _REVIEW_PROMPTS
     assert "scene_beats" in _REVIEW_PROMPTS
     assert _REVIEW_PROMPTS["scene_beats"] == SCENE_BEATS_REVIEW_PROMPT
+
+
+# ── 打回重跑输出格式提醒(防 review_history 窗口截断后 LLM 忘掉 JSON 契约)────────
+
+def test_regen_instruction_reminds_scene_beats_json_format(monkeypatch):
+    """scene_beats 打回重跑时,human 消息必须显式声明「严格输出 JSON 数组、无 markdown 围栏」。
+
+    背景:首轮 task_prompt 有 JSON 规范,但被打回一到两轮后:
+      1. `regen_instruction` 会作为新的 human 消息追加,若沿用创作类的「直接输出完整正文」
+         话术,LLM 会被误导成散文输出,repair_and_parse 抛错;
+      2. review_history 有 _HISTORY_MAX_ROUNDS 窗口(scene_beats=3 轮),超窗口后首轮
+         task_prompt 会被裁掉,规范提醒随之消失。
+    因此每轮重跑都必须在 human message 里显式重申 JSON 契约。
+    """
+    from langchain_core.messages import AIMessage
+    from noval_workflow import subgraph as sg
+    from noval_workflow.state import ReviewSubState
+
+    recorder: list = []
+
+    class _FakeLLM:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def invoke(self, messages):
+            recorder.append((self.label, list(messages)))
+            return AIMessage(content='[{"id":1,"device_tags":["setup"]}]')
+
+    monkeypatch.setattr(sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm")))
+
+    state = ReviewSubState(
+        review_type="scene_beats",
+        system_context="SYS",
+        task_prompt="首轮任务(会被窗口裁掉)",
+        review_feedback="[AI审稿意见]\npacing 全 fast,请改",
+        review_history=[
+            {"role": "human", "content": "首轮任务(会被窗口裁掉)"},
+            {"role": "ai", "content": "上一版脏 JSON"},
+        ],
+    )
+    sg.generate(state)
+
+    prompt = "\n".join(str(getattr(m, "content", "")) for m in recorder[-1][1])
+    # 关键:重跑指令里必须出现 JSON 硬约束,且不含创作类的「完整正文/从第一句话开始」话术
+    assert "JSON 数组" in prompt or "严格输出 JSON" in prompt
+    assert "device_tags" in prompt, "重跑规范应重申字段列表,防止 LLM 漏字段"
+    assert "从正文第一句话开始输出" not in prompt, "scene_beats 不应沿用创作类散文话术"
+
+    # 正例:必须给出可照抄的合规 JSON 样本(含真实字段名与合法枚举值),让 LLM 有明确目标
+    assert "合规示例" in prompt
+    assert '"id": 1' in prompt
+    assert '"pacing":' in prompt and '"slow"' in prompt
+    assert '"device_tags":' in prompt and '"setup"' in prompt
+
+    # 反例:必须显式禁止最常见的三种破坏形态(围栏 / 前置解释 / 输出散文)
+    assert "严禁的错误形态" in prompt or "❌" in prompt
+    assert "```json" in prompt, "反例应显示禁止 markdown 围栏"
+    assert "好的" in prompt or "已按意见调整" in prompt, "反例应包含 LLM 常见的说明性前后缀"
+    assert "第一个字符必须是 `[`" in prompt, "结尾应再次强调 JSON 边界"
+
+
+def test_regen_instruction_keeps_prose_hint_for_chapter(monkeypatch):
+    """chapter 等创作类走默认散文话术,不应被 scene_beats 的 JSON 提醒污染(回归防护)。"""
+    from langchain_core.messages import AIMessage
+    from noval_workflow import subgraph as sg
+    from noval_workflow.state import ReviewSubState
+
+    recorder: list = []
+
+    class _FakeLLM:
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def invoke(self, messages):
+            recorder.append((self.label, list(messages)))
+            return AIMessage(content="重写后的章节正文。")
+
+    monkeypatch.setattr(sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm")))
+
+    state = ReviewSubState(
+        review_type="chapter",
+        system_context="SYS",
+        task_prompt="首轮章节任务",
+        review_feedback="[AI审稿意见]\n对白偏干",
+        review_history=[
+            {"role": "human", "content": "首轮章节任务"},
+            {"role": "ai", "content": "上一版章节正文"},
+        ],
+    )
+    sg.generate(state)
+
+    prompt = "\n".join(str(getattr(m, "content", "")) for m in recorder[-1][1])
+    assert "从正文第一句话开始输出" in prompt
+    assert "JSON 数组" not in prompt, "创作类不应被 scene_beats 的 JSON 提醒污染"
