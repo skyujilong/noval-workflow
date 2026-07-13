@@ -85,7 +85,12 @@ export function CheckpointTimeline({ threadId, onReplay }: Props) {
   if (!threadId) return null;
 
   return (
-    <div className="flex h-full flex-col">
+    // 用 flex-1 + min-h-0 而非 h-full：父级 <aside> 里已有 tab bar 占位，
+    // h-full 会让本组件取到 aside 整高，多占 tab bar 那段 → 底部被外层
+    // overflow-hidden 裁掉，表现为最后一条 item 只显示一半。
+    // min-h-0 是 flex column 里子级 overflow-y-auto 生效的必要条件
+    // （默认 min-height:auto 会让 flex item 撑到内容全高、绕过滚动）。
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between border-b p-3">
         <h3 className="text-sm font-semibold text-gray-700">历史回溯</h3>
         <button
