@@ -6,18 +6,23 @@
 
 import type { NovelState } from "../../lib/types";
 
-/** 7 档强度定义，与后端 state.py:ChapterPlanItem.intensity 保持一致 */
+/** 7 档强度定义，与后端 state.py:ChapterPlanItem.intensity 保持一致。
+ *
+ * bar 直接给 hex(而非 Tailwind class):动态注入(`${meta.bar}`)时 JIT 扫描
+ * 不稳定,曾出现类名挂上 DOM 但 CSS 规则未生成的白底白字 bug。走 inline style
+ * 绕开 Tailwind purge。色值取自 tailwindcss/colors 默认盘,视觉与 chip 系一致。
+ */
 const INTENSITY_META: Record<
   string,
   { label: string; cls: string; bar: string; group: "lull" | "build" | "turn" | "spike" }
 > = {
-  铺垫: { label: "铺垫", cls: "bg-slate-100 text-slate-600 border-slate-200", bar: "bg-slate-400", group: "lull" },
-  缓冲: { label: "缓冲", cls: "bg-sky-50 text-sky-700 border-sky-200", bar: "bg-sky-400", group: "lull" },
-  回落: { label: "回落", cls: "bg-indigo-50 text-indigo-700 border-indigo-200", bar: "bg-indigo-400", group: "lull" },
-  推进: { label: "推进", cls: "bg-gray-100 text-gray-700 border-gray-300", bar: "bg-gray-500", group: "build" },
-  小转折: { label: "小转折", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", bar: "bg-emerald-500", group: "turn" },
-  大转折: { label: "大转折", cls: "bg-amber-50 text-amber-700 border-amber-300", bar: "bg-amber-500", group: "spike" },
-  爆发: { label: "爆发", cls: "bg-rose-50 text-rose-700 border-rose-300", bar: "bg-rose-500", group: "spike" },
+  铺垫: { label: "铺垫", cls: "bg-slate-100 text-slate-600 border-slate-200", bar: "#94a3b8", group: "lull" },   // slate-400
+  缓冲: { label: "缓冲", cls: "bg-sky-50 text-sky-700 border-sky-200", bar: "#38bdf8", group: "lull" },          // sky-400
+  回落: { label: "回落", cls: "bg-indigo-50 text-indigo-700 border-indigo-200", bar: "#818cf8", group: "lull" }, // indigo-400
+  推进: { label: "推进", cls: "bg-gray-100 text-gray-700 border-gray-300", bar: "#6b7280", group: "build" },      // gray-500
+  小转折: { label: "小转折", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", bar: "#10b981", group: "turn" }, // emerald-500
+  大转折: { label: "大转折", cls: "bg-amber-50 text-amber-700 border-amber-300", bar: "#f59e0b", group: "spike" },      // amber-500
+  爆发: { label: "爆发", cls: "bg-rose-50 text-rose-700 border-rose-300", bar: "#f43f5e", group: "spike" },            // rose-500
 };
 
 const INTENSITY_ORDER = ["铺垫", "缓冲", "回落", "推进", "小转折", "大转折", "爆发"];
@@ -236,9 +241,70 @@ function IntensityBar({ intensityCount, total }: { intensityCount: Record<string
         if (c === 0) return null;
         const meta = INTENSITY_META[k];
         const w = (c / total) * 100;
+        // 背景色走 inline style(避开 Tailwind JIT 对模板类名的扫描不稳定);
+        // 宽度 <10% 时省略文字,避免拥挤,只靠色块传达 + tooltip 补足。
         return (
-          <div key={k} className={`flex items-center justify-center ${meta.bar} text-white font-medium`} style={{ width: `${w}%` }} title={`${meta.label} ${c}章`}>
+          <div
+            key={k}
+            className="flex items-center justify-center text-white font-medium"
+            style={{ width: `${w}%`, backgroundColor: meta.bar }}
+            title={`${meta.label} ${c}章`}
+          >
             {w >= 10 ? `${meta.label}${c}` : ""}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 章节时间线:每章一格(等宽),格内显示章号数字,底色=该章 intensity 档位。
+ *  已写就章加半透明白色斜纹叠加,与新规划区分,颜色本身保持可读。
+ *  hover 显示章号 + intensity + purpose 前 40 字。
+ *  章号数字始终显示(f8-10px);格窄时靠 tooltip 补足,不再单独出刻度行。 */
+function ChapterTimeline({ items, writtenUpto }: { items: ChapterPlanItem[]; writtenUpto: number }) {
+  if (items.length === 0) return null;
+  const w = 100 / items.length;
+  // 每 5 章 / 首 / 末章加粗突出;其余章号常规重量
+  const first = items[0].chapter;
+  const last = items[items.length - 1].chapter;
+  // 章数 >30 时,只在关键章位显示数字,避免拥挤;<=30 时全部显示
+  const showAllLabels = items.length <= 30;
+
+  return (
+    <div className="flex w-full h-8 overflow-hidden rounded border border-gray-300">
+      {items.map((it, i) => {
+        const meta = INTENSITY_META[it.intensity || ""];
+        const locked = writtenUpto > 0 && it.chapter <= writtenUpto;
+        const bg = meta?.bar || "#d1d5db"; // 未知档位 gray-300
+        const title =
+          `第 ${it.chapter} 章 · ${meta?.label || it.intensity || "?"}` +
+          (locked ? " [已写就]" : "") +
+          (it.purpose ? `\n${it.purpose.slice(0, 40)}${it.purpose.length > 40 ? "…" : ""}` : "");
+        const stripe = locked
+          ? "repeating-linear-gradient(45deg, rgba(255,255,255,0.5) 0 3px, transparent 3px 6px)"
+          : undefined;
+        const isKeyChapter = it.chapter === first || it.chapter === last || it.chapter % 5 === 0;
+        const showLabel = showAllLabels || isKeyChapter;
+        return (
+          <div
+            key={`${it.chapter}-${i}`}
+            className="flex items-center justify-center text-white text-[9px] leading-none select-none"
+            style={{
+              width: `${w}%`,
+              backgroundColor: bg,
+              backgroundImage: stripe,
+              // 相邻格用极细的深色分隔,弱化"缝隙感",不用刺眼的白线
+              boxShadow: i > 0 ? "inset 1px 0 0 rgba(0,0,0,0.08)" : undefined,
+            }}
+            title={title}
+          >
+            <span
+              className={isKeyChapter ? "font-bold drop-shadow-sm" : "font-normal opacity-90"}
+              style={{ textShadow: "0 0 2px rgba(0,0,0,0.35)" }}
+            >
+              {showLabel ? it.chapter : ""}
+            </span>
           </div>
         );
       })}
@@ -300,21 +366,49 @@ export function ChapterPlanCards({ draft, novelState }: Props) {
           )}
         </div>
 
-        {/* 档位分布条 + 图例 */}
+        {/* 章节时间线(逐章) + 档位分布(占比) + 图例 */}
         {freshItems.length > 0 && (
-          <div className="space-y-1">
-            <IntensityBar intensityCount={intensityCount} total={freshItems.length} />
-            <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
-              {INTENSITY_ORDER.map((k) => {
-                const c = intensityCount[k] || 0;
-                const meta = INTENSITY_META[k];
-                return (
-                  <span key={k} className="inline-flex items-center gap-1">
-                    <span className={`inline-block h-2 w-2 rounded ${meta.bar}`} />
-                    {meta.label} {c}
+          <div className="space-y-3">
+            {/* 逐章档位:每格 1 章,能看出节奏序列 */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium text-gray-600">逐章档位（时间线,每格 1 章）</span>
+                <span className="text-gray-400">共 {items.length} 章 · hover 看章节详情</span>
+              </div>
+              <ChapterTimeline items={items} writtenUpto={writtenUpto} />
+            </div>
+
+            {/* 整体占比:能看出总量分布是否合理 */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium text-gray-600">整体档位占比（新规划 {freshItems.length} 章）</span>
+                <span className="text-gray-400">看总量是否失衡</span>
+              </div>
+              <IntensityBar intensityCount={intensityCount} total={freshItems.length} />
+              <div className="flex flex-wrap gap-2 text-[10px] text-gray-500">
+                {INTENSITY_ORDER.map((k) => {
+                  const c = intensityCount[k] || 0;
+                  const meta = INTENSITY_META[k];
+                  return (
+                    <span key={k} className="inline-flex items-center gap-1">
+                      <span className="inline-block h-2 w-2 rounded" style={{ backgroundColor: meta.bar }} />
+                      {meta.label} {c}
+                    </span>
+                  );
+                })}
+                {writtenUpto > 0 && (
+                  <span className="inline-flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
+                    <span
+                      className="inline-block h-2 w-4 rounded"
+                      style={{
+                        backgroundColor: "#94a3b8",
+                        backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.55) 0 3px, transparent 3px 6px)",
+                      }}
+                    />
+                    已写就(斜纹)
                   </span>
-                );
-              })}
+                )}
+              </div>
             </div>
           </div>
         )}
