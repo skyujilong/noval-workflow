@@ -10,6 +10,7 @@ from noval_workflow.interrupt_types import review_type_to_interrupt_type
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
+    CHAPTER_PLAN_REVIEW_PROMPT,
     CHARACTER_PROFILES_REVIEW_PROMPT,
     CHARACTER_RELATIONS_REVIEW_PROMPT,
     CHARACTER_STATUS_REVIEW_PROMPT,
@@ -52,6 +53,8 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "foreshadowing": 3,
     "phase_summary": 3,
     "scene_beats": 3,
+    # chapter_plan JSON 数组条目多(30-50 * 4 字段),3 轮压 token。
+    "chapter_plan": 3,
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
@@ -110,6 +113,32 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  - pacing 用中文或其他值:pacing:\"快\" / \"急促\"(只能是 slow/medium/fast)\n\n"
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),
+    # chapter_plan 与 scene_beats 同类:严格 JSON 数组契约,4 字段(chapter/purpose/key_turn/ending_hook),
+    # 打回轮的散文指令最容易稀释成「加围栏 / 前置解释 / 缺字段」,故显式给结构+正反例。
+    "chapter_plan": (
+        "**严格输出 JSON 数组,不要包裹在 ```json 里,不要有任何解释文字或前后说明**。"
+        "从第一个 `[` 开始输出,到最后一个 `]` 结束。\n\n"
+        "【必须遵守的 JSON 结构】顶层是 list,每个元素是含且仅含以下 4 个字段的 dict(缺一不可):\n"
+        "  chapter(int,全书章号,必须严格连续升序) / purpose(str,≤40 汉字) /\n"
+        "  key_turn(str,≤40 汉字) / ending_hook(str,≤30 汉字)\n\n"
+        "【✅ 合规示例(可直接照抄结构)】\n"
+        "[\n"
+        '  {"chapter": 12, "purpose": "主角首次运用血印之力,惊觉自身异常", '
+        '"key_turn": "血印驱使古卷显形", "ending_hook": "古卷第一页浮出祖师名讳"},\n'
+        '  {"chapter": 13, "purpose": "追查祖师线索,与师门起冲突", '
+        '"key_turn": "被剥夺弟子身份", "ending_hook": "神秘信物在深夜自燃"}\n'
+        "]\n\n"
+        "【❌ 严禁的错误形态】\n"
+        "  - 包 ```json 围栏:```json\\n[...]\\n```\n"
+        "  - 输出前有解释:「好的,以下是修改后的规划:[...]」\n"
+        "  - 输出后有说明:「[...] 已按意见调整第 3 章」\n"
+        "  - 章号跳号 / 倒序 / 与已锁定条目重复\n"
+        "  - 字段用中文键名:{\"章号\":12,\"目标\":\"...\"}\n"
+        "  - 缺字段:{\"chapter\":12,\"purpose\":\"...\"}(缺 key_turn / ending_hook)\n"
+        "  - 字段值为空串或占位:{\"ending_hook\":\"\"} / {\"key_turn\":\"待定\"}\n"
+        "  - 输出散文/markdown 列表(第 12 章:主角...)——chapter_plan **不是**大纲文本,是结构化条目\n\n"
+        "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
+    ),
 }
 
 
@@ -123,6 +152,7 @@ _REVIEW_PROMPTS = {
     "titles": TITLES_REVIEW_PROMPT,
     "chapter": CHAPTER_REVIEW_PROMPT,
     "arc_outline": ARC_OUTLINE_REVIEW_PROMPT,
+    "chapter_plan": CHAPTER_PLAN_REVIEW_PROMPT,
     "character_status": CHARACTER_STATUS_REVIEW_PROMPT,
     "character_relations": CHARACTER_RELATIONS_REVIEW_PROMPT,
     "foreshadowing": FORESHADOWING_REVIEW_PROMPT,

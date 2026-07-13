@@ -127,6 +127,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   titles: "章节标题",
   chapter: "章节正文",
   arc_outline: "弧线大纲",
+  chapter_plan: "章节规划(远端锚点)",
   character_status: "人物动态状态",
   character_relations: "人物关系/势力格局",
   foreshadowing: "伏笔台账",

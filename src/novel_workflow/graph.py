@@ -18,6 +18,10 @@ from noval_workflow.nodes.chapter import (
     save_chapter,
     save_titles,
 )
+from noval_workflow.nodes.chapter_plan import (
+    prepare_chapter_plan,
+    save_chapter_plan,
+)
 from noval_workflow.nodes.foundation import (
     prepare_character_profiles,
     prepare_core_conflicts,
@@ -118,6 +122,11 @@ builder.add_node("consistency_diff_gate", consistency_diff_gate)
 builder.add_node("prepare_arc_outline", prepare_arc_outline)
 builder.add_node("review_arc_outline", review_subgraph)
 builder.add_node("save_arc_outline", save_arc_outline)
+
+# Phase 2.5 — chapter plan(远端锚点滚动窗口,在 arc_outline 前的中景大纲)
+builder.add_node("prepare_chapter_plan", prepare_chapter_plan)
+builder.add_node("review_chapter_plan", review_subgraph)
+builder.add_node("save_chapter_plan", save_chapter_plan)
 
 # Phase 2 — titles
 builder.add_node("prepare_titles", prepare_titles)
@@ -243,7 +252,27 @@ builder.add_conditional_edges(
     route_after_diff_gate,
     {"audit_consistency": "audit_consistency", "consistency_gate": "consistency_gate"},
 )
-builder.add_edge("save_config", "prepare_arc_outline")
+
+
+def _route_after_save_config(_state) -> str:
+    """save_config 冻结设定后:ENABLED=True 走 chapter_plan 首次生成,否则直接进 arc_outline(旧行为)。"""
+    from noval_workflow.config import CHAPTER_PLAN_ENABLED
+    return "prepare_chapter_plan" if CHAPTER_PLAN_ENABLED else "prepare_arc_outline"
+
+
+builder.add_conditional_edges(
+    "save_config",
+    _route_after_save_config,
+    {
+        "prepare_chapter_plan": "prepare_chapter_plan",
+        "prepare_arc_outline": "prepare_arc_outline",
+    },
+)
+
+# Phase 2.5 — chapter plan chain(首次进入 → 生成 → 审核 → 落库 → arc_outline)
+builder.add_edge("prepare_chapter_plan", "review_chapter_plan")
+builder.add_edge("review_chapter_plan", "save_chapter_plan")
+builder.add_edge("save_chapter_plan", "prepare_arc_outline")
 
 # Phase 2.5 — arc outline chain
 builder.add_edge("prepare_arc_outline", "review_arc_outline")
@@ -274,7 +303,11 @@ builder.add_conditional_edges(
 builder.add_conditional_edges(
     "ask_continue",
     route_continue_or_end,
-    {"prepare_arc_outline": "prepare_arc_outline", END: END},
+    {
+        "prepare_arc_outline": "prepare_arc_outline",
+        "prepare_chapter_plan": "prepare_chapter_plan",
+        END: END,
+    },
 )
 
 graph = builder.compile(name="Novel Writing Workflow")

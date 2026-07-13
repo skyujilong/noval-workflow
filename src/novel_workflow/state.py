@@ -4,6 +4,24 @@ from typing import Annotated
 
 
 @dataclass
+class ChapterPlanItem:
+    """章节规划单条条目——4 字段极简结构，作为 arc_outline 的远端锚点。
+
+    LangGraph checkpoint 序列化时 dataclass 自动转 dict，前端拿到的仍是标准 JSON；
+    LLM 出的 JSON 数组由 save_chapter_plan 逐条 `ChapterPlanItem(**item)` 造实例，
+    字段缺失/类型错时抛 TypeError，让审核循环重生成。
+
+    未来若需要扩字段（POV / 字数目标 / 伏笔挂载等），在此追加带默认值的可选字段即可，
+    老 state 快照反序列化时缺字段走默认，不会炸。
+    """
+
+    chapter: int      # 全书章号（1-based）
+    purpose: str      # 这章的活/目标，一句话（≤40 字）
+    key_turn: str     # 关键转折点（≤40 字）
+    ending_hook: str  # 章末钩子（≤30 字）
+
+
+@dataclass
 class ReviewSubState:
     novel_name: str = ""        # 小说名称（桥接字段：按小说加载提示词覆盖；由父图 NovelState.novel_name 自动映射）
     genre: str = ""             # 小说类型（桥接字段：按题材加载提示词包；由父图 NovelState.genre 自动映射）
@@ -117,6 +135,18 @@ class NovelState:
     current_chapter_index: int = 0  # 当前批次内的写作进度（0 = 第 1 章未写；每批开始时重置为 0）
     total_chapters_written: int = 0 # 全书已完成章节总数（跨批次累积）
     continue_writing: bool = True   # ask_continue 节点的用户决策：True = 继续下一批
+
+    # ── Phase 2.5：章节规划（chapter_plan，滚动窗口的远端锚点）────────────────────
+    # 在整书 overall_outline 与批级 arc_outline 之间的一层「中景大纲」，向前一次规划
+    # CHAPTER_PLAN_WINDOW 章，每写完 CHAPTER_PLAN_STRIDE 章滚动一次。已写完的章条目
+    # 永久锁定（save_chapter_plan 合并保证），只重写未写部分。
+    #
+    # 覆盖语义：全量覆盖返回（不用 operator.add，因为不是纯追加，是「历史保留 + 未来覆盖」）。
+    chapter_plan: list[ChapterPlanItem] = field(default_factory=list)
+    # 已被覆盖到的最远章号（1-based）；供路由与前端用于展示「已规划到第 N 章」。
+    chapter_plan_planned_upto: int = 0
+    # 上一次触发重规划时 total_chapters_written 的值；用于 STRIDE 判定，避免同一进度重复触发。
+    chapter_plan_last_regen_at: int = 0
 
     # ── Phase 2.5：批次小号大纲（arc outline）────────────────────────────────────
     current_arc_outline: str = ""

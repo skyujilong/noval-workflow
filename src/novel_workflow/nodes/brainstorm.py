@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.llm import get_llm
 from noval_workflow.state import NovelState
 
@@ -478,6 +479,101 @@ def _split_finalize_markdown(md: str, has_power_system: bool) -> tuple[dict[str,
     return fields, missing
 
 
+# ── 7 基础字段的隐藏 LLM 抽取（use 分支里调用）─────────────────────────────────
+# 允许的 genre 值域（与 collect_user_inputs 前端下拉严格对齐）。
+# 抽出后若不在集合内，一律降级为 ""，让 collect_user_inputs 让用户从下拉手选，
+# 而不是往 state 里塞"科幻/奇幻"这种下拉不识别的野值。
+_ALLOWED_GENRES = frozenset({"通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"})
+
+_BASIC_EXTRACT_SYSTEM_PROMPT = """你是一位小说信息抽取员。你的唯一任务是从一段脑爆对话历史 + 完整版整理稿里，
+把用户和 AI 已经共同敲定的 7 个基础参数抽成一份严格的 JSON。**不要脑补、不要总结、不要改写**——
+用户没有明确提到的字段一律给空字符串 ""。"""
+
+_BASIC_EXTRACT_PROMPT = """以下是一段小说灵感脑爆对话（含 AI 已整理的完整版 markdown）。请只抽取
+**基础参数**（7 个字段），输出一份严格 JSON。
+
+【硬性规则】
+1. 直接输出 JSON 对象，不要围栏 ```json，不要任何前后语；
+2. 7 个键必须都在（缺失或未讨论的字段值给空字符串 ""）；
+3. genre 必须从下列六选一，其他一律给 ""：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感；
+4. chapter_word_count / total_word_count 保持用户在对话里说的原文（如 "3000字" / "100万字"），
+   没提就给 ""；
+5. novel_name 若用户没起名，就给 ""——不要用主题/世界观概念替代书名。
+
+【JSON 结构】
+{{
+  "novel_name": "...",
+  "genre": "...",
+  "writing_style": "...",
+  "target_audience": "...",
+  "core_tone": "...",
+  "chapter_word_count": "...",
+  "total_word_count": "..."
+}}
+
+【脑爆材料】
+{material}"""
+
+
+def _extract_basic_fields(state: NovelState) -> dict[str, str]:
+    """从脑爆聊天历史 + finalize markdown 里抽 7 基础字段的严格 JSON。
+
+    走 tags=["nostream"] 的隐藏 LLM 调用——前端消息流看不到抽取过程,只感觉进 collect_user_inputs
+    时表单已预填。thinking="disabled" 避免让"结束脑爆"卡在思考等待。
+
+    失败降级(LLM 报错 / JSON 坏 / 字段类型错):返回 `{}` ,让 collect_user_inputs 弹表单让用户手填,
+    等同今天现状,绝不阻断流程。
+
+    genre 落到 `_ALLOWED_GENRES` 之外的野值(如"奇幻""武侠")一律降级为 "",让下拉引导用户手选。
+    """
+    material_parts = [_finalize_material(state)]
+    if state.finalize_markdown:
+        material_parts.append(f"【完整版整理稿】\n{state.finalize_markdown}")
+    material = "\n\n".join(p for p in material_parts if p).strip()
+
+    if not material:
+        return {}
+
+    try:
+        llm = get_llm(temperature=0.2, label="brainstorm_extract_basic", thinking="disabled")
+        reply = llm.invoke(
+            [
+                SystemMessage(content=_BASIC_EXTRACT_SYSTEM_PROMPT),
+                HumanMessage(content=_BASIC_EXTRACT_PROMPT.format(material=material)),
+            ],
+            config={"tags": ["nostream"]},
+        ).content
+    except Exception as exc:  # noqa: BLE001 — 抽取失败退化为空 dict,不阻断流程
+        _logger.error("脑爆基础字段抽取失败:%s", exc)
+        return {}
+
+    try:
+        parsed = repair_and_parse(reply, kind=dict)
+    except JsonParseError as exc:
+        _logger.error("脑爆基础字段 JSON 解析失败:%s;原始=%r", exc, reply)
+        return {}
+
+    # 过滤:只收 7 个白名单字段的非空字符串。genre 越界降级为 ""。
+    valid_keys = frozenset({
+        "novel_name", "genre", "writing_style", "target_audience",
+        "core_tone", "chapter_word_count", "total_word_count",
+    })
+    out: dict[str, str] = {}
+    for key, val in parsed.items():
+        if key not in valid_keys:
+            continue
+        if not isinstance(val, str):
+            continue
+        stripped = val.strip()
+        if not stripped:
+            continue
+        if key == "genre" and stripped not in _ALLOWED_GENRES:
+            _logger.info("脑爆抽取 genre='%s' 不在下拉候选,降级为空让用户手选", stripped)
+            continue
+        out[key] = stripped
+    return out
+
+
 def brainstorm_finalize_confirm(state: NovelState) -> dict:
     """脑爆结束轮的完整版确认闸门（v2 新增）。
 
@@ -508,6 +604,13 @@ def brainstorm_finalize_confirm(state: NovelState) -> dict:
         fields, missing = _split_finalize_markdown(state.finalize_markdown, state.has_power_system)
         out: dict = {"finalize_missing_fields": missing}
         for field_name, value in fields.items():
+            out[field_name] = value
+        # 补一次隐藏 LLM 抽取:从聊天历史 + 完整版稿里抽 7 基础字段(小说名/类型/风格/读者/基调/字数),
+        # tags=["nostream"] 前端无感知,直接让 collect_user_inputs 拿到预填值。
+        # v2 保真度改造删了老 brainstorm_extract 节点后 7 基础字段无处可抽,导致 collect 表单全空;
+        # 这里补上抽取路径,不影响 4 设定字段的纯 python 保真度切分。
+        basic = _extract_basic_fields(state)
+        for field_name, value in basic.items():
             out[field_name] = value
         return out
 

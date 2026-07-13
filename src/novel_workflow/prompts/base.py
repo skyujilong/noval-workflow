@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Union
 
 if TYPE_CHECKING:
-    from noval_workflow.state import NovelState
+    from noval_workflow.state import ChapterPlanItem, NovelState
 
 
 # ── 共享常量 ───────────────────────────────────────────────────────────────────
@@ -84,6 +84,58 @@ def _extract_arc_chapter_block(arc_outline: str, batch_pos: int) -> str:
     start = headers[batch_pos - 1].start()
     end = headers[batch_pos].start() if batch_pos < len(headers) else len(arc_outline)
     return arc_outline[start:end].strip()
+
+
+def _extract_chapter_plan_range(
+    chapter_plan: "list[ChapterPlanItem]",
+    start_chapter: int,
+    end_chapter: int,
+) -> "list[ChapterPlanItem]":
+    """按 [start_chapter, end_chapter] 闭区间切片 chapter_plan。
+
+    空 plan / 空区间 / 切不到条目时返回空 list——调用方按空处理即可，行为对
+    「未开启 chapter_plan」的老工程完全透明。
+    """
+    if not chapter_plan or start_chapter > end_chapter:
+        return []
+    return [item for item in chapter_plan if start_chapter <= item.chapter <= end_chapter]
+
+
+def _format_chapter_plan_block(entries: "list[ChapterPlanItem]") -> str:
+    """把章节规划条目渲染成简短 markdown,每章一行。
+
+    留一行的紧凑格式,防止喂给下游 prompt 时膨胀 token;字段之间用全角竖线分隔,
+    与既有 arc_outline 内的字段风格视觉对齐。空 list 返回空串。
+    """
+    if not entries:
+        return ""
+    lines = [
+        f"- 第{item.chapter}章｜目标:{item.purpose}｜关键转折:{item.key_turn}｜章末钩子:{item.ending_hook}"
+        for item in entries
+    ]
+    return "\n".join(lines)
+
+
+def _format_written_chapters_brief(state: "NovelState", max_recent: int = 10) -> str:
+    """渲染「已写完章节的标题 + 摘要」精简视图,供 chapter_plan_prompt 消费。
+
+    只取最近 max_recent 章,防止长篇累积后拉爆 token;每章一行 `第N章｜标题｜摘要片段`。
+    未写过任何章时返回空串,调用方按空处理。
+    """
+    if state.total_chapters_written <= 0:
+        return ""
+    total = state.total_chapters_written
+    titles = state.all_chapter_titles[:total]  # 防越界:只取已写完对应的标题
+    summaries = state.all_chapter_summaries[:total]
+    start = max(0, total - max_recent)
+    lines = []
+    for idx in range(start, total):
+        title = titles[idx] if idx < len(titles) else ""
+        summary = summaries[idx] if idx < len(summaries) else ""
+        # 摘要过长时截取前 80 字,足够 chapter_plan 用来判断承接
+        summary_short = summary[:80] + ("…" if len(summary) > 80 else "")
+        lines.append(f"第{idx + 1}章｜{title}｜{summary_short}")
+    return "\n".join(lines)
 
 
 class _PromptState(Protocol):
@@ -412,6 +464,7 @@ class PromptPack:
         batch_pos: int = 0,
         batch_total: int = 0,
         scene_beats: list[dict] | None = None,
+        chapter_plan_entry: "ChapterPlanItem | None" = None,
     ) -> str:
         """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。
 
@@ -422,6 +475,10 @@ class PromptPack:
         scene_beats（可选）：本章 scene beats 节拍表；非空时作为「首要依据」注入正文创作
         提示词，并追加第 7 条硬约束「Scene beats 对齐」——逐 beat 展开、打脸四拍必须齐全、
         章尾钩必须落在末 beat 上。为空则走原路径不注入，行为与旧图完全一致。
+
+        chapter_plan_entry（可选）：本章对应的 chapter_plan 条目（4 字段远端锚点）；非空时
+        作为「大局锚点」注入,与 arc/beats 是层级关系(远端 → 批级 → 章级),冲突时以更细一层为准,
+        它只帮 LLM 把握本章在中景规划中的定位。为空则不注入,向后兼容。
         """
         all_titles_text = "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
@@ -457,6 +514,25 @@ class PromptPack:
                 "同时为本批后续章节所需的人物、关系、线索与伏笔做好必要的前置铺垫，让分章之间自然咬合。"
             )
 
+        # 远端锚点（章级）：来自 chapter_plan,4 字段的中景导航。层级关系:chapter_plan(远)
+        # → arc_outline(批级中景) → scene_beats(章内节拍)。远端锚点用于把握本章在整个滚动
+        # 窗口中的定位,与 arc 冲突时以 arc 为准;若两者一致则相互印证,LLM 有更强的对齐信号。
+        chapter_plan_section = ""
+        chapter_plan_rule = ""
+        if chapter_plan_entry is not None:
+            chapter_plan_section = (
+                f"\n\n【本章远端锚点（来自 chapter_plan，全书第 {chapter_plan_entry.chapter} 章）】"
+                f"\n目标：{chapter_plan_entry.purpose}"
+                f"\n关键转折：{chapter_plan_entry.key_turn}"
+                f"\n章末钩子：{chapter_plan_entry.ending_hook}"
+                "\n（以上是滚动章节规划给本章的大局定位,用于把握本章在中景窗口中的位置;"
+                "若与弧线锚点冲突,以弧线锚点为准——远端锚点管方向,弧线锚点管细节。）"
+            )
+            chapter_plan_rule = (
+                "\n8. 远端锚点承接：本章的整体走向、关键转折与章末钩子须落在远端锚点上;"
+                "如与弧线锚点局部不一致,以弧线锚点为准并主动调和,不得直接推翻远端目标。"
+            )
+
         # Scene beats 节拍表（章级可选）：非空时作为「首要依据」注入，比弧线锚点更细一层。
         # 弧线锚点说「本章要发生什么」，scene beats 说「本章 3-7 个 beat 逐一怎么演」。
         beats_section = ""
@@ -489,7 +565,7 @@ class PromptPack:
 请撰写第{chapter_num}章：《{title}》
 
 全书章节目录（供参考）：
-{all_titles_text}{context_section}{arc_section}{beats_section}
+{all_titles_text}{context_section}{arc_section}{chapter_plan_section}{beats_section}
 
 ### 核心创作强制规则
 1. 人设严格合规：100%遵循全书官方人物档案，守住角色性格、行事底线、核心动机，**严禁OOC、人设崩坏、性格前后矛盾**；人物关系、阵营、立场保持连贯统一。专属小动作、外形标识、口头禅等标志特征，仅在情绪转折或剧情关键点自然露出，普通场景中禁止高频复读。
@@ -502,7 +578,7 @@ class PromptPack:
    - 转折/爆发章：以 medium+fast 为主，但**爽点/反转之前必须有 slow 蓄势段**（用感官细节、生理反应、对话停顿把张力拉满后再爆），不要一上来就炸；结尾在最高点前断章留钩子。
    - 任何档位章都禁止"事件堆叠式快进"——不要把剧情节点一口气列完交差，每个节点要有对应的情绪/感官/动作/反应去落地，让读者"看见"而不只是"知道发生了什么"。
    - 全章字数贴近预设单章标准字数。结尾按档位预留钩子（重章钩子强、淡章钩子弱或用悬念/情绪余韵收尾）。
-5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}{beats_rule}
+5. 世界观合规：严格遵循本作世界观、势力规则、场景设定，不新增脱离原著的设定与道具。{arc_rule}{beats_rule}{chapter_plan_rule}
 
 ### 【关键去机械化&反赶进度：让文字"呼吸"起来】
 - 人物标志特征克制：角色专属癖好、标志性小动作、口头禅、信物特征**禁止高频、机械、重复性刷人设**。每章同一角色的口头禅或标志动作最多自然出现 1-2 次；仅在情绪波动、紧张迟疑、剧情转折、伏笔触发时选择性露出；普通日常场景弱化隐藏，保持真人自然感。
@@ -536,6 +612,25 @@ class PromptPack:
                 if s
             )
 
+        # ── 远端锚点注入:从 chapter_plan 切出本批对应的窗口条目 ──────────────────
+        # 目的:让 arc_outline 生成时能看到「本批 5 章的整体走向」,而非只依赖整书大纲
+        # + 前文摘要;chapter_plan 未开启 or 未覆盖到本批时自然跳过,行为向后兼容。
+        batch_start = state.total_chapters_written + 1
+        batch_end = batch_start + BATCH_SIZE - 1
+        plan_entries = _extract_chapter_plan_range(state.chapter_plan, batch_start, batch_end)
+        chapter_plan_section = ""
+        chapter_plan_rule = ""
+        if plan_entries:
+            plan_block = _format_chapter_plan_block(plan_entries)
+            chapter_plan_section = (
+                f"\n\n【本批远端锚点（来自 chapter_plan，本批 {BATCH_SIZE} 章的整体走向 / 转折 / 钩子）】\n"
+                f"{plan_block}"
+            )
+            chapter_plan_rule = (
+                "\n8. 本批各章档位与情节节点须与「远端锚点」中的 `目标 / 关键转折 / 章末钩子` 对齐;"
+                "如与整体大纲局部冲突,以整体大纲为准并主动调和,不得直接推翻锚点。"
+            )
+
         is_first_batch = state.total_chapters_written == 0
         continuity_rule = (
             "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
@@ -546,7 +641,7 @@ class PromptPack:
         max_words = BATCH_SIZE * 500
         focus = f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
 
-        return f"""请为本批接下来的 {BATCH_SIZE} 章规划故事弧线大纲。{prev_section}
+        return f"""请为本批接下来的 {BATCH_SIZE} 章规划故事弧线大纲。{prev_section}{chapter_plan_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
@@ -584,4 +679,118 @@ class PromptPack:
 ## 补充兜底规则
 1. 若上一批衔接信息缺失，优先沿用最近主线冲突、人物状态、场景位置续写。
 2. 关键反派、核心配角的行为保持前后一致，恩怨、矛盾持续延续；淡章里配角可以有生活化露出（不必每次出场都推动主线），强化“活人感”。
-3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记；淡章是埋小伏笔、放暗线信息的最佳位置，不要错过。{self._evolved_directives_section("arc_outline")}"""
+3. 所有伏笔标注清晰，做到“有埋必有收”，跨章节线索做好标记；淡章是埋小伏笔、放暗线信息的最佳位置，不要错过。{chapter_plan_rule}{self._evolved_directives_section("arc_outline")}"""
+
+    def chapter_plan_prompt(
+        self,
+        state: "NovelState",
+        start_chapter: int,
+        end_chapter: int,
+        locked_entries: "list[ChapterPlanItem]",
+    ) -> str:
+        """滚动章节规划(chapter_plan)提示词：一次生成 [start_chapter, end_chapter] 闭区间的
+        章节规划条目,严格 JSON 数组,每条 4 字段(chapter/purpose/key_turn/ending_hook)。
+
+        locked_entries 是已写完段(chapter <= total_chapters_written)的历史条目,只作为承接
+        参考,LLM **禁止**修改或重复输出这些章号——save_chapter_plan 兜底合并保留历史。
+        """
+        import json
+        from dataclasses import asdict
+
+        count = end_chapter - start_chapter + 1
+        is_first_plan = state.total_chapters_written == 0
+
+        continuity_rule = (
+            "本次是首次章节规划,请紧扣整体大纲的开篇定位,奠定世界观、人物关系与核心冲突的基调;前几章允许略慢热但必须挂钩子。"
+            if is_first_plan else
+            "本次是滚动重规划,请严格承接已写完章节的伏笔、人物状态、势力格局与情绪走向;不要另起炉灶推翻已发生的剧情。"
+        )
+
+        written_brief = _format_written_chapters_brief(state)
+        written_section = (
+            f"\n\n【已写完章节速览（最近 10 章,供承接参考）】\n{written_brief}"
+            if written_brief else ""
+        )
+
+        # 已锁定的历史条目:LLM 必须原样承接,不能重复输出这些章号
+        if locked_entries:
+            locked_json = json.dumps(
+                [asdict(item) for item in locked_entries],
+                ensure_ascii=False,
+                indent=2,
+            )
+            locked_section = (
+                "\n\n【已锁定的历史章节规划条目（章号 1 ~ "
+                f"{state.total_chapters_written},供承接参考,严禁修改或重复输出这些章号）】\n"
+                f"{locked_json}"
+            )
+        else:
+            locked_section = ""
+
+        # 状态快照:让 LLM 感知当前进度
+        status_lines = []
+        if state.character_status:
+            status_lines.append(f"【人物动态状态】\n{state.character_status}")
+        if state.character_relations:
+            status_lines.append(f"【人物关系/势力格局】\n{state.character_relations}")
+        if state.foreshadowing:
+            fs_json = json.dumps(state.foreshadowing, ensure_ascii=False, indent=2)
+            status_lines.append(f"【伏笔台账】\n{fs_json}")
+        if state.phase_summary:
+            status_lines.append(f"【阶段固化数据】\n{state.phase_summary}")
+        status_section = ("\n\n" + "\n\n".join(status_lines)) if status_lines else ""
+
+        # 关键转折与钩子的分布约束——防止 30-50 章章章硬转折/章章平淡
+        peak_max = max(3, count // 8)  # 约 12.5%~25% 的强转折上限,给节奏留呼吸
+        peak_min = max(2, count // 12)  # 至少 8%~15% 的强转折,保证长弧线不塌
+        return f"""请为本作品规划一份 {count} 章的**中景章节规划**(chapter_plan)。{written_section}{locked_section}{status_section}
+
+# 角色:你是长篇网文的中景大纲规划师,负责在「整书大纲」与「批级弧线」之间,给出一份 {count} 章的滚动路线图。
+
+## 本次任务范围
+只输出章号 {start_chapter} - {end_chapter}(闭区间,共 {count} 条)的新条目,**严禁**输出其他章号,**严禁**重复输出「已锁定的历史条目」中的章号。
+
+## 输出契约(严格 JSON,无任何附加文本)
+1. 直接输出一个 JSON 数组,第一个字符是 `[`,最后一个字符是 `]`。
+2. **禁止** markdown 围栏(如 ```json)、**禁止**前置解释、**禁止**任何解释性文字。
+3. 数组元素**必须**为对象,**必须**包含且仅包含 4 个字段:
+   - `chapter`: 整数,全书章号(1-based),范围 [{start_chapter}, {end_chapter}],严格连续升序。
+   - `purpose`: 字符串,本章要完成的「活」/目标,一句话概括(≤40 汉字)。
+   - `key_turn`: 字符串,本章关键转折点/看点(≤40 汉字);淡章可写「无强转折,以XX铺垫为主」。
+   - `ending_hook`: 字符串,本章结尾钩子/悬念(≤30 汉字)。
+4. 每条对象**必须**齐 4 字段,缺一 fail;字段值**不得为空字符串**,不得写「见后续」「待定」等占位。
+
+## 最短合规样本
+[
+  {{"chapter": {start_chapter}, "purpose": "主角初入宗门被欺辱,埋下反击契机", "key_turn": "被逼签下不平等契约", "ending_hook": "契约上多出一枚未知血印"}},
+  {{"chapter": {start_chapter + 1}, "purpose": "主角首次动用血印之力,惊觉自身异常", "key_turn": "血印驱使神秘古卷显形", "ending_hook": "古卷第一页浮出祖师名讳"}}
+]
+
+## 常见错误(禁止)
+❌ 加 markdown 围栏 ```json ... ```
+❌ 数组前写「以下是规划:」等解释
+❌ 章号跳号或倒序,或与「已锁定条目」章号重复
+❌ 字段用中文键名(用「目标」代替 `purpose`)
+❌ 4 字段缺一,或字段值写空串/「待定」
+❌ 章章都是强转折(违反下方分布约束)
+
+## 内容创作约束
+{continuity_rule}
+1. 本 {count} 章须与整体大纲的阶段定位对齐(起承转合/四卷式),不要提前爆完终局。
+2. 转折分布(硬约束,决定节奏呼吸):
+   - `key_turn` 中「强转折/爆发/反转/身份揭晓/大战」类的高密度章节数量应在 [{peak_min}, {peak_max}] 之间。
+   - 其他章为推进/铺垫/缓冲/回落,`key_turn` 写具体的低密度进展(如「关系推进」「信息释放」「情绪沉淀」)。
+   - **禁止**连续 3 章以上高密度转折;高潮之间**必须**插入至少 1 章铺垫/缓冲。
+3. `ending_hook` 每章必须落到实处,不得写「进入下一战」「揭开真相」这种空钩子;要具体到「谁做了什么/看到了什么/说了什么」。
+4. 伏笔挂钩:埋伏笔的章要在 `purpose` 或 `key_turn` 里点明「埋下 XX」;回收的章要点明「回收前文 XX」。跨此窗口的伏笔可留白。
+5. 严守作品既定设定(题材/世界观/力量体系/人物关系),不新增私设、不降智/拔高角色。
+
+## 输出前自检(全部通过才输出)
+1. 是否严格 `[` 开头 `]` 结尾,无围栏无解释?
+2. 章号是否 {start_chapter} → {end_chapter} 连续升序、共 {count} 条?
+3. 每条是否齐 4 字段、值非空、字数达标?
+4. 强转折章数是否在 [{peak_min}, {peak_max}] 之间?是否有连续 3+ 章硬转折?
+5. 是否与已写完段的伏笔/人物状态自然承接、无矛盾?
+
+直接输出 JSON 数组,不要输出任何其他内容。"""
+

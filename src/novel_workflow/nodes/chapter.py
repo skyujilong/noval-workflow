@@ -81,6 +81,13 @@ def prepare_chapter(state: NovelState) -> dict:
     scene_beats_for_prompt = None
     if state.current_chapter_beats and state.beats_chapter_index == chapter_num:
         scene_beats_for_prompt = state.current_chapter_beats
+    # chapter_plan 远端锚点消费：按 chapter_num 从章节规划里精确取本章那一条（4 字段）；
+    # 未开启 chapter_plan / 未覆盖到本章 / 空 plan 时视同 None，不注入,行为向后兼容。
+    chapter_plan_entry_for_prompt = None
+    for item in state.chapter_plan:
+        if item.chapter == chapter_num:
+            chapter_plan_entry_for_prompt = item
+            break
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
@@ -93,6 +100,7 @@ def prepare_chapter(state: NovelState) -> dict:
             batch_pos=batch_pos,
             batch_total=batch_total,
             scene_beats=scene_beats_for_prompt,
+            chapter_plan_entry=chapter_plan_entry_for_prompt,
         ),
         "review_type": "chapter",
         **reset_review_fields(),
@@ -225,6 +233,23 @@ def route_chapter_or_continue(state: NovelState) -> str:
 
 
 def route_continue_or_end(state: NovelState) -> str:
-    if state.continue_writing:
+    """批次结束后三分:END(用户停) / prepare_chapter_plan(需滚动重规划) / prepare_arc_outline(直接下一批)。
+
+    滚动重规划触发条件(任一即触发):
+    1. `chapter_plan` 为空——首次进入或老工程懒生成兜底。
+    2. 已写完章数 - 上次触发时进度 >= CHAPTER_PLAN_STRIDE——步长滚动。
+
+    ENABLED=False 时直接跳过 chapter_plan 路径,链路等价旧行为。
+    """
+    from noval_workflow.config import CHAPTER_PLAN_ENABLED, CHAPTER_PLAN_STRIDE
+
+    if not state.continue_writing:
+        return END
+    if not CHAPTER_PLAN_ENABLED:
         return "prepare_arc_outline"
-    return END
+
+    done = state.total_chapters_written
+    since_last = done - state.chapter_plan_last_regen_at
+    if not state.chapter_plan or since_last >= CHAPTER_PLAN_STRIDE:
+        return "prepare_chapter_plan"
+    return "prepare_arc_outline"
