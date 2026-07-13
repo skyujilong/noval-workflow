@@ -646,6 +646,27 @@ class PromptPack:
                 "如与整体大纲局部冲突,以整体大纲为准并主动调和,不得直接推翻锚点。"
             )
 
+        # ── 位置卡:显式告诉 LLM「你在全书哪个位置写、下一批要写哪些章」 ──────────
+        # 修复缺陷:此前 LLM 只能从前文摘要头部「第 X 章摘要」暗示章号,没有显式位置说明,
+        # 容易在「是不是该收尾 / 是不是还早」这类阶段判断上飘。这里补一段头部锚点段。
+        # 目标章数字段 state.total_word_count 是字符串目标(如「50 万字」),不解析,原样透传。
+        done = state.total_chapters_written
+        plan_coverage_note = ""
+        if state.chapter_plan and state.chapter_plan_planned_upto:
+            plan_coverage_note = (
+                f" · chapter_plan 已前瞻到第 {state.chapter_plan_planned_upto} 章"
+                f"({len(plan_entries)} 条锚点覆盖本批)"
+                if plan_entries else
+                f" · chapter_plan 已前瞻到第 {state.chapter_plan_planned_upto} 章(本批未覆盖)"
+            )
+        position_section = (
+            "\n\n【本批位置卡】\n"
+            f"- 本批将规划：全书第 {batch_start} — {batch_end} 章（闭区间,共 {BATCH_SIZE} 章）\n"
+            f"- 已完成：{done} 章\n"
+            f"- 全书目标篇幅：{state.total_word_count or '未设定'}"
+            f"{plan_coverage_note}"
+        )
+
         is_first_batch = state.total_chapters_written == 0
         continuity_rule = (
             "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
@@ -656,7 +677,7 @@ class PromptPack:
         max_words = BATCH_SIZE * 500
         focus = f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
 
-        return f"""请为本批接下来的 {BATCH_SIZE} 章规划故事弧线大纲。{prev_section}{chapter_plan_section}
+        return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{position_section}{prev_section}{chapter_plan_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
