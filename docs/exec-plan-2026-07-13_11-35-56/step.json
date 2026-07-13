@@ -1,0 +1,38 @@
+[
+  {
+    "step": "01-contracts-backend",
+    "state": "complate"
+  },
+  {
+    "step": "02-contracts-frontend",
+    "state": "complate"
+  },
+  {
+    "step": "03-prompts",
+    "state": "complate"
+  },
+  {
+    "step": "04-subgraph-registry",
+    "state": "complate"
+  },
+  {
+    "step": "05-nodes",
+    "state": "complate"
+  },
+  {
+    "step": "06-subgraph-wire",
+    "state": "complate"
+  },
+  {
+    "step": "07-graph-wire",
+    "state": "complate"
+  },
+  {
+    "step": "08-tests",
+    "state": "complate"
+  },
+  {
+    "step": "09-final-verify",
+    "state": "complate"
+  }
+]

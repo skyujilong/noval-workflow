@@ -133,6 +133,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   foreshadowing: "伏笔台账",
   phase_summary: "阶段固化数据",
   scene_beats: "章节 scene beats",
+  character_profiles_discover: "角色档案发现",
 };
 
 export function reviewTypeLabel(t: string): string {

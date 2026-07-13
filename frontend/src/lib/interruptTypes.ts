@@ -48,6 +48,10 @@ export const InterruptType = {
   SCENE_BEATS_ENTRY_GATE: "scene_beats_entry_gate",
   SCENE_BEATS_DIRECTION_INPUT: "scene_beats_direction_input",
   SCENE_BEATS_REVIEW: "scene_beats_review",
+  // 章级角色档案发现（每章正文完成后自动，可跳步骤；插在 generate_summary 之后、chapter_edit_subgraph 之前）
+  CHARACTER_PROFILES_DISCOVER_ENTRY_GATE: "character_profiles_discover_entry_gate",
+  CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT: "character_profiles_discover_direction_input",
+  CHARACTER_PROFILES_DISCOVER_REVIEW: "character_profiles_discover_review",
   // 通用审核（基础设定类、标题、弧线大纲等共用 review_generic；章节正文 review_chapter）
   REVIEW_GENERIC: "review_generic",
   REVIEW_CHAPTER: "review_chapter",
@@ -267,6 +271,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.FORESHADOWING_ENTRY_GATE]: "entry_gate",
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
   [InterruptType.SCENE_BEATS_ENTRY_GATE]: "entry_gate",
+  [InterruptType.CHARACTER_PROFILES_DISCOVER_ENTRY_GATE]: "entry_gate",
 
   // 弧线方向单独识别（标题为"弧线大纲调整方向"），其余 step 方向归入 direction
   [InterruptType.ARC_DIRECTION_INPUT]: "arc_direction",
@@ -275,12 +280,14 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "direction",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "direction",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "direction",
+  [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "direction",
 
   [InterruptType.STATUS_REVIEW]: "human_review",
   [InterruptType.RELATIONS_REVIEW]: "human_review",
   [InterruptType.FORESHADOWING_REVIEW]: "foreshadowing_review", // 伏笔专用表单
   [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
   [InterruptType.SCENE_BEATS_REVIEW]: "human_review",
+  [InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW]: "human_review",
   [InterruptType.REVIEW_GENERIC]: "human_review",
   [InterruptType.REVIEW_CHAPTER]: "human_review",
 
@@ -324,6 +331,7 @@ const DIRECTION_TITLE: Record<string, string> = {
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "伏笔台账调整方向",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "阶段固化数据调整方向",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "Scene beats 调整方向",
+  [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "角色档案发现调整方向",
 };
 
 /** 按 direction payload.type 查标题，未知 type 回退「调整方向」 */

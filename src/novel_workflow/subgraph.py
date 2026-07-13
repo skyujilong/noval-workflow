@@ -11,6 +11,7 @@ from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_PLAN_REVIEW_PROMPT,
+    CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
     CHARACTER_PROFILES_REVIEW_PROMPT,
     CHARACTER_RELATIONS_REVIEW_PROMPT,
     CHARACTER_STATUS_REVIEW_PROMPT,
@@ -55,6 +56,7 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "scene_beats": 3,
     # chapter_plan JSON 数组条目多(30-50 * 4 字段),3 轮压 token。
     "chapter_plan": 3,
+    "character_profiles_discover": 3,
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
@@ -139,6 +141,15 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  - 输出散文/markdown 列表(第 12 章:主角...)——chapter_plan **不是**大纲文本,是结构化条目\n\n"
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),
+    # character_profiles_discover 的重跑规范:默认散文提示("从正文第一句话开始输出")会把
+    # LLM 引向"再写一遍章节正文",而 discover 需要的是**合流后的完整人物档案 markdown**。
+    # 这里显式声明"人物档案 markdown / 不是章节正文"并强调**保留原有条目原样**（生成 prompt
+    # 已强调,但打回情境下"最后一条 human"会覆盖首轮任务书,故重写指令里必须再钉一次）。
+    "character_profiles_discover": (
+        "直接输出修改后的完整【人物档案 markdown】——**不是章节正文**,"
+        "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言。"
+        "必须保留输入档案中所有原有角色条目原样,只允许追加新角色或在原条目末尾追加「【本章新增】…」补充段。"
+    ),
 }
 
 
@@ -158,6 +169,7 @@ _REVIEW_PROMPTS = {
     "foreshadowing": FORESHADOWING_REVIEW_PROMPT,
     "phase_summary": PHASE_SUMMARY_REVIEW_PROMPT,
     "scene_beats": SCENE_BEATS_REVIEW_PROMPT,
+    "character_profiles_discover": CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
 }
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}
