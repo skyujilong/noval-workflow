@@ -3,7 +3,65 @@
 侧重力量体系、修炼进境、境界突破、宗门势力博弈；叙事偏热血爽感与史诗感。
 """
 
-from noval_workflow.prompts.base import GenreFlavor
+from noval_workflow.prompts.base import (
+    ChapterPlanGenreSpec,
+    GenreFlavor,
+    render_chapter_plan_prompt,
+)
+
+
+# ── chapter_plan 题材差异化 spec:玄幻/仙侠向 ────────────────────────────────
+# 侧重境界突破、机缘争夺、宗门抗争、越阶战斗;7 档语义偏战斗爽点内涵。
+_XIANXIA_CHAPTER_PLAN_SPEC = ChapterPlanGenreSpec(
+    sample_entry_1=(
+        '{{"chapter": {start_chapter}, "purpose": "主角初入宗门被排挤，埋下反击契机", '
+        '"key_turn": "被逼签下不平等契约却发现契约暗藏血印", '
+        '"ending_hook": "血印在深夜浮现出祖师名讳", "intensity": "铺垫"}}'
+    ),
+    sample_entry_2=(
+        '{{"chapter": {start_chapter_plus_1}, "purpose": "主角首次借血印反制同门，展露实力", '
+        '"key_turn": "以弱胜强震退挑衅者，被长老暗中关注", '
+        '"ending_hook": "长老密室里打开了尘封的血印档案", "intensity": "小转折"}}'
+    ),
+    agency_examples=(
+        "主动修炼突破、闭关悟道、机缘争夺、宗门对抗、越阶战斗胜利、道心觉醒、法宝或功法到手、身份或血脉揭示引起大能关注"
+    ),
+    payoff_types=(
+        "越阶战斗胜利 / 硬碰硬打脸挑衅者（境界差压制被翻盘）",
+        "机缘到手（灵石矿脉 / 上古洞府 / 遗世秘境 / 上乘功法 / 传承令牌）",
+        "隐藏血脉 / 天赋根骨 / 特殊体质被目击，引起长老或大能关注",
+        "境界突破 / 关键神通显化 / 道心蜕变（不许每章都突破，要有铺垫）",
+        "宗门势力反转（师门认可 / 敌对宗门吃瘪 / 势力格局变化）",
+        "关键信息优势（识破阴谋 / 抢先获知秘辛 / 看破对手底牌）",
+    ),
+    intensity_semantics_override=(
+        ("爆发", "越阶大战 / 宗门决战 / 打脸大高潮 / 境界突破的核心兑现节点"),
+        ("大转折", "身份 / 血脉揭晓 / 势力格局逆转 / 道心重大挫折"),
+        ("小转折", "小规模战斗胜利 / 机缘到手 / 功法领悟 / 长老关注"),
+    ),
+    escalation_prerequisites="修炼、悟道、机缘获取、受挫、闭关、疗伤、参悟功法",
+    genre_hook_antipatterns=(
+        "「XX 出手了」「XX 御剑而来」（笼统的战斗预告，不是具体信息点）",
+        "「祖师像发出光芒」「灵气突然汇聚」（玄幻式空洞异象钩）",
+    ),
+    genre_common_mistakes=(
+        "章章都是境界突破 / 越阶反杀（违反节奏，突破必须有铺垫）",
+        "修炼进境无铺垫直接跨大境界（如练气一章直接筑基）",
+        "宗门 / 势力冲突无导火索直接决战（缺少积累）",
+    ),
+    genre_extra_rhythm_rules=(
+        "**玄幻题材专属节奏**：境界突破 / 越阶战斗 / 血脉觉醒等重大跃迁节点必须有至少 2-3 章铺垫（修炼、机缘、心境准备），"
+        "不许每 3-5 章一次大突破——那是龙傲天节奏，读者会失去期待感。每一次境界跃迁都应是读者已经等了很久的兑现。"
+    ),
+)
+
+
+def _build_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries):
+    """玄幻/仙侠向 chapter_plan 提示词。委托到通用 render + 本题材 spec。"""
+    return render_chapter_plan_prompt(
+        state, start_chapter, end_chapter, locked_entries, _XIANXIA_CHAPTER_PLAN_SPEC
+    )
+
 
 FLAVOR = GenreFlavor(
     system_identity=(
@@ -60,4 +118,5 @@ FLAVOR = GenreFlavor(
     overall_outline_focus="侧重境界阶梯式突破、关键机缘节点、势力版图更迭与终极大道之争。",
     titles_focus="标题需体现境界、机缘、争锋与气魄，契合玄幻语感。",
     arc_focus="每章须有明确的境界进展、机缘争夺或势力冲突推进，爽点/悬念层层递进。",
+    chapter_plan_prompt_builder=_build_chapter_plan_prompt,
 )

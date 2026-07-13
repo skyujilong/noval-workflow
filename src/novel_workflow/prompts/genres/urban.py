@@ -3,7 +3,69 @@
 侧重现实背景下的职场/商战/异能/系统流；叙事偏写实利落、贴近现代生活质感。
 """
 
-from noval_workflow.prompts.base import GenreFlavor
+from noval_workflow.prompts.base import (
+    ChapterPlanGenreSpec,
+    GenreFlavor,
+    render_chapter_plan_prompt,
+)
+
+
+# ── chapter_plan 题材差异化 spec:都市现实向 ────────────────────────────────
+# 侧重利益博弈、职场/商战翻盘、派系倾轧、信息差碾压;明确 ban 玄幻词汇(功法/晶核/越阶战斗)。
+_URBAN_CHAPTER_PLAN_SPEC = ChapterPlanGenreSpec(
+    sample_entry_1=(
+        '{{"chapter": {start_chapter}, "purpose": "主角新官上任被架空，观察部门利益格局", '
+        '"key_turn": "在合同附录里发现三年前一份被抹掉的批注，指向副总", '
+        '"ending_hook": "副总秘书在下班时给主角发了一条空白短信", "intensity": "铺垫"}}'
+    ),
+    sample_entry_2=(
+        '{{"chapter": {start_chapter_plus_1}, "purpose": "主角首次在会议室主动反击", '
+        '"key_turn": "以副总当年的批注为切口，逼对方在董事会前松口", '
+        '"ending_hook": "副总走出会议室时对助理说：「他不是新人」", "intensity": "小转折"}}'
+    ),
+    agency_examples=(
+        "主动出手 / 资源调度 / 人脉运用、职场或商战反击、信息差碾压、派系翻盘、"
+        "关键人脉获得、阶层跃迁一小步、系统或异能能力（若本作有）显效"
+    ),
+    payoff_types=(
+        "职场 / 商战反击打脸（对手认怂 / 派系翻盘 / 会议室 / 谈判桌胜出）",
+        "利益博弈胜出（合同 / 项目 / 股权 / 资源到手，压过对手）",
+        "身份 / 底牌 / 背景被目击，引起关键人物（大佬 / 前辈 / 对手）关注",
+        "关键人脉 / 情报 / 关键把柄获得（是撬动后续格局的杠杆）",
+        "阶层跃迁一小步（职位、身家、社交圈的实质抬升）",
+        "关键角色间的信任 / CP / 派系立场的实质变化",
+    ),
+    intensity_semantics_override=(
+        ("爆发", "商战 / 职场大胜 / 派系翻盘 / 公开打脸 / 阶层跃迁关键节点"),
+        ("大转折", "阵营洗牌 / 身份揭示 / 关键把柄暴露 / 势力格局逆转"),
+        ("小转折", "会议室反击 / 关键人脉到手 / 利益小胜 / 底牌被目击"),
+    ),
+    escalation_prerequisites="学习行业规则、积累人脉、失利、复盘、忍耐、暗中调查、资源整合",
+    genre_hook_antipatterns=(
+        "「电话又响了」「秘书敲门进来」（笼统的都市预告，不是具体信息点）",
+        "「窗外霓虹闪烁」「烟头掉在地上」（空洞氛围钩，不指向具体人做具体事）",
+    ),
+    genre_common_mistakes=(
+        "**混入玄幻词汇**：功法 / 传承 / 晶核 / 灵石 / 越阶战斗 / 境界突破 / 御剑 / 神通 / 血脉——"
+        "都市现实向题材**明确禁用**（除非本作确实是系统流异能设定，且能力已在世界观中明确成立）",
+        "章章都是「办公室打脸」（应有铺垫章处理关系 / 派系 / 信息积累）",
+        "阶层跃迁无铺垫（如今天还是小职员明天就当总裁——应有过程）",
+    ),
+    genre_extra_rhythm_rules=(
+        "**都市现实向题材专属节奏**：阶层跃迁 / 派系翻盘 / 商战大胜等重大节点必须有 2-3 章铺垫"
+        "（信息积累、人脉调度、失利受挫、暗中布局），不许速通;"
+        "「公开打脸 / 派系翻盘 / 阶层跃迁」这类核心兑现节点每 8-12 章一次为宜，稀缺才有分量;"
+        "允许铺垫章写职场日常、家庭线、CP 线（不必章章高燃），生活质感是本题材真实感的来源。"
+    ),
+)
+
+
+def _build_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries):
+    """都市现实向 chapter_plan 提示词。委托到通用 render + 本题材 spec。"""
+    return render_chapter_plan_prompt(
+        state, start_chapter, end_chapter, locked_entries, _URBAN_CHAPTER_PLAN_SPEC
+    )
+
 
 FLAVOR = GenreFlavor(
     system_identity=(
@@ -60,4 +122,5 @@ FLAVOR = GenreFlavor(
     overall_outline_focus="侧重事业阶梯式攀升、关键利益节点、势力消长与最终格局定位。",
     titles_focus="标题需体现都市冲突、利益博弈、反转打脸或现实质感，避免玄幻化表述。",
     arc_focus="整批弧呈波浪式密度：爆发/转折章集中利益冲突升级与打脸反转，铺垫/推进章写人物博弈、关系微变、信息铺陈、势力暗流，节奏张弛相间、不章章高燃。",
+    chapter_plan_prompt_builder=_build_chapter_plan_prompt,
 )

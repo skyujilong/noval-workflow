@@ -3,7 +3,67 @@
 侧重绝境生存、资源博弈、人性灰度；叙事偏紧张写实，弱化轻小说式的校园日常与漫改感。
 """
 
-from noval_workflow.prompts.base import GenreFlavor
+from noval_workflow.prompts.base import (
+    ChapterPlanGenreSpec,
+    GenreFlavor,
+    render_chapter_plan_prompt,
+)
+
+
+# ── chapter_plan 题材差异化 spec:末日求生向 ────────────────────────────────
+# 侧重生存决策、资源博弈、幸存者救援、异能觉醒;主角必须有战术能动性,禁止连续被动挨打。
+_APOCALYPSE_CHAPTER_PLAN_SPEC = ChapterPlanGenreSpec(
+    sample_entry_1=(
+        '{{"chapter": {start_chapter}, "purpose": "主角首日暴雨困在便利店，观察街上尸潮走向", '
+        '"key_turn": "发现尸群对某种低频声波异常敏感，动手记下时刻", '
+        '"ending_hook": "货架深处传来敲玻璃的三下节奏——不是丧尸的节律", "intensity": "铺垫"}}'
+    ),
+    sample_entry_2=(
+        '{{"chapter": {start_chapter_plus_1}, "purpose": "主角首次利用低频陷阱救下同学", '
+        '"key_turn": "靠车载音响引开尸群，反手补刀带回两瓶水", '
+        '"ending_hook": "同伴发现主角的耳朵在血迹里泛着淡青色", "intensity": "小转折"}}'
+    ),
+    agency_examples=(
+        "主动战术反制（陷阱 / 声东击西 / 利用地形）、资源到手（物资 / 载具 / 武器 / 情报）、异能觉醒或进阶、"
+        "幸存者救援与整合、团队分歧的主导决策、识破变异体规律"
+    ),
+    payoff_types=(
+        "以少胜多的生存关键胜利（陷阱反杀 / 团队精妙配合 / 战术翻盘）",
+        "关键物资到手（水源 / 药品 / 弹药 / 载具 / 电力）",
+        "异能觉醒 / 进阶 / 变异体等级压制被打破",
+        "幸存者救援 / 关键盟友加入 / 敌对团伙首领吃瘪",
+        "变异体规律 / 灾变真相 / 幸存者营地阴谋的关键线索到手",
+        "关键角色间的信任 / 立场 / 亲密关系的实质变化（末日下人性褶皱）",
+    ),
+    intensity_semantics_override=(
+        ("爆发", "尸潮围困兑现 / 大规模团战 / 异能觉醒巅峰 / 团伙火并高潮"),
+        ("大转折", "灾变真相揭示 / 关键盟友背叛 / 势力格局逆转 / 主角团重大伤亡"),
+        ("小转折", "小规模战斗胜利 / 关键物资到手 / 幸存者救援成功 / 关键情报揭露"),
+    ),
+    escalation_prerequisites="侦查、埋伏、失利、疗伤、休整、观察变异体规律、积累物资",
+    genre_hook_antipatterns=(
+        "「远处传来低吼」「一只丧尸从阴影里钻出」（笼统的末日预告，不是具体信息点）",
+        "「天空变红了」「地面震了一下」（灾变式空洞异象钩，不指向具体人做具体事）",
+    ),
+    genre_common_mistakes=(
+        "主角一路被虐、连续 5 章挨打无反制（应至少每 4-5 章一次反击）",
+        "异能觉醒 / 战力跃迁无铺垫（应先经历濒死、极端情绪、关键资源加持）",
+        "跨等级战力跳变（如二级异能者直接单挑五级 boss）",
+    ),
+    genre_extra_rhythm_rules=(
+        "**末日题材专属节奏**：允许主角短期(2-3 章)身处绝境，但必须紧跟主动反制章;"
+        "重大异能觉醒 / 战力跃迁需要至少 2 章铺垫（濒死体验、极端情绪、关键资源加持）;"
+        "「团灭反派 / 尸潮清场 / 灾变真相揭示」这类核心兑现节点全书不宜超过 3-4 次，稀缺才有分量。"
+    ),
+)
+
+
+def _build_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries):
+    """末日求生向 chapter_plan 提示词。委托到通用 render + 本题材 spec。"""
+    return render_chapter_plan_prompt(
+        state, start_chapter, end_chapter, locked_entries, _APOCALYPSE_CHAPTER_PLAN_SPEC
+    )
+
 
 FLAVOR = GenreFlavor(
     system_identity=(
@@ -60,4 +120,5 @@ FLAVOR = GenreFlavor(
     overall_outline_focus="侧重生存难度阶梯式提升、关键资源节点的争夺、团队成员的聚散离合。",
     titles_focus="标题需体现危机、绝境、转折与压迫感，避免过于文艺或日常的表述。",
     arc_focus="每章须有明确的生存压力升级或危机转折，节奏紧凑不拖沓。",
+    chapter_plan_prompt_builder=_build_chapter_plan_prompt,
 )

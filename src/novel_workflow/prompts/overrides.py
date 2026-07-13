@@ -23,8 +23,12 @@ _logger = logging.getLogger(__name__)
 
 OVERRIDE_FILENAME = "prompt_overrides.json"
 
-# GenreFlavor 全部可覆盖字段名（含必填与可选 *_focus）
-_FLAVOR_FIELDS: frozenset[str] = frozenset(f.name for f in fields(GenreFlavor))
+# GenreFlavor 全部可覆盖字段名（含必填与可选 *_focus）——限定为字段类型注解为 str 的字段。
+# 排除 chapter_plan_prompt_builder(Callable)、has_power_system(bool) 等非字符串字段,
+# 避免前端脏 JSON 把字符串误塞进这些字段导致 flavor 破损。
+_FLAVOR_FIELDS: frozenset[str] = frozenset(
+    f.name for f in fields(GenreFlavor) if f.type in ("str", str)
+)
 
 
 def _override_path(novel_name: str) -> Path:
@@ -35,7 +39,11 @@ def _override_path(novel_name: str) -> Path:
 
 
 def _clean(overrides: dict) -> dict[str, str]:
-    """只保留 GenreFlavor 已知字段、值为非空字符串的项。"""
+    """只保留 GenreFlavor 已知字符串字段、值为非空字符串的项。
+
+    非字符串字段(如 chapter_plan_prompt_builder=Callable / has_power_system=bool)
+    不在 _FLAVOR_FIELDS 白名单里,自动被过滤,防止前端 JSON 塞脏数据破坏 flavor。
+    """
     return {
         k: v
         for k, v in overrides.items()

@@ -13,10 +13,16 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Union
+from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
 
 if TYPE_CHECKING:
     from noval_workflow.state import ChapterPlanItem, NovelState
+
+    # chapter_plan_prompt_builder 的完整签名：与 PromptPack.chapter_plan_prompt 对应。
+    # 各题材 flavor 可选提供,若 None 则回退到 base 的 _default_chapter_plan_prompt(中性版)。
+    ChapterPlanPromptBuilder = Callable[
+        ["NovelState", int, int, "list[ChapterPlanItem]"], str
+    ]
 
 
 # ── 共享常量 ───────────────────────────────────────────────────────────────────
@@ -110,7 +116,7 @@ def _format_chapter_plan_block(entries: "list[ChapterPlanItem]") -> str:
     if not entries:
         return ""
     lines = [
-        f"- 第{item.chapter}章｜目标:{item.purpose}｜关键转折:{item.key_turn}｜章末钩子:{item.ending_hook}"
+        f"- 第{item.chapter}章[{item.intensity or '推进'}]｜目标:{item.purpose}｜关键事件:{item.key_turn}｜章末钩子:{item.ending_hook}"
         for item in entries
     ]
     return "\n".join(lines)
@@ -219,6 +225,15 @@ class GenreFlavor:
     # 只为 dataclass 反序列化容错，prompt 组装侧不再读它。
     evolved_directives: str = ""
     """[DEPRECATED] 老单桶字段，加载时迁移到 evolved_directives_chapter；prompt 组装侧不再读。"""
+
+    # ── 题材专属:chapter_plan_prompt 完全 override ─────────────────────────────
+    # 各题材的中景章节规划提示词底层示例差异极大——玄幻讲越阶战斗/机缘,言情讲关系推进/暧昧,
+    # 都市讲利益博弈,不再适合走单一 focus 追加模式。各 flavor 通过 builder 提供整份 prompt;
+    # None 时回退到 base 中性版(_default_chapter_plan_prompt)。
+    #
+    # 类型是 Callable 而非 str,overrides.py::_clean 的 isinstance(v, str) 过滤天然把
+    # callable 排除,前端 prompt_overrides.json 不能覆盖它——保证 JSON 存储边界安全。
+    chapter_plan_prompt_builder: Optional["ChapterPlanPromptBuilder"] = None
 
 
 # ── PromptPack：通用脚手架 + 风味组装 ─────────────────────────────────────────
@@ -688,109 +703,329 @@ class PromptPack:
         end_chapter: int,
         locked_entries: "list[ChapterPlanItem]",
     ) -> str:
-        """滚动章节规划(chapter_plan)提示词：一次生成 [start_chapter, end_chapter] 闭区间的
-        章节规划条目,严格 JSON 数组,每条 4 字段(chapter/purpose/key_turn/ending_hook)。
+        """滚动章节规划(chapter_plan)提示词——委托到题材 flavor 的 builder。
 
-        locked_entries 是已写完段(chapter <= total_chapters_written)的历史条目,只作为承接
-        参考,LLM **禁止**修改或重复输出这些章号——save_chapter_plan 兜底合并保留历史。
+        chapter_plan 的底层示例(主角能动性/爽点清单/合规样本)题材差异极大——玄幻讲越阶
+        战斗/机缘,言情讲关系推进/暧昧,都市讲利益博弈,单一 focus 追加压不住。所以每个
+        题材 flavor 通过 chapter_plan_prompt_builder 提供整份 prompt;None 时回退到
+        base 的 _default_chapter_plan_prompt(中性版)。
+
+        locked_entries 是已写完段(chapter <= total_chapters_written)的历史条目,只作为
+        承接参考,LLM **禁止**修改或重复输出这些章号——save_chapter_plan 兜底合并保留历史。
         """
-        import json
-        from dataclasses import asdict
+        builder = self.flavor.chapter_plan_prompt_builder
+        if builder is not None:
+            return builder(state, start_chapter, end_chapter, locked_entries)
+        return _default_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries)
 
-        count = end_chapter - start_chapter + 1
-        is_first_plan = state.total_chapters_written == 0
 
-        continuity_rule = (
-            "本次是首次章节规划,请紧扣整体大纲的开篇定位,奠定世界观、人物关系与核心冲突的基调;前几章允许略慢热但必须挂钩子。"
-            if is_first_plan else
-            "本次是滚动重规划,请严格承接已写完章节的伏笔、人物状态、势力格局与情绪走向;不要另起炉灶推翻已发生的剧情。"
-        )
+# ── chapter_plan_prompt 复用辅助 ──────────────────────────────────────────────
+# 供 base 中性版与各题材 flavor 的 builder 复用,减少重复代码。
 
-        written_brief = _format_written_chapters_brief(state)
-        written_section = (
-            f"\n\n【已写完章节速览（最近 10 章,供承接参考）】\n{written_brief}"
-            if written_brief else ""
-        )
 
-        # 已锁定的历史条目:LLM 必须原样承接,不能重复输出这些章号
-        if locked_entries:
-            locked_json = json.dumps(
-                [asdict(item) for item in locked_entries],
-                ensure_ascii=False,
-                indent=2,
-            )
-            locked_section = (
-                "\n\n【已锁定的历史章节规划条目（章号 1 ~ "
-                f"{state.total_chapters_written},供承接参考,严禁修改或重复输出这些章号）】\n"
-                f"{locked_json}"
-            )
-        else:
-            locked_section = ""
+def format_chapter_plan_state_snapshot(state: "NovelState") -> str:
+    """把 state 里的台账快照(人物状态/关系/伏笔/阶段固化)组装成 chapter_plan 提示词
+    的「状态注入」段。所有 flavor builder 共享此函数,避免各处重复。
 
-        # 状态快照:让 LLM 感知当前进度
-        status_lines = []
-        if state.character_status:
-            status_lines.append(f"【人物动态状态】\n{state.character_status}")
-        if state.character_relations:
-            status_lines.append(f"【人物关系/势力格局】\n{state.character_relations}")
-        if state.foreshadowing:
-            fs_json = json.dumps(state.foreshadowing, ensure_ascii=False, indent=2)
-            status_lines.append(f"【伏笔台账】\n{fs_json}")
-        if state.phase_summary:
-            status_lines.append(f"【阶段固化数据】\n{state.phase_summary}")
-        status_section = ("\n\n" + "\n\n".join(status_lines)) if status_lines else ""
+    无任何非空字段时返回空串,调用方按空处理。
+    """
+    import json
 
-        # 关键转折与钩子的分布约束——防止 30-50 章章章硬转折/章章平淡
-        peak_max = max(3, count // 8)  # 约 12.5%~25% 的强转折上限,给节奏留呼吸
-        peak_min = max(2, count // 12)  # 至少 8%~15% 的强转折,保证长弧线不塌
-        return f"""请为本作品规划一份 {count} 章的**中景章节规划**(chapter_plan)。{written_section}{locked_section}{status_section}
+    status_lines: list[str] = []
+    if state.character_status:
+        status_lines.append(f"【人物动态状态】\n{state.character_status}")
+    if state.character_relations:
+        status_lines.append(f"【人物关系/势力格局】\n{state.character_relations}")
+    if state.foreshadowing:
+        fs_json = json.dumps(state.foreshadowing, ensure_ascii=False, indent=2)
+        status_lines.append(f"【伏笔台账】\n{fs_json}")
+    if state.phase_summary:
+        status_lines.append(f"【阶段固化数据】\n{state.phase_summary}")
+    return ("\n\n" + "\n\n".join(status_lines)) if status_lines else ""
 
-# 角色:你是长篇网文的中景大纲规划师,负责在「整书大纲」与「批级弧线」之间,给出一份 {count} 章的滚动路线图。
+
+def format_chapter_plan_locked_section(
+    state: "NovelState", locked_entries: "list[ChapterPlanItem]"
+) -> str:
+    """把「已锁定的历史章节规划条目」渲染为提示词段;无历史时返回空串。"""
+    if not locked_entries:
+        return ""
+    import json
+    from dataclasses import asdict
+
+    locked_json = json.dumps(
+        [asdict(item) for item in locked_entries],
+        ensure_ascii=False,
+        indent=2,
+    )
+    return (
+        "\n\n【已锁定的历史章节规划条目（章号 1 ~ "
+        f"{state.total_chapters_written}，供承接参考，严禁修改或重复输出这些章号）】\n"
+        f"{locked_json}"
+    )
+
+
+def compute_chapter_plan_quotas(count: int) -> dict:
+    """按本次规划章数算 7 档配额上下界与主角能动性阈值。所有 builder 共享同一套算法,
+    保证不同题材下节奏骨架一致(只有档位内涵与爽点清单题材化,配额比例不变)。
+    """
+    return {
+        "count": count,
+        "burst_max": max(2, count // 5),           # 爆发章上限（约20%）
+        "burst_min": max(1, count // 7),           # 爆发章下限（约14%）
+        "big_turn_max": max(1, count // 6),        # 大转折上限（约16%,与爆发合计≤35%）
+        "small_turn_min": max(2, count // 8),      # 小转折下限（约12-15%）
+        "lull_streak_max": 2,                       # 连续淡章上限（铺垫/缓冲/回落）
+        "passive_streak_max": 2,                    # 主角连续被动承压上限
+        "win_cadence": 5,                           # 每N章必须有一次主角时刻/爽点
+        "core_hook_payoff_max": 12,                 # 核心冲突钩子铺到兑现上限（章数）
+    }
+
+
+@dataclass(frozen=True)
+class ChapterPlanGenreSpec:
+    """chapter_plan_prompt 的题材差异化拼图——每个 flavor builder 提供一份 spec,由
+    render_chapter_plan_prompt 组装成完整提示词。所有字段有中性默认值,不填即回退。
+
+    设计要点:
+    - 通用骨架(输出契约/档位分配比例/配角伏笔/常见格式错误/自检项)由 render 统一提供,
+      各题材不重复。
+    - 题材差异只体现在:合规样本/主角能动性清单/看点清单/大纲对齐补充/钩子反模板补充/
+      档位语义重解释/常见错误(题材向)。
+    - 全 frozen dataclass:一次实例化,不可变,可作 module 常量安全共享。
+    """
+
+    # 「最短合规样本」的两条示例(会拿到 start_chapter 变量做 f-string 化插值),
+    # 用 {start_chapter} 占位符——render 时替换。
+    sample_entry_1: str = (
+        '{{"chapter": {start_chapter}, "purpose": "主角初入陌生环境被排挤，埋下反制契机", '
+        '"key_turn": "无意间抓到关键信息，看破对手一处破绽", '
+        '"ending_hook": "主角把这条信息写进随身笔记，只画了一个圈", "intensity": "铺垫"}}'
+    )
+    sample_entry_2: str = (
+        '{{"chapter": {start_chapter_plus_1}, "purpose": "主角首次主动出手，展露真实一面", '
+        '"key_turn": "利用信息差反将一军，被暗中观察者留意", '
+        '"ending_hook": "观察者在名册上悄悄把主角标了颜色", "intensity": "小转折"}}'
+    )
+
+    # 「主角能动性」清单——列出本题材下「主角时刻」的具体形态
+    agency_examples: str = (
+        "主动决策、关键胜利或收获、能力或身份被目击、信息优势、关系突破、获得关键契机"
+    )
+
+    # 「看点密度」清单——本题材下的看点具体形态,每一条一行,不带项目符号(render 加)
+    payoff_types: tuple[str, ...] = (
+        "主角关键胜利或反制（对手吃瘪/情势翻盘）",
+        "隐藏能力 / 身份 / 底牌被目击，引起关键人物关注",
+        "关键信息优势（知道别人不知道的事）",
+        "获得关键契机（资源 / 人脉 / 传承 / 情感突破 / 关系升级）",
+        "主要人物关系推进（羁绊、CP、盟友、宿敌）的实质变化",
+    )
+
+    # 「档位语义重解释」——若本题材的 7 档语义与通用不同(如 romance 的爆发=关系巅峰),
+    # 提供 override;为空则用通用语义。key 是 7 档档位名,value 是本题材下的一句话解释。
+    intensity_semantics_override: tuple[tuple[str, str], ...] = ()
+
+    # 「大纲对齐」段第 3 条(跃迁前必须铺垫)的题材化具体形式,如玄幻=「修炼/悟道/受挫」、
+    # 都市=「学习/积累/失落/受伤」、romance=「误会/心结/情感受挫」。为空用通用词。
+    escalation_prerequisites: str = "学习、积累、失落、休整、思考、试错"
+
+    # 「钩子反模板」的题材专属追加条目——通用的「脚步声/黑影/眼前一幕」已经在 render 里,
+    # 这里追加本题材容易犯的套路(如 romance 的「XX 突然表白」、玄幻的「XX 出手了」)。
+    # 每条一行,不带项目符号。
+    genre_hook_antipatterns: tuple[str, ...] = ()
+
+    # 「题材常见错误」的追加条目——通用错误已在 render 里,这里追加本题材容易踩的坑
+    # (如 urban 提醒 ban 玄幻词汇、romance 提醒不许纯甜/纯虐连续)。每条一行,不带 ❌ 前缀。
+    genre_common_mistakes: tuple[str, ...] = ()
+
+    # 「题材附加硬约束」——romance 的甜虐塌陷防护、xianxia 的每 N 章一次境界推进等,
+    # 追加到「档位分配」段之后作为「题材专属节奏约束」。为空则不追加。
+    genre_extra_rhythm_rules: str = ""
+
+
+def render_chapter_plan_prompt(
+    state: "NovelState",
+    start_chapter: int,
+    end_chapter: int,
+    locked_entries: "list[ChapterPlanItem]",
+    spec: ChapterPlanGenreSpec,
+) -> str:
+    """chapter_plan_prompt 的参数化渲染器——通用骨架 + spec 提供的题材差异化片段。
+
+    所有 flavor builder 都调用本函数并传自己的 spec;base 的中性版直接用 spec 默认值。
+    """
+    count = end_chapter - start_chapter + 1
+    is_first_plan = state.total_chapters_written == 0
+
+    continuity_rule = (
+        "本次是首次章节规划，请紧扣整体大纲的开篇定位，奠定世界观、人物关系与核心冲突的基调；前 2-3 章允许慢热但必须挂钩子。"
+        if is_first_plan else
+        "本次是滚动重规划，请严格承接已写完章节的伏笔、人物状态、势力格局与情绪走向；不要另起炉灶推翻已发生的剧情。"
+    )
+
+    written_brief = _format_written_chapters_brief(state)
+    written_section = (
+        f"\n\n【已写完章节速览（最近 10 章，供承接参考）】\n{written_brief}"
+        if written_brief else ""
+    )
+    locked_section = format_chapter_plan_locked_section(state, locked_entries)
+    status_section = format_chapter_plan_state_snapshot(state)
+
+    q = compute_chapter_plan_quotas(count)
+    burst_max = q["burst_max"]
+    burst_min = q["burst_min"]
+    big_turn_max = q["big_turn_max"]
+    small_turn_min = q["small_turn_min"]
+    lull_streak_max = q["lull_streak_max"]
+    passive_streak_max = q["passive_streak_max"]
+    win_cadence = q["win_cadence"]
+    core_hook_payoff_max = q["core_hook_payoff_max"]
+
+    # 7 档档位语义:通用默认 + 题材覆盖(romance 会把爆发/大转折等语义换成情感线内涵)
+    default_intensity_semantics: dict[str, str] = {
+        "铺垫": "环境描写/人物登场/日常铺陈，低张力",
+        "缓冲": "高潮后休整/关系深化/情绪消化，给读者呼吸",
+        "推进": "主线小步进展/信息推进/关系微变，中度张力（主体档位）",
+        "小转折": "小高潮/关键胜利或收获/关系突破/关键信息揭露",
+        "大转折": "身份揭晓/核心反转/重大挫折/立场逆转",
+        "爆发": "核心冲突兑现/大高潮/关键节点集中释放",
+        "回落": "高潮后的余波/代价展现/情绪收尾/新平衡建立",
+    }
+    for level, meaning in spec.intensity_semantics_override:
+        default_intensity_semantics[level] = meaning
+    intensity_block = "\n".join(
+        f"     * `{level}` — {default_intensity_semantics[level]}"
+        for level in ("铺垫", "缓冲", "推进", "小转折", "大转折", "爆发", "回落")
+    )
+
+    # 合规样本:sample_entry_{1,2} 中的 {start_chapter}/{start_chapter_plus_1} 占位符渲染
+    sample_1 = spec.sample_entry_1.format(
+        start_chapter=start_chapter,
+        start_chapter_plus_1=start_chapter + 1,
+    )
+    sample_2 = spec.sample_entry_2.format(
+        start_chapter=start_chapter,
+        start_chapter_plus_1=start_chapter + 1,
+    )
+
+    payoff_block = "\n".join(f"   - {p}" for p in spec.payoff_types)
+
+    # 通用钩子反模板 + 题材追加
+    generic_hook_bans = [
+        "「XX的脚步声传来」「门外传来XX声音」",
+        "「XX突然出现/突然出现了」「一道黑影闪过」「一道身影出现」",
+        "「XX看到了让他震惊的一幕」「眼前的景象让他惊呆了」",
+        "「等待他们的是...」「接下来会发生什么」「故事才刚刚开始」",
+    ]
+    hook_ban_block = "\n".join(f"- {h}" for h in generic_hook_bans + list(spec.genre_hook_antipatterns))
+
+    # 通用常见错误 + 题材追加
+    generic_mistakes = [
+        "加 markdown 围栏 ```json ... ```",
+        "数组前写「以下是规划：」等解释",
+        "章号跳号或倒序，或与「已锁定条目」章号重复",
+        "字段用中文键名（用「目标」代替 `purpose` /「档位」代替 `intensity`）",
+        "5 字段缺一，或字段值写空串/「待定」/「无强转折，以XX铺垫为主」",
+        "章章都是强转折（违反节奏分布约束）",
+        "intensity 写「快」「慢」「强」「弱」「高」「低」等非 7 档枚举值",
+        "ending_hook 写「XX 传来脚步声」「黑影闪过」「等待他们的是...」等套路伪钩子",
+        "key_turn 写「无强转折」「以铺垫为主」等套话（必须写具体事件，哪怕是淡章也要写明具体推进了什么）",
+    ]
+    mistakes_block = "\n".join(f"❌ {m}" for m in generic_mistakes + list(spec.genre_common_mistakes))
+
+    genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
+
+    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{written_section}{locked_section}{status_section}
+
+# 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出 {count} 章的滚动路线图。
 
 ## 本次任务范围
-只输出章号 {start_chapter} - {end_chapter}(闭区间,共 {count} 条)的新条目,**严禁**输出其他章号,**严禁**重复输出「已锁定的历史条目」中的章号。
+只输出章号 {start_chapter} - {end_chapter}（闭区间，共 {count} 条）的新条目，**严禁**输出其他章号，**严禁**重复输出「已锁定的历史条目」中的章号。
 
-## 输出契约(严格 JSON,无任何附加文本)
-1. 直接输出一个 JSON 数组,第一个字符是 `[`,最后一个字符是 `]`。
-2. **禁止** markdown 围栏(如 ```json)、**禁止**前置解释、**禁止**任何解释性文字。
-3. 数组元素**必须**为对象,**必须**包含且仅包含 4 个字段:
-   - `chapter`: 整数,全书章号(1-based),范围 [{start_chapter}, {end_chapter}],严格连续升序。
-   - `purpose`: 字符串,本章要完成的「活」/目标,一句话概括(≤40 汉字)。
-   - `key_turn`: 字符串,本章关键转折点/看点(≤40 汉字);淡章可写「无强转折,以XX铺垫为主」。
-   - `ending_hook`: 字符串,本章结尾钩子/悬念(≤30 汉字)。
-4. 每条对象**必须**齐 4 字段,缺一 fail;字段值**不得为空字符串**,不得写「见后续」「待定」等占位。
+## 输出契约（严格 JSON，无任何附加文本）
+1. 直接输出一个 JSON 数组，第一个字符是 `[`，最后一个字符是 `]`。
+2. **禁止** markdown 围栏（如 ```json）、**禁止**前置解释、**禁止**任何解释性文字。
+3. 数组元素**必须**为对象，**必须**包含且仅包含 5 个字段：
+   - `chapter`：整数，全书章号（1-based），范围 [{start_chapter}, {end_chapter}]，严格连续升序。
+   - `purpose`：字符串，本章要完成的「活」/目标，一句话概括（≤40 汉字）。
+   - `key_turn`：字符串，本章关键事件/看点（≤40 汉字），**必须写具体事件**，**禁止写「无强转折，以XX铺垫为主」「无」「略」「见后续」「待定」等套话占位**。
+   - `ending_hook`：字符串，本章结尾钩子/悬念（≤30 汉字），**必须是具体的人做了具体的事/揭示了具体信息/做出了具体选择**。**禁止**「XX 脚步声传来」「XX 出现在门口」「XX 看到了什么」「XX 传来声音」「一道黑影闪过」这类套路伪钩子。
+   - `intensity`：字符串，本章节奏档位，**必须**是下列 7 个值之一（中文，原样输出，不要改写）：
+{intensity_block}
+4. 每条对象**必须**齐 5 字段，缺一 fail；字符串字段值**不得为空字符串**，不得写「见后续」「待定」「无」等占位。
 
-## 最短合规样本
+## 最短合规样本（题材化示范）
 [
-  {{"chapter": {start_chapter}, "purpose": "主角初入宗门被欺辱,埋下反击契机", "key_turn": "被逼签下不平等契约", "ending_hook": "契约上多出一枚未知血印"}},
-  {{"chapter": {start_chapter + 1}, "purpose": "主角首次动用血印之力,惊觉自身异常", "key_turn": "血印驱使神秘古卷显形", "ending_hook": "古卷第一页浮出祖师名讳"}}
+  {sample_1},
+  {sample_2}
 ]
 
-## 常见错误(禁止)
-❌ 加 markdown 围栏 ```json ... ```
-❌ 数组前写「以下是规划:」等解释
-❌ 章号跳号或倒序,或与「已锁定条目」章号重复
-❌ 字段用中文键名(用「目标」代替 `purpose`)
-❌ 4 字段缺一,或字段值写空串/「待定」
-❌ 章章都是强转折(违反下方分布约束)
+## 常见错误（禁止）
+{mistakes_block}
 
-## 内容创作约束
+## 内容创作硬约束
 {continuity_rule}
-1. 本 {count} 章须与整体大纲的阶段定位对齐(起承转合/四卷式),不要提前爆完终局。
-2. 转折分布(硬约束,决定节奏呼吸):
-   - `key_turn` 中「强转折/爆发/反转/身份揭晓/大战」类的高密度章节数量应在 [{peak_min}, {peak_max}] 之间。
-   - 其他章为推进/铺垫/缓冲/回落,`key_turn` 写具体的低密度进展(如「关系推进」「信息释放」「情绪沉淀」)。
-   - **禁止**连续 3 章以上高密度转折;高潮之间**必须**插入至少 1 章铺垫/缓冲。
-3. `ending_hook` 每章必须落到实处,不得写「进入下一战」「揭开真相」这种空钩子;要具体到「谁做了什么/看到了什么/说了什么」。
-4. 伏笔挂钩:埋伏笔的章要在 `purpose` 或 `key_turn` 里点明「埋下 XX」;回收的章要点明「回收前文 XX」。跨此窗口的伏笔可留白。
-5. 严守作品既定设定(题材/世界观/力量体系/人物关系),不新增私设、不降智/拔高角色。
 
-## 输出前自检(全部通过才输出)
-1. 是否严格 `[` 开头 `]` 结尾,无围栏无解释?
-2. 章号是否 {start_chapter} → {end_chapter} 连续升序、共 {count} 条?
-3. 每条是否齐 4 字段、值非空、字数达标?
-4. 强转折章数是否在 [{peak_min}, {peak_max}] 之间?是否有连续 3+ 章硬转折?
-5. 是否与已写完段的伏笔/人物状态自然承接、无矛盾?
+### 一、档位分配（反塌陷硬约束）
+1. 总 {count} 章中：
+   - `爆发` 档章数 ∈ [{burst_min}, {burst_max}]（约14-20%，全书/本卷关键高潮）
+   - `大转折` 档章数 ≤ {big_turn_max}（与爆发合计不超过35%）
+   - `小转折` 档章数 ≥ {small_turn_min}（每5-8章必须有一次可感知的推进/胜利/揭露）
+   - `铺垫`+`缓冲`+`回落` 合计 25-35%，张弛有度
+   - `推进` 为主体档位，占 30-40%
+2. **禁止连续 {lull_streak_max+1} 章以上都是铺垫/缓冲/回落**（节奏塌陷）；淡章之间必须插入推进或小转折。
+3. **禁止连续 2 章以上爆发/大转折**（节奏窒息）；两个爆发/大转折之间至少隔 1-2 章缓冲或推进。{genre_extra_rhythm}
 
-直接输出 JSON 数组,不要输出任何其他内容。"""
+### 二、主角能动性（反被动硬约束）
+1. **禁止主角连续 {passive_streak_max+1} 章以上纯被动承压**（被欺负/被调查/被驳回/被刁难/被追赶却无反制）。主角被动章之后必须紧跟至少 1 章主角**主动决策 / 主动出手 / 获得关键契机 / 关系或立场主导**的章节。
+2. 每 {win_cadence} 章内主角必须有至少一次「主角时刻」——本题材下的具体形态：**{spec.agency_examples}**。读者必须能感受到主角有能动性。
+3. 开篇前10章（新手期）主角可以略被动，但最迟第8章必须出现第一次明确的主动出手或关键收获。
+
+### 三、看点密度（网文节奏硬约束）
+1. 本规划作为网文连载章节，**看点密度不低于每4章1次**。本题材下的看点具体形态如下：
+{payoff_block}
+2. 核心冲突事件从埋钩子到兑现不超过 {core_hook_payoff_max} 章，中间用小转折维持张力，禁止"一路被压制到终局才反击"。
+
+### 四、配角与伏笔（反遗忘硬约束）
+1. 已登场的重要配角（暗线人物/反派/CP/队友）**每5-8章必须有一次推进或深化**，禁止长期消失后突然信息倾倒。
+2. 每5章范围内至少埋1条新伏笔或推进1条已有伏笔；**伏笔埋后15章内必须有阶段性推进**（哪怕只是再次提及），禁止无限悬空。
+3. 新出场的重要人物（首秀章）必须在 purpose 里标注「首次登场」，并在 key_turn 里给出辨识度标签（外貌/口头禅/身份标识）。
+
+### 五、钩子反模板（禁用套路）
+ending_hook **禁止**使用以下套路：
+{hook_ban_block}
+钩子必须是**具体的信息点**：谁说了什么具体的话、谁做了什么具体的动作、揭示了什么具体的事实、主角做出了什么具体的决定。
+
+### 六、大纲与设定对齐
+1. 本 {count} 章须与整体大纲的阶段定位对齐，不要提前爆完终局。
+2. 严守作品既定设定（题材/世界观/力量或规则体系/人物关系），不新增私设、不降智/拔高角色。
+3. 能力 / 资源 / 身份 / 立场跃迁**必须有铺垫章在前**（{spec.escalation_prerequisites}），禁止「上一章还没起势，下一章直接跨阶段跳变」的跃迁式升级。
+
+## 输出前自检（全部通过才输出）
+1. 是否严格 `[` 开头 `]` 结尾，无围栏无解释？
+2. 章号是否 {start_chapter} → {end_chapter} 连续升序、共 {count} 条？
+3. 每条是否齐5字段、值非空、字数达标、intensity是7档枚举之一？
+4. key_turn是否都写了具体事件，没有「无强转折，以XX铺垫为主」套话？
+5. ending_hook是否都是具体事件/信息，没有「脚步声」「黑影」套路？
+6. 档位分布是否满足硬约束（爆发≤{burst_max}、小转折≥{small_turn_min}、无连续3章淡/爆发）？
+7. 主角是否有连续3章以上被动承压？每{win_cadence}章内是否有主角时刻？
+8. 配角/暗线是否每5-8章有推进，无长期消失？
+9. 是否与已写完段的伏笔/人物状态自然承接、无矛盾？
+
+直接输出 JSON 数组，不要输出任何其他内容。"""
+
+
+def _default_chapter_plan_prompt(
+    state: "NovelState",
+    start_chapter: int,
+    end_chapter: int,
+    locked_entries: "list[ChapterPlanItem]",
+) -> str:
+    """中性版 chapter_plan_prompt——通用题材 / 未提供 builder 的 flavor 回退用。
+    直接调用 render_chapter_plan_prompt 并传默认 spec(不特化任何题材)。
+    """
+    return render_chapter_plan_prompt(
+        state, start_chapter, end_chapter, locked_entries, ChapterPlanGenreSpec()
+    )
 

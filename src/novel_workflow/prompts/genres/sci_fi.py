@@ -3,7 +3,67 @@
 侧重科技设定、未来/太空背景、硬科幻逻辑或赛博朋克质感；叙事偏冷峻理性与奇观感。
 """
 
-from noval_workflow.prompts.base import GenreFlavor
+from noval_workflow.prompts.base import (
+    ChapterPlanGenreSpec,
+    GenreFlavor,
+    render_chapter_plan_prompt,
+)
+
+
+# ── chapter_plan 题材差异化 spec:科幻向 ─────────────────────────────────────
+# 侧重技术判断、信息优势、谜团破解、越智对峙、文明真相;禁止章章都是技术奇观。
+_SCI_FI_CHAPTER_PLAN_SPEC = ChapterPlanGenreSpec(
+    sample_entry_1=(
+        '{{"chapter": {start_chapter}, "purpose": "主角调试舰载AI时发现异常回传日志", '
+        '"key_turn": "定位到日志被抹除的时段，恰是三百年前先驱者号失联的日期", '
+        '"ending_hook": "AI说了一句不在指令集里的话：「你终于问了」", "intensity": "铺垫"}}'
+    ),
+    sample_entry_2=(
+        '{{"chapter": {start_chapter_plus_1}, "purpose": "主角利用信息差反制舰长的调查", '
+        '"key_turn": "在调查听证会上抛出关键日志，逼舰长承认曾接触未知信号", '
+        '"ending_hook": "舰长离场前留下一句：「你以为你在查谁？」", "intensity": "小转折"}}'
+    ),
+    agency_examples=(
+        "主动技术攻关、信息差反制、谜团破解、越智对峙胜出、AI 交锋主导、发现改变格局的证据、"
+        "识破陷阱 / 假象、文明层级识别与外交主导"
+    ),
+    payoff_types=(
+        "关键技术攻克 / 装备突破 / 系统漏洞被利用（不是空洞名词堆砌，要落地）",
+        "文明真相 / 阴谋 / 历史黑幕的碎片被解锁并拼上",
+        "AI / 高智体交锋中主角胜出（辩论、博弈、逻辑陷阱）",
+        "发现改变格局的证据 / 关键日志 / 遗产",
+        "跨阶技术碾压场景（如低阶文明识破高阶陷阱、程序员绝杀 AI）",
+        "关键角色伦理 / 阵营立场的实质转变（人机、异星、派系之间）",
+    ),
+    intensity_semantics_override=(
+        ("爆发", "技术奇观兑现 / 高智体巅峰对决 / 文明层级冲突集中释放"),
+        ("大转折", "文明真相揭示 / 关键盟友身份反转 / 世界规则被改写"),
+        ("小转折", "技术小突破 / 谜团碎片拼上 / 信息差反制成功 / 关键证据到手"),
+    ),
+    escalation_prerequisites="技术研究、观察、数据积累、试错、失败、复盘、跨系统协作",
+    genre_hook_antipatterns=(
+        "「屏幕上突然弹出未知信号」「引擎发出异响」（笼统的科技预告，不是具体信息点）",
+        "「AI 的声音变了」「星图上多了一个点」（空洞异象钩，不指向具体决定或事实）",
+    ),
+    genre_common_mistakes=(
+        "章章都是技术奇观 / 文明碰撞（应稀缺化）",
+        "谜团遥遥无期不推进，读者失去追读动力（每 5-10 章必须解锁一块碎片）",
+        "技术描写空洞堆砌名词（物理 / 工程原理必须能落地成因果链）",
+    ),
+    genre_extra_rhythm_rules=(
+        "**科幻题材专属节奏**：谜团 / 文明真相类核心悬念不宜遥遥无期,每 5-10 章必须解锁一块碎片(碎片可以只是「多一个已知条件」);"
+        "重大技术奇观 / 文明层级冲突全书不宜超过 3-5 次，稀缺才有奇观感;"
+        "低烈度章节允许写「思考、复盘、协作、日常科技细节」，但每一章都必须让读者感觉「离真相更近了一步」。"
+    ),
+)
+
+
+def _build_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries):
+    """科幻向 chapter_plan 提示词。委托到通用 render + 本题材 spec。"""
+    return render_chapter_plan_prompt(
+        state, start_chapter, end_chapter, locked_entries, _SCI_FI_CHAPTER_PLAN_SPEC
+    )
+
 
 FLAVOR = GenreFlavor(
     system_identity=(
@@ -60,4 +120,5 @@ FLAVOR = GenreFlavor(
     overall_outline_focus="侧重技术/危机阶梯式升级、关键发现节点、文明博弈与终极命运走向。",
     titles_focus="标题需体现科技、未知、危机与奇观感，契合科幻语感。",
     arc_focus="每章须有明确的科技推进、危机升级或关键发现，悬念与硬核感层层递进。",
+    chapter_plan_prompt_builder=_build_chapter_plan_prompt,
 )

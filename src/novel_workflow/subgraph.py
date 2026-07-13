@@ -117,27 +117,34 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
     ),
     # chapter_plan 与 scene_beats 同类:严格 JSON 数组契约,4 字段(chapter/purpose/key_turn/ending_hook),
     # 打回轮的散文指令最容易稀释成「加围栏 / 前置解释 / 缺字段」,故显式给结构+正反例。
+    # chapter_plan 与 scene_beats 同类:严格 JSON 数组契约,5 字段(chapter/purpose/key_turn/ending_hook/intensity),
+    # 打回轮的散文指令最容易稀释成「加围栏 / 前置解释 / 缺字段 / 套话」,故显式给结构+正反例+反套话约束。
     "chapter_plan": (
         "**严格输出 JSON 数组,不要包裹在 ```json 里,不要有任何解释文字或前后说明**。"
         "从第一个 `[` 开始输出,到最后一个 `]` 结束。\n\n"
-        "【必须遵守的 JSON 结构】顶层是 list,每个元素是含且仅含以下 4 个字段的 dict(缺一不可):\n"
+        "【必须遵守的 JSON 结构】顶层是 list,每个元素是含且仅含以下 5 个字段的 dict(缺一不可):\n"
         "  chapter(int,全书章号,必须严格连续升序) / purpose(str,≤40 汉字) /\n"
-        "  key_turn(str,≤40 汉字) / ending_hook(str,≤30 汉字)\n\n"
+        "  key_turn(str,≤40 汉字,必须写具体事件,禁止「无强转折,以XX铺垫为主」套话) /\n"
+        "  ending_hook(str,≤30 汉字,必须写具体事件/信息,禁止「脚步声/黑影/XX出现了」套路) /\n"
+        "  intensity(str,7档枚举:铺垫/缓冲/推进/小转折/大转折/爆发/回落)\n\n"
         "【✅ 合规示例(可直接照抄结构)】\n"
         "[\n"
         '  {"chapter": 12, "purpose": "主角首次运用血印之力,惊觉自身异常", '
-        '"key_turn": "血印驱使古卷显形", "ending_hook": "古卷第一页浮出祖师名讳"},\n'
-        '  {"chapter": 13, "purpose": "追查祖师线索,与师门起冲突", '
-        '"key_turn": "被剥夺弟子身份", "ending_hook": "神秘信物在深夜自燃"}\n'
+        '"key_turn": "血印驱使古卷显形", "ending_hook": "古卷第一页浮出祖师名讳", "intensity": "小转折"},\n'
+        '  {"chapter": 13, "purpose": "战后调息,与师妹深谈师门旧事", '
+        '"key_turn": "师妹透露师父当年隐情", "ending_hook": "师父窗外的脚步声停顿了三息", "intensity": "缓冲"}\n'
         "]\n\n"
         "【❌ 严禁的错误形态】\n"
-        "  - 包 ```json 围栏:```json\\n[...]\\n```\n"
+        "  - 包 ```json 围栏:```json\n[...]\n```\n"
         "  - 输出前有解释:「好的,以下是修改后的规划:[...]」\n"
         "  - 输出后有说明:「[...] 已按意见调整第 3 章」\n"
         "  - 章号跳号 / 倒序 / 与已锁定条目重复\n"
         "  - 字段用中文键名:{\"章号\":12,\"目标\":\"...\"}\n"
-        "  - 缺字段:{\"chapter\":12,\"purpose\":\"...\"}(缺 key_turn / ending_hook)\n"
-        "  - 字段值为空串或占位:{\"ending_hook\":\"\"} / {\"key_turn\":\"待定\"}\n"
+        "  - 缺字段:{\"chapter\":12,\"purpose\":\"...\"}(缺 key_turn / ending_hook / intensity)\n"
+        "  - 字段值为空串或占位:{\"ending_hook\":\"\"} / {\"key_turn\":\"待定\"} / {\"key_turn\":\"无强转折,以铺垫为主\"}\n"
+        "  - intensity 非 7 档:{\"intensity\":\"快\"} / {\"intensity\":\"强\"}(必须是铺垫/缓冲/推进/小转折/大转折/爆发/回落之一)\n"
+        "  - key_turn 写套话「无强转折,以XX铺垫为主」(必须写具体事件,哪怕淡章也要写明推进了什么)\n"
+        "  - ending_hook 用套路:{\"ending_hook\":\"门外传来脚步声\"} / {\"ending_hook\":\"一道黑影闪过\"}(必须是具体信息点)\n"
         "  - 输出散文/markdown 列表(第 12 章:主角...)——chapter_plan **不是**大纲文本,是结构化条目\n\n"
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),

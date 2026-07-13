@@ -5,20 +5,22 @@ from typing import Annotated
 
 @dataclass
 class ChapterPlanItem:
-    """章节规划单条条目——4 字段极简结构，作为 arc_outline 的远端锚点。
+    """章节规划单条条目——中景大纲层的结构化章节条目。
 
     LangGraph checkpoint 序列化时 dataclass 自动转 dict，前端拿到的仍是标准 JSON；
     LLM 出的 JSON 数组由 save_chapter_plan 逐条 `ChapterPlanItem(**item)` 造实例，
     字段缺失/类型错时抛 TypeError，让审核循环重生成。
 
-    未来若需要扩字段（POV / 字数目标 / 伏笔挂载等），在此追加带默认值的可选字段即可，
-    老 state 快照反序列化时缺字段走默认，不会炸。
+    intensity 档位（7 档，与 arc 层 6 档对齐但更细）：
+      铺垫/缓冲/推进/小转折/大转折/爆发/回落
+    老 state 快照反序列化时缺字段走默认值，不会炸。
     """
 
-    chapter: int      # 全书章号（1-based）
-    purpose: str      # 这章的活/目标，一句话（≤40 字）
-    key_turn: str     # 关键转折点（≤40 字）
-    ending_hook: str  # 章末钩子（≤30 字）
+    chapter: int           # 全书章号（1-based）
+    purpose: str           # 本章要完成的「活」/目标（≤40 字）
+    key_turn: str          # 本章关键事件/看点（≤40 字，禁止用"无强转折"套话）
+    ending_hook: str       # 章末钩子（≤30 字，必须是具体事件，禁止"XX出现"套路）
+    intensity: str = ""    # 本章档位：铺垫/缓冲/推进/小转折/大转折/爆发/回落
 
 
 @dataclass
