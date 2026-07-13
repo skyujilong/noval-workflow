@@ -13,6 +13,7 @@ import { EVOLVABLE_REVIEW_TYPES, reviewTypeLabel } from "../../lib/types";
 import { recordReject } from "../../lib/langgraph";
 import { ChapterReviewReference } from "./ChapterReviewReference";
 import { SceneBeatsCards } from "./SceneBeatsCards";
+import { ChapterPlanCards } from "./ChapterPlanCards";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
@@ -136,6 +137,10 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
             // scene beats 是结构化 JSON,用卡片视图代替散文渲染,让 device_tags 分组可扫、
             // 打脸四拍/钩子位置违规在顶部一眼可见。解析失败自动降级到纯文本。
             <SceneBeatsCards draft={draft} />
+          ) : reviewType === "chapter_plan" ? (
+            // chapter_plan 也是结构化 JSON（ChapterPlanItem[]），走专用卡片视图，
+            // 让「第 N 章 / 本章目标 / 关键转折 / 章末钩子」分区可扫，并用 chip 区分锁定 vs 新增段。
+            <ChapterPlanCards draft={draft} novelState={novelState} />
           ) : draft ? (
             <ArticleParagraphs text={draft} />
           ) : (
