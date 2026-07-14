@@ -18,7 +18,7 @@ from noval_workflow.context import (
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
 from noval_workflow.nodes.chapter_edit import _clean_title
-from noval_workflow.prompts import SUMMARY_PROMPT, get_prompt_pack
+from noval_workflow.prompts import SUMMARY_PROMPT, format_cards_for_chapter_prompt, get_prompt_pack
 from noval_workflow.state import NovelState, reset_review_fields
 
 _logger = logging.getLogger(__name__)
@@ -88,6 +88,17 @@ def prepare_chapter(state: NovelState) -> dict:
         if item.chapter == chapter_num:
             chapter_plan_entry_for_prompt = item
             break
+    # 登场实体卡触发式注入：严格核对 cast_chapter_index == chapter_num 才注入本章登场名单命中的卡
+    # （不匹配 = 跳过 gate / 上一章残留 / 从未生成，视同无卡）。渲染成 markdown 追加到 task_prompt
+    # 末尾作为「本章人物/物品设定锚点」，防止写正文时人物外貌/口吻、装备状态写飘。
+    cards_section = ""
+    if state.cast_chapter_index == chapter_num and state.current_chapter_cast:
+        rendered = format_cards_for_chapter_prompt(state.entity_cards, state.current_chapter_cast)
+        if rendered:
+            cards_section = (
+                "\n\n---\n【本章登场实体卡（人物/物品/装备设定锚点，务必严格遵守，防写飘）】\n"
+                f"{rendered}"
+            )
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
         "system_context": build_foundation_context(state),
@@ -101,7 +112,7 @@ def prepare_chapter(state: NovelState) -> dict:
             batch_total=batch_total,
             scene_beats=scene_beats_for_prompt,
             chapter_plan_entry=chapter_plan_entry_for_prompt,
-        ),
+        ) + cards_section,
         "review_type": "chapter",
         **reset_review_fields(),
     }

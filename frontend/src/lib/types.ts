@@ -24,6 +24,27 @@ export interface ChapterPlanItem {
   intensity?: string;
 }
 
+/** 统一实体卡(镜像 state.py::EntityCard)。type 条件字段不适用时为空串。 */
+export interface EntityCard {
+  name: string;
+  type: string; // 人物 / 物品 / 装备 / 势力 / 地点
+  aliases?: string[];
+  summary?: string;
+  first_appear_chapter?: number;
+  // 人物段
+  appearance?: string;
+  speech_style?: string;
+  personality?: string;
+  motivation?: string;
+  relations?: string;
+  abilities?: string;
+  // 物品/装备段
+  owner?: string;
+  effect?: string;
+  status?: string;
+  rank?: string;
+}
+
 /** NovelState（state.py）— 平台 thread state 的 values 结构 */
 export interface NovelState {
   // Phase -1：灵感脑爆（可选，入口分叉）
@@ -81,6 +102,9 @@ export interface NovelState {
   chapter_plan: ChapterPlanItem[];
   chapter_plan_planned_upto: number;
 
+  // Phase 2.7：统一实体卡库(EntityCard 人物/物品/装备/势力/地点)
+  entity_cards: EntityCard[];
+
   // 子图扩展字段（部分子图会用到）
   review_history?: ReviewHistoryEntry[];
   llm_review_max?: number;
@@ -128,6 +152,7 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   phase_summary: "",
   chapter_plan: [],
   chapter_plan_planned_upto: 0,
+  entity_cards: [],
 };
 
 /** review_type → 中文标签（来自 subgraph.py _REVIEW_PROMPTS / _HISTORY_MAX_ROUNDS 的 key） */
@@ -149,6 +174,8 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   phase_summary: "阶段固化数据",
   scene_beats: "章节 scene beats",
   character_profiles_discover: "角色档案发现",
+  entity_cards: "登场实体卡",
+  entity_discover: "实体发现/更新",
 };
 
 export function reviewTypeLabel(t: string): string {

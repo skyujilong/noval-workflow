@@ -33,6 +33,7 @@ import type { NovelState } from "../../lib/types";
 import { ForeshadowingEditor } from "./ForeshadowingEditor";
 import { FieldExpandDialog } from "./FieldExpandDialog";
 import { ChapterPlanReadonly } from "./ChapterPlanReadonly";
+import { EntityCardsEditor } from "./EntityCardsEditor";
 
 interface Props {
   open: boolean;
@@ -157,6 +158,8 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
   const {
     textDraft,
     ledger,
+    entityCardsJson,
+    entityCardsError,
     dirtyKeys,
     dirtyCount,
     saving,
@@ -164,6 +167,7 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
     justSaved,
     setTextField,
     setLedger,
+    setEntityCardsJson,
     resetField,
     resetAll,
     save,
@@ -173,7 +177,8 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
   const [expanded, setExpanded] = useState<EditableFieldDef | null>(null);
   const expandedKey = expanded?.key as EditableTextKey | undefined;
 
-  const canSave = !disabled && !saving && dirtyCount > 0;
+  // 实体卡 JSON 非法时禁止整次保存（避免脏数据经 update_state 覆盖进卡库）。
+  const canSave = !disabled && !saving && dirtyCount > 0 && !entityCardsError;
 
   const renderField = (f: EditableFieldDef) => {
     const dirty = dirtyKeys.has(f.key as EditableStateKey);
@@ -251,6 +256,41 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
               items={state.chapter_plan || []}
               plannedUpto={state.chapter_plan_planned_upto || 0}
               writtenUpto={state.total_chapters_written || 0}
+            />
+          </section>
+
+          {/* 登场实体卡库(entity_cards) 可编辑——章前建卡 + 章末发现/更新，装备/物品真源。
+              与 chapter_plan(滚动覆盖) 不同：卡库对已有卡 canon 锁定只 append、章末只改
+              status/owner/motivation，故手改核心字段不会被后续章节冲掉，开放 JSON 源码编辑。 */}
+          <section className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  登场实体卡(entity_cards)
+                </h4>
+                {dirtyKeys.has("entity_cards") && (
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                    已改
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-gray-400">JSON 可编辑 · 装备/物品真源</span>
+                <button
+                  type="button"
+                  onClick={() => resetField("entity_cards")}
+                  disabled={!dirtyKeys.has("entity_cards")}
+                  className="text-xs text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  撤销
+                </button>
+              </div>
+            </div>
+            <EntityCardsEditor
+              value={entityCardsJson}
+              error={entityCardsError}
+              disabled={disabled}
+              onChange={setEntityCardsJson}
             />
           </section>
 

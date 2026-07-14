@@ -61,6 +61,19 @@ from noval_workflow.prompts.character_profiles_discover import (
     CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
     character_profiles_discover_prompt,
 )
+from noval_workflow.prompts.entity_cards import (
+    ENTITY_CARDS_PROMPT,
+    ENTITY_CARDS_REVIEW_PROMPT,
+    ENTITY_DISCOVER_PROMPT,
+    ENTITY_DISCOVER_REVIEW_PROMPT,
+    ENTITY_TYPES,
+    UPDATABLE_FIELDS,
+    entity_cards_prompt,
+    entity_discover_prompt,
+    format_cards_for_chapter_prompt,
+    format_equipment_for_context,
+    normalize_entity_name,
+)
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_PLAN_REVIEW_PROMPT,
@@ -143,6 +156,18 @@ __all__ = [
     "CHARACTER_PROFILES_DISCOVER_PROMPT",
     "CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT",
     "character_profiles_discover_prompt",
+    # 章前登场实体卡（EntityCard：人物/物品/装备/势力/地点）+ 章末实体发现/更新
+    "ENTITY_CARDS_PROMPT",
+    "ENTITY_CARDS_REVIEW_PROMPT",
+    "ENTITY_DISCOVER_PROMPT",
+    "ENTITY_DISCOVER_REVIEW_PROMPT",
+    "ENTITY_TYPES",
+    "UPDATABLE_FIELDS",
+    "entity_cards_prompt",
+    "entity_discover_prompt",
+    "format_cards_for_chapter_prompt",
+    "format_equipment_for_context",
+    "normalize_entity_name",
     # 台账类提示词函数
     "character_status_prompt",
     "character_relations_prompt",

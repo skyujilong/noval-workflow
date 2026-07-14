@@ -24,6 +24,42 @@ class ChapterPlanItem:
 
 
 @dataclass
+class EntityCard:
+    """统一实体卡——人物/物品/装备/势力/地点的结构化「触发式档案卡」。
+
+    与 character_profiles（叙事全档案 markdown）的分工：EntityCard 是写正文时按
+    「本章登场名单」注入 chapter_prompt 的**紧凑防飘锚点**（外貌/口吻/装备状态等固定字段），
+    character_profiles 是背景铺陈全档案。二者字段/用途不同，非双源。
+
+    装备/物品的真源：本卡是装备/物品的唯一真源（phase_summary 不再存装备），status/owner
+    随章由章末 entity_discover_step 更新。
+
+    序列化/容错约定照抄 ChapterPlanItem：LangGraph checkpoint 序列化时 dataclass 自动转 dict；
+    LLM 出的 JSON 由 _save_entity_cards 逐条 `EntityCard(**c)` 造实例，字段缺失/类型错时抛
+    TypeError 触发审核循环重生成。type 条件字段（人物段/物品段）不适用时留空默认值，
+    老 state 快照反序列化缺字段走默认值不炸。
+    """
+
+    name: str                          # 实体名（主键，name+aliases 归一化后查重去重）
+    type: str                          # 人物 / 物品 / 装备 / 势力 / 地点
+    aliases: list[str] = field(default_factory=list)  # 别称（参与归一化查重，防同一实体重复建卡）
+    summary: str = ""                  # 一句话定位（≤30 字）
+    first_appear_chapter: int = 0      # 首次登场章号（1-based）
+    # ── 人物专属（type=人物 时填；appearance/speech_style 是防写飘关键字段）──
+    appearance: str = ""               # 外貌锚点（≤40 字）
+    speech_style: str = ""             # 说话风格/口吻/口头禅（≤30 字）
+    personality: str = ""              # 性格
+    motivation: str = ""               # 当前动机/目标（动态字段，章末可更新）
+    relations: str = ""                # 与主角/他人关系
+    abilities: str = ""                # 能力底牌（须落【力量体系】框架）
+    # ── 物品/装备专属（type=物品/装备 时填）──
+    owner: str = ""                    # 归属人（动态字段，章末可更新）
+    effect: str = ""                   # 效果/能力
+    status: str = ""                   # 当前状态：完好/损坏/消耗/遗失（动态字段，章末可更新）
+    rank: str = ""                     # 品阶/等级（落力量体系）
+
+
+@dataclass
 class ReviewSubState:
     novel_name: str = ""        # 小说名称（桥接字段：按小说加载提示词覆盖；由父图 NovelState.novel_name 自动映射）
     genre: str = ""             # 小说类型（桥接字段：按题材加载提示词包；由父图 NovelState.genre 自动映射）
@@ -164,6 +200,19 @@ class NovelState:
     # 严格核对 beats_chapter_index == chapter_num 才注入；不匹配（跳过 gate / 上一章残留）时视同无 beats。
     # 初始 -1 = 从未生成过。
     beats_chapter_index: int = -1
+
+    # ── Phase 2.7：统一实体卡库（EntityCard：人物/物品/装备/势力/地点）──────────────
+    # 全书累积卡库——章前 entity_cards_step 为本章新登场实体建卡、章末 entity_discover_step
+    # 从正文补卡 + 更新动态字段。装备/物品的唯一真源（phase_summary 不再存装备）。
+    # 覆盖语义：save 端按 name+aliases 归一化去重 merge（已有锁定只追加，新增 append），
+    # 参照 chapter_plan 的「历史锁定+增量」，不用 operator.add（否则压缩无法移除/改写旧卡）。
+    entity_cards: list[EntityCard] = field(default_factory=list)
+    # 本章登场实体名单（transient，含新+旧全部登场者）；供 prepare_chapter 触发式注入对应卡。
+    current_chapter_cast: list = field(default_factory=list)
+    # 章号锚定（同 beats_chapter_index 套路）：记录 current_chapter_cast 为哪一章生成。
+    # prepare_chapter 严格核对 cast_chapter_index == chapter_num 才注入；不匹配（跳过 gate /
+    # 上一章残留）视同无登场名单。初始 -1 = 从未生成过。
+    cast_chapter_index: int = -1
 
     # ── Phase 2.5：动态状态库（每次覆盖写入最新快照）────────────────────────────
     character_status: str = ""

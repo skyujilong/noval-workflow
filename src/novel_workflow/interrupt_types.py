@@ -74,6 +74,16 @@ class InterruptType(str, Enum):
     CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT = "character_profiles_discover_direction_input"  # 调整方向输入（预留，ask_direction=False 不触发）
     CHARACTER_PROFILES_DISCOVER_REVIEW = "character_profiles_discover_review"  # 合流后完整档案审核
 
+    # 章前登场实体卡（EntityCard：人物/物品/装备/势力/地点，可跳步骤；插在 scene_beats 之后、prepare_chapter 之前）
+    ENTITY_CARDS_ENTRY_GATE = "entity_cards_entry_gate"  # 是否为本章登场实体建卡
+    ENTITY_CARDS_DIRECTION_INPUT = "entity_cards_direction_input"  # 调整方向输入（预留，ask_direction=False 不触发）
+    ENTITY_CARDS_REVIEW = "entity_cards_review"  # 登场实体卡审核
+
+    # 章末实体发现 + 动态更新（读已写正文补卡 + 更新装备状态/人物动机；插在 phase_step 之后）
+    ENTITY_DISCOVER_ENTRY_GATE = "entity_discover_entry_gate"  # 是否发现本章新实体 / 更新卡库
+    ENTITY_DISCOVER_DIRECTION_INPUT = "entity_discover_direction_input"  # 调整方向输入（预留）
+    ENTITY_DISCOVER_REVIEW = "entity_discover_review"  # 实体发现/更新审核
+
     # ============================================================
     # arc_edit_subgraph 独立使用的标题确认
     # ============================================================
@@ -115,6 +125,10 @@ _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
     "scene_beats": InterruptType.SCENE_BEATS_REVIEW,
     # 章级角色档案发现走专属 InterruptType（对应 human_review 表单，但需与 Phase 1 的 character_profiles 区分开）
     "character_profiles_discover": InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW,
+    # 章前登场实体卡走专属 InterruptType
+    "entity_cards": InterruptType.ENTITY_CARDS_REVIEW,
+    # 章末实体发现/更新走专属 InterruptType
+    "entity_discover": InterruptType.ENTITY_DISCOVER_REVIEW,
     # 以下 review_type 共用通用审核表单，归入 REVIEW_GENERIC：
     #   foundation / core_theme / world_building / core_conflicts /
     #   overall_outline / character_profiles / titles / arc_outline

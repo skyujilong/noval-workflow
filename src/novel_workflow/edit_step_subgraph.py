@@ -87,6 +87,9 @@ class EditStepSubState(ReviewSubState):
     character_relations: str = ""
     foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
+    # 统一实体卡库——桥接父图 NovelState.entity_cards：章末 entity_discover 读入 + 写回，
+    # 其余台账步骤只读（build_foundation_context 渲染装备真源用）。
+    entity_cards: list = field(default_factory=list)
     review_history: list = field(default_factory=list)
 
     # Step gate fields (not written back to parent graph)

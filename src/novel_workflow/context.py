@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Protocol, Union
 
 from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
-from noval_workflow.prompts import _format_foreshadowing_for_context, get_prompt_pack
+from noval_workflow.prompts import (
+    _format_foreshadowing_for_context,
+    format_equipment_for_context,
+    get_prompt_pack,
+)
 
 
 class _ContextState(Protocol):
@@ -39,6 +43,7 @@ class _ContextState(Protocol):
     character_relations: str
     foreshadowing: Union[str, dict]  # 支持旧格式（str）和新结构化格式（dict）
     phase_summary: str
+    entity_cards: list  # 统一实体卡库（装备/物品真源；人物/势力/地点）
     # Phase 2 — chapter progress
     total_chapters_written: int
     all_chapter_titles: list[str]
@@ -160,6 +165,11 @@ def build_foundation_context(
                 parts.append(f"\n【伏笔台账（最新）】\n{formatted}")
         if state.phase_summary:
             parts.append(f"\n【阶段固化数据（最新）】\n{state.phase_summary}")
+        # 装备/物品全局真源：从实体卡库渲染（phase_summary 已移除【装备/道具】，真源改由卡库承载）。
+        # getattr 兜底——老 state 快照 / 尚未加 entity_cards 的子图 state 缺字段时降级为无装备段。
+        equipment = format_equipment_for_context(getattr(state, "entity_cards", []) or [])
+        if equipment:
+            parts.append(f"\n【登场实体卡·装备/物品（本作真源，写作须严格遵守其归属/状态）】\n{equipment}")
 
     return "\n".join(parts)
 

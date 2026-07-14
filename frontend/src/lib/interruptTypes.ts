@@ -52,6 +52,14 @@ export const InterruptType = {
   CHARACTER_PROFILES_DISCOVER_ENTRY_GATE: "character_profiles_discover_entry_gate",
   CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT: "character_profiles_discover_direction_input",
   CHARACTER_PROFILES_DISCOVER_REVIEW: "character_profiles_discover_review",
+  // 章前登场实体卡（EntityCard；插在 scene_beats 之后、prepare_chapter 之前）
+  ENTITY_CARDS_ENTRY_GATE: "entity_cards_entry_gate",
+  ENTITY_CARDS_DIRECTION_INPUT: "entity_cards_direction_input",
+  ENTITY_CARDS_REVIEW: "entity_cards_review",
+  // 章末实体发现 + 动态更新（插在 chapter_edit_subgraph 的 phase_step 之后）
+  ENTITY_DISCOVER_ENTRY_GATE: "entity_discover_entry_gate",
+  ENTITY_DISCOVER_DIRECTION_INPUT: "entity_discover_direction_input",
+  ENTITY_DISCOVER_REVIEW: "entity_discover_review",
   // 通用审核（基础设定类、标题、弧线大纲等共用 review_generic；章节正文 review_chapter）
   REVIEW_GENERIC: "review_generic",
   REVIEW_CHAPTER: "review_chapter",
@@ -272,6 +280,8 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
   [InterruptType.SCENE_BEATS_ENTRY_GATE]: "entry_gate",
   [InterruptType.CHARACTER_PROFILES_DISCOVER_ENTRY_GATE]: "entry_gate",
+  [InterruptType.ENTITY_CARDS_ENTRY_GATE]: "entry_gate",
+  [InterruptType.ENTITY_DISCOVER_ENTRY_GATE]: "entry_gate",
 
   // 弧线方向单独识别（标题为"弧线大纲调整方向"），其余 step 方向归入 direction
   [InterruptType.ARC_DIRECTION_INPUT]: "arc_direction",
@@ -281,6 +291,8 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "direction",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "direction",
   [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "direction",
+  [InterruptType.ENTITY_CARDS_DIRECTION_INPUT]: "direction",
+  [InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT]: "direction",
 
   [InterruptType.STATUS_REVIEW]: "human_review",
   [InterruptType.RELATIONS_REVIEW]: "human_review",
@@ -288,6 +300,8 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
   [InterruptType.SCENE_BEATS_REVIEW]: "human_review",
   [InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW]: "human_review",
+  [InterruptType.ENTITY_CARDS_REVIEW]: "human_review",
+  [InterruptType.ENTITY_DISCOVER_REVIEW]: "human_review",
   [InterruptType.REVIEW_GENERIC]: "human_review",
   [InterruptType.REVIEW_CHAPTER]: "human_review",
 
@@ -332,6 +346,8 @@ const DIRECTION_TITLE: Record<string, string> = {
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "阶段固化数据调整方向",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "Scene beats 调整方向",
   [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "角色档案发现调整方向",
+  [InterruptType.ENTITY_CARDS_DIRECTION_INPUT]: "登场实体卡调整方向",
+  [InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT]: "实体发现/更新调整方向",
 };
 
 /** 按 direction payload.type 查标题，未知 type 回退「调整方向」 */

@@ -21,6 +21,7 @@ from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
+from noval_workflow.nodes.entity_cards import _prepare_entity_discover, _save_entity_discover
 import logging
 
 from noval_workflow.prompts import (
@@ -79,6 +80,8 @@ class ChapterEditSubState:
     character_relations: str = ""
     foreshadowing: str = ""
     phase_summary: str = ""
+    # 统一实体卡库：章末 entity_discover_step 读入 + 写回（补新卡 / 更新动态字段）。
+    entity_cards: list = field(default_factory=list)
 
     # ── review_subgraph 桥接字段 ────────────────────────────────────────────────
     system_context: str = ""
@@ -221,6 +224,18 @@ _PHASE_STEP = make_edit_step_subgraph(
     llm_review_max=3,
 )
 
+# 章末实体发现 + 动态更新：读本章正文补新卡 + 更新已有卡装备状态/人物动机。
+# 默认 state_cls=EditStepSubState（已含 entity_cards 桥接字段，可读入 + 写回）。
+_ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
+    entry_prompt="是否发现本章新实体 / 更新实体卡库（装备状态、人物动机）？" + _ENTRY_HINT,
+    prepare_fn=_prepare_entity_discover,
+    save_fn=_save_entity_discover,
+    entry_gate_type=InterruptType.ENTITY_DISCOVER_ENTRY_GATE,
+    direction_type=InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT,
+    enable_llm_review=True,
+    llm_review_max=3,
+)
+
 
 # ── Top-level chapter_edit_subgraph: 7 nodes, 0 conditional branches ──────────
 
@@ -231,6 +246,7 @@ _builder.add_node("status_step", _STATUS_STEP)
 _builder.add_node("relations_step", _RELATIONS_STEP)
 _builder.add_node("foreshadow_step", _FORESHADOW_STEP)
 _builder.add_node("phase_step", _PHASE_STEP)
+_builder.add_node("entity_discover_step", _ENTITY_DISCOVER_STEP)
 _builder.add_node("chapter_edit_done", chapter_edit_done)
 
 _builder.set_entry_point("arc_step")
@@ -239,7 +255,8 @@ _builder.add_edge("arc_step", "status_step")
 _builder.add_edge("status_step", "relations_step")
 _builder.add_edge("relations_step", "foreshadow_step")
 _builder.add_edge("foreshadow_step", "phase_step")
-_builder.add_edge("phase_step", "chapter_edit_done")
+_builder.add_edge("phase_step", "entity_discover_step")
+_builder.add_edge("entity_discover_step", "chapter_edit_done")
 _builder.add_edge("chapter_edit_done", END)
 
 chapter_edit_subgraph = _builder.compile()

@@ -66,12 +66,21 @@ def _collect_foundation(state: NovelState) -> str:
 
     仅纳入非空字段。phase_summary 是 save_initial_status 刚写入的第0章能力基线，一并纳入
     交叉核对（人物能力是否越出世界观体系）；其余动态快照此刻为空、不产生噪音。
+
+    装备/物品真源已迁至实体卡库：此处从卡库渲染装备段一并纳入审计（Phase 1 冻结时卡库通常
+    为空，此段为空不产生噪音；未来若冻结前已有卡则能被交叉核对）。卡库是 list、不是可修订
+    的 str 字段，故只进只读审计材料，不进 _REVISABLE_FIELDS 白名单。
     """
+    from noval_workflow.prompts import format_equipment_for_context
+
     parts = []
     for key, name in _FOUNDATION_FIELDS:
         val = (getattr(state, key, "") or "").strip()
         if val:
             parts.append(f"## 【{name}】\n{val}")
+    equipment = format_equipment_for_context(getattr(state, "entity_cards", []) or [])
+    if equipment:
+        parts.append(f"## 【实体卡·装备/物品（真源）】\n{equipment}")
     return "\n\n".join(parts)
 
 

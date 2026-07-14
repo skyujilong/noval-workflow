@@ -18,6 +18,8 @@ from noval_workflow.prompts import (
     CHAPTER_REVIEW_PROMPT,
     CORE_CONFLICTS_REVIEW_PROMPT,
     CORE_THEME_REVIEW_PROMPT,
+    ENTITY_CARDS_REVIEW_PROMPT,
+    ENTITY_DISCOVER_REVIEW_PROMPT,
     FORESHADOWING_REVIEW_PROMPT,
     OVERALL_OUTLINE_REVIEW_PROMPT,
     PHASE_SUMMARY_REVIEW_PROMPT,
@@ -57,6 +59,8 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     # chapter_plan JSON 数组条目多(30-50 * 4 字段),3 轮压 token。
     "chapter_plan": 3,
     "character_profiles_discover": 3,
+    "entity_cards": 3,
+    "entity_discover": 3,
 }
 _HISTORY_MAX_ROUNDS_DEFAULT = 5
 
@@ -157,6 +161,35 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言。"
         "必须保留输入档案中所有原有角色条目原样,只允许追加新角色或在原条目末尾追加「【本章新增】…」补充段。"
     ),
+    # entity_cards 与 scene_beats 同类:严格 JSON **对象**契约({cast, new_cards}),打回轮的散文
+    # 指令最容易稀释成「加围栏 / 前置解释 / 输出数组而非对象 / 重复建卡」,故显式给结构+反例。
+    "entity_cards": (
+        "**严格输出 JSON 对象,不要包裹在 ```json 里,不要有任何解释文字或前后说明**。"
+        "从第一个 `{` 开始输出,到最后一个 `}` 结束。\n\n"
+        "【必须遵守的 JSON 结构】顶层是 dict,含两个键:\n"
+        "  cast(list[str],本章登场的所有实体名,含已有+新增) /\n"
+        "  new_cards(list[dict],只放【新】实体的完整卡,已有实体禁止放这里)。\n"
+        "每张 new_card 含:name(str) / type(人物|物品|装备|势力|地点) / aliases(list[str]) /\n"
+        "  summary(str≤30) / first_appear_chapter(int) / 人物段(appearance/speech_style/\n"
+        "  personality/motivation/relations/abilities) / 物品段(owner/effect/status/rank),\n"
+        "  不适用的段留空字符串,字段一个都不能少。\n\n"
+        "【❌ 严禁的错误形态】\n"
+        "  - 顶层输出数组 [ ... ] 而非对象 { \"cast\":..., \"new_cards\":... }\n"
+        "  - 把【已有实体】（名字/别称已在清单里）也塞进 new_cards（重复建卡,不合格）\n"
+        "  - 包 ```json 围栏 / 输出前后有解释文字\n"
+        "  - type 非枚举:{\"type\":\"角色\"}（只能是 人物/物品/装备/势力/地点）\n"
+        "  - 缺字段:new_card 缺 speech_style / status 等（不适用也要留空串,不能省键）\n\n"
+        "再次强调:第一个字符必须是 `{`,最后一个字符必须是 `}`,中间只有合法 JSON。"
+    ),
+    # entity_discover:章末发现/更新,严格 JSON 对象 {new_cards, updates}。
+    "entity_discover": (
+        "**严格输出 JSON 对象,不要包裹在 ```json 里,不要有任何解释文字**。"
+        "从第一个 `{` 开始输出,到最后一个 `}` 结束。\n\n"
+        "【结构】顶层 dict 含两键:new_cards(list[dict],新实体完整卡,无则[]) /\n"
+        "  updates(list[dict],已有卡动态变更,每条含 name + status/owner/motivation 之一或多个,无则[])。\n\n"
+        "【❌ 严禁】顶层输出数组 / 包围栏 / 前后解释 / updates 里改 name·type·外貌·口吻·能力上限\n"
+        "(那些是 canon,只能改 status/owner/motivation)。本章无发现无变化 → {\"new_cards\":[],\"updates\":[]}。"
+    ),
 }
 
 
@@ -177,6 +210,8 @@ _REVIEW_PROMPTS = {
     "phase_summary": PHASE_SUMMARY_REVIEW_PROMPT,
     "scene_beats": SCENE_BEATS_REVIEW_PROMPT,
     "character_profiles_discover": CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
+    "entity_cards": ENTITY_CARDS_REVIEW_PROMPT,
+    "entity_discover": ENTITY_DISCOVER_REVIEW_PROMPT,
 }
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}

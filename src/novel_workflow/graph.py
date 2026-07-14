@@ -67,6 +67,7 @@ from noval_workflow.state import NovelState
 from noval_workflow.subgraph import review_subgraph
 from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
 from noval_workflow.scene_beats_subgraph import scene_beats_step
+from noval_workflow.entity_cards_subgraph import entity_cards_step
 from noval_workflow.character_profiles_discover_subgraph import character_profiles_discover_step
 
 builder = StateGraph(NovelState)
@@ -143,6 +144,9 @@ builder.add_node("ask_continue", ask_continue)
 
 # Phase 2.7 — scene beats（章前节拍表，可跳步骤：save_titles 之后、prepare_chapter 之前）
 builder.add_node("scene_beats_step", scene_beats_step)
+
+# Phase 2.7 — 登场实体卡（章前，可跳步骤：scene_beats 之后、prepare_chapter 之前）
+builder.add_node("entity_cards_step", entity_cards_step)
 
 # Phase 2.8 — 角色档案发现（每章正文完成后自动，可跳步骤：generate_summary 之后、chapter_edit_subgraph 之前）
 builder.add_node("character_profiles_discover_step", character_profiles_discover_step)
@@ -286,10 +290,11 @@ builder.add_edge("save_arc_outline", "prepare_titles")
 # Phase 2 — titles chain
 builder.add_edge("prepare_titles", "review_titles")
 builder.add_edge("review_titles", "save_titles")
-# save_titles → scene_beats_step（可跳步骤：用户可跳过直接进 prepare_chapter）→ prepare_chapter
-# 章循环回跳（route_chapter_or_continue）也会回到 scene_beats_step，让每章都进 gate。
+# save_titles → scene_beats_step → entity_cards_step → prepare_chapter（两步均可跳过）
+# 章循环回跳（route_chapter_or_continue）也会回到 scene_beats_step，让每章都进这两道 gate。
 builder.add_edge("save_titles", "scene_beats_step")
-builder.add_edge("scene_beats_step", "prepare_chapter")
+builder.add_edge("scene_beats_step", "entity_cards_step")
+builder.add_edge("entity_cards_step", "prepare_chapter")
 
 # Phase 2 — chapter loop
 builder.add_edge("prepare_chapter", "review_chapter")

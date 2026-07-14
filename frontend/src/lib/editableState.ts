@@ -9,7 +9,7 @@
 // foreshadowing（伏笔台账）是结构化 dict，见 src/novel_workflow/prompts/ledger.py：
 //   { "pending": [entry...], "collected": [entry...] }，故用结构化编辑器而非手写 JSON。
 
-import type { ForeshadowingLedger, NovelState } from "./types";
+import type { EntityCard, ForeshadowingLedger, NovelState } from "./types";
 
 // ── 字段定义 ─────────────────────────────────────────────────────────────────
 
@@ -27,8 +27,11 @@ export type EditableTextKey =
   | "character_profiles"
   | "current_draft";
 
-/** 全部可编辑字段（含结构化的 foreshadowing） */
-export type EditableStateKey = EditableTextKey | "foreshadowing";
+/** 结构化 JSON 类可编辑字段（源码编辑 + 解析校验，非白名单文本）。 */
+export type EditableJsonKey = "entity_cards";
+
+/** 全部可编辑字段（含结构化的 foreshadowing 与 JSON 类 entity_cards） */
+export type EditableStateKey = EditableTextKey | "foreshadowing" | EditableJsonKey;
 
 export type EditableGroup = "snapshot" | "foundation" | "draft";
 
@@ -179,4 +182,110 @@ export function ledgerDraftEqual(a: LedgerDraft, b: LedgerDraft): boolean {
     return JSON.stringify(a.value) === JSON.stringify(b.value);
   }
   return false;
+}
+
+// ── 登场实体卡（entity_cards，结构化 JSON 源码编辑）────────────────────────────
+//
+// entity_cards 是 list[EntityCard]，字段多且含 type 条件字段，故用「JSON 源码编辑 + 解析
+// 校验」而非逐字段表单：手写 JSON 直观、可批量改。校验规则与后端 EntityCard 对齐
+// （见 state.py::EntityCard / nodes/entity_cards.py::_coerce_card）——name/type 必填、
+// type 枚举合法、aliases 为字符串数组、其余字段类型正确，任一不合格禁止保存（fail-fast，
+// 避免脏数据经 update_state 覆盖进卡库后在下游 _coerce_card 处炸）。
+//
+// 手改安全性：卡库是覆盖语义（无 reducer），且章前 _merge_cards 对已有卡 canon 锁定只 append、
+// 章末 _apply_updates 只改 status/owner/motivation——手改的核心字段不会被后续章节冲掉。
+
+/** 合法 type 枚举，与 prompts/entity_cards.py::ENTITY_TYPES / state.EntityCard.type 同步。 */
+const ENTITY_CARD_TYPES = ["人物", "物品", "装备", "势力", "地点"];
+
+/** EntityCard 里的字符串型可选字段（校验时逐一核对类型）。 */
+const ENTITY_CARD_STRING_FIELDS = [
+  "summary",
+  "appearance",
+  "speech_style",
+  "personality",
+  "motivation",
+  "relations",
+  "abilities",
+  "owner",
+  "effect",
+  "status",
+  "rank",
+];
+
+/** 把卡库序列化成缩进 JSON 源码（编辑器初值）。 */
+export function buildEntityCardsJson(state: NovelState): string {
+  return JSON.stringify(state.entity_cards ?? [], null, 2);
+}
+
+export interface EntityCardsParse {
+  ok: boolean;
+  value?: EntityCard[];
+  /** 校验失败的具体原因（定位到第几张卡 + 字段），供编辑器 inline 提示。 */
+  error?: string;
+}
+
+/**
+ * 解析并校验实体卡 JSON 源码。空串视为「清空卡库」（合法，返回空数组）。
+ * 校验对齐后端 EntityCard：name/type 必填、type 枚举、aliases 字符串数组、
+ * first_appear_chapter 数字、其余字符串字段类型正确。任一不合格返回 {ok:false,error}。
+ */
+export function parseEntityCardsJson(text: string): EntityCardsParse {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: [] };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch (e) {
+    return { ok: false, error: `JSON 语法错误：${(e as Error).message}` };
+  }
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "顶层必须是数组 [ ... ]（每个元素是一张实体卡）" };
+  }
+
+  for (let i = 0; i < raw.length; i++) {
+    const at = `第 ${i + 1} 张卡`;
+    const o = raw[i];
+    if (typeof o !== "object" || o === null || Array.isArray(o)) {
+      return { ok: false, error: `${at}不是对象 { ... }` };
+    }
+    const rec = o as Record<string, unknown>;
+    const name = rec.name;
+    if (typeof name !== "string" || !name.trim()) {
+      return { ok: false, error: `${at}缺 name（实体名，必填非空）` };
+    }
+    const type = rec.type;
+    if (typeof type !== "string" || !ENTITY_CARD_TYPES.includes(type)) {
+      return {
+        ok: false,
+        error: `${at}「${name}」type 非法（须为 ${ENTITY_CARD_TYPES.join("/")} 之一）`,
+      };
+    }
+    if (rec.aliases !== undefined) {
+      if (!Array.isArray(rec.aliases) || rec.aliases.some((a) => typeof a !== "string")) {
+        return { ok: false, error: `${at}「${name}」aliases 必须是字符串数组` };
+      }
+    }
+    if (rec.first_appear_chapter !== undefined && typeof rec.first_appear_chapter !== "number") {
+      return { ok: false, error: `${at}「${name}」first_appear_chapter 必须是数字` };
+    }
+    for (const f of ENTITY_CARD_STRING_FIELDS) {
+      if (rec[f] !== undefined && typeof rec[f] !== "string") {
+        return { ok: false, error: `${at}「${name}」${f} 必须是字符串` };
+      }
+    }
+  }
+  return { ok: true, value: raw as EntityCard[] };
+}
+
+/**
+ * 比较两份卡库 JSON 源码是否等价（供 dirty 判定）。两边都合法则按解析后的值比较
+ * （忽略缩进/空白/字段顺序差异，避免纯格式化被误判为已改）；任一非法则退化为文本比较。
+ */
+export function entityCardsJsonEqual(a: string, b: string): boolean {
+  const pa = parseEntityCardsJson(a);
+  const pb = parseEntityCardsJson(b);
+  if (pa.ok && pb.ok) return JSON.stringify(pa.value) === JSON.stringify(pb.value);
+  return a === b;
 }
