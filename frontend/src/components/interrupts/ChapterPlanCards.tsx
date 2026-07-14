@@ -4,37 +4,8 @@
 // 顶部加档位分布统计 + 节奏塌陷/主角被动/套路钩子三类软警告。
 // JSON 解析失败时降级为原文 <pre> + 顶部黄条警告，与 SceneBeatsCards 同款容错模式。
 
-import type { NovelState } from "../../lib/types";
-
-/** 7 档强度定义，与后端 state.py:ChapterPlanItem.intensity 保持一致。
- *
- * bar 直接给 hex(而非 Tailwind class):动态注入(`${meta.bar}`)时 JIT 扫描
- * 不稳定,曾出现类名挂上 DOM 但 CSS 规则未生成的白底白字 bug。走 inline style
- * 绕开 Tailwind purge。色值取自 tailwindcss/colors 默认盘,视觉与 chip 系一致。
- */
-const INTENSITY_META: Record<
-  string,
-  { label: string; cls: string; bar: string; group: "lull" | "build" | "turn" | "spike" }
-> = {
-  铺垫: { label: "铺垫", cls: "bg-slate-100 text-slate-600 border-slate-200", bar: "#94a3b8", group: "lull" },   // slate-400
-  缓冲: { label: "缓冲", cls: "bg-sky-50 text-sky-700 border-sky-200", bar: "#38bdf8", group: "lull" },          // sky-400
-  回落: { label: "回落", cls: "bg-indigo-50 text-indigo-700 border-indigo-200", bar: "#818cf8", group: "lull" }, // indigo-400
-  推进: { label: "推进", cls: "bg-gray-100 text-gray-700 border-gray-300", bar: "#6b7280", group: "build" },      // gray-500
-  小转折: { label: "小转折", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", bar: "#10b981", group: "turn" }, // emerald-500
-  大转折: { label: "大转折", cls: "bg-amber-50 text-amber-700 border-amber-300", bar: "#f59e0b", group: "spike" },      // amber-500
-  爆发: { label: "爆发", cls: "bg-rose-50 text-rose-700 border-rose-300", bar: "#f43f5e", group: "spike" },            // rose-500
-};
-
-const INTENSITY_ORDER = ["铺垫", "缓冲", "回落", "推进", "小转折", "大转折", "爆发"];
-
-/** 与后端 state.py:ChapterPlanItem 字段对齐 */
-interface ChapterPlanItem {
-  chapter: number;
-  purpose: string;
-  key_turn: string;
-  ending_hook: string;
-  intensity?: string;
-}
+import { INTENSITY_META, INTENSITY_ORDER } from "../../lib/chapterPlanMeta";
+import type { ChapterPlanItem, NovelState } from "../../lib/types";
 
 interface Props {
   draft: string;

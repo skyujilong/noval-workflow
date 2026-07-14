@@ -32,6 +32,7 @@ import {
 import type { NovelState } from "../../lib/types";
 import { ForeshadowingEditor } from "./ForeshadowingEditor";
 import { FieldExpandDialog } from "./FieldExpandDialog";
+import { ChapterPlanReadonly } from "./ChapterPlanReadonly";
 
 interface Props {
   open: boolean;
@@ -229,9 +230,42 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
               <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                 {EDITABLE_GROUP_LABELS[group]}
               </h4>
-              {EDITABLE_FIELDS.filter((f) => f.group === group).map(renderField)}
+              {EDITABLE_FIELDS.filter(
+                // current_arc_outline 从 snapshot 组抽出,单独放到 chapter_plan 只读区之后,
+                // 让"远期规划 → 本批弧线"的阅读顺序连贯(远期锚点 → 展开到本批 5 章弧线)。
+                (f) => f.group === group && f.key !== "current_arc_outline"
+              ).map(renderField)}
             </section>
           ))}
+
+          {/* 远期规划(chapter_plan) 只读观测——不进 dirty/patch,仅让用户看到滚动窗口当前锚点分布。
+              暂不支持编辑:每 STRIDE 章会被 LLM 覆盖重写,手动改易被冲掉,故只做观测窗口。 */}
+          <section className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                远期规划 · 章节锚点(chapter_plan)
+              </h4>
+              <span className="text-[10px] text-gray-400">只读 · 每 STRIDE 章滚动覆盖</span>
+            </div>
+            <ChapterPlanReadonly
+              items={state.chapter_plan || []}
+              plannedUpto={state.chapter_plan_planned_upto || 0}
+              writtenUpto={state.total_chapters_written || 0}
+            />
+          </section>
+
+          {/* 本批弧线大纲——放在 chapter_plan 后面,阅读顺序 = 远期锚点(40 章) → 本批展开(5 章)。 */}
+          {(() => {
+            const arcField = EDITABLE_FIELDS.find((f) => f.key === "current_arc_outline");
+            return arcField ? (
+              <section className="space-y-4">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  本批弧线大纲
+                </h4>
+                {renderField(arcField)}
+              </section>
+            ) : null;
+          })()}
         </div>
 
         <SheetFooter className="items-center gap-2 border-t px-6 py-4 sm:gap-2">

@@ -15,6 +15,15 @@ export interface ReviewHistoryEntry {
  */
 export type ForeshadowingLedger = Record<string, unknown> | string;
 
+/** chapter_plan 单条(镜像 state.py::ChapterPlanItem)。 */
+export interface ChapterPlanItem {
+  chapter: number;
+  purpose: string;
+  key_turn: string;
+  ending_hook: string;
+  intensity?: string;
+}
+
 /** NovelState（state.py）— 平台 thread state 的 values 结构 */
 export interface NovelState {
   // Phase -1：灵感脑爆（可选，入口分叉）
@@ -68,6 +77,10 @@ export interface NovelState {
   foreshadowing: ForeshadowingLedger;
   phase_summary: string;
 
+  // Phase 2.5：远期章节规划(chapter_plan 滚动窗口)
+  chapter_plan: ChapterPlanItem[];
+  chapter_plan_planned_upto: number;
+
   // 子图扩展字段（部分子图会用到）
   review_history?: ReviewHistoryEntry[];
   llm_review_max?: number;
@@ -113,6 +126,8 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   character_relations: "",
   foreshadowing: {},
   phase_summary: "",
+  chapter_plan: [],
+  chapter_plan_planned_upto: 0,
 };
 
 /** review_type → 中文标签（来自 subgraph.py _REVIEW_PROMPTS / _HISTORY_MAX_ROUNDS 的 key） */

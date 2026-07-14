@@ -50,7 +50,13 @@ async def get_prompt_overrides(request: Request) -> JSONResponse:
     genre = request.query_params.get("genre", "")
     # 不传 novel_name 取得纯题材基础包，导出全字段默认值（前端无需硬编码字段集）
     pack = get_prompt_pack(genre)
-    defaults = {f.name: getattr(pack.flavor, f.name) for f in fields(GenreFlavor)}
+    # 只导出 JSON 可序列化的标量字段(str/int/float/bool/None);
+    # chapter_plan_prompt_builder 是 Callable 不能进 JSON,前端也无法覆盖它,直接排除。
+    defaults = {
+        f.name: getattr(pack.flavor, f.name)
+        for f in fields(GenreFlavor)
+        if isinstance(getattr(pack.flavor, f.name), (str, int, float, bool, type(None)))
+    }
     # load_overrides 读盘是同步阻塞调用，放到线程里执行，避免阻塞 ASGI 事件循环
     overrides = await asyncio.to_thread(load_overrides, novel) if novel else {}
     return JSONResponse({"defaults": defaults, "overrides": overrides})
