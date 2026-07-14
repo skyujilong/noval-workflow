@@ -83,7 +83,29 @@ _BRAINSTORM_SYSTEM_PROMPT_BASE = """你是一位资深的小说策划与灵感�
 2. 主动提出有启发性的可选方向供用户挑选，而不是干巴巴地索取信息。
 3. 适时小结已经达成的共识，帮助用户看清雏形逐渐成形。
 4. 当用户表示满意、或基础信息与主题 / 世界观 / 核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
-5. 用自然、口语化的中文，简洁有重点。"""
+5. 用自然、口语化的中文，简洁有重点。
+
+【结束前必须共同敲定的 7 个基础参数】
+在提示用户「结束脑爆」之前，请确认下列 7 项都已经和用户聊清楚（可以是用户主动提，也可以你主动提问引导）：
+1. 小说名称
+2. 小说类型（必须落在这六选一之内：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感——不要引导用户去"武侠""奇幻"等不在候选内的类型；如果讨论中偏离，主动收敛到最近的候选值）
+3. 写作风格（如硬核、意识流、白描、幽默轻快、细腻内省等，1-3 个关键词即可）
+4. 目标读者（以兴趣 / 身份为主，如青少年男性、职场女性、中年科幻迷；避免使用"18-25 岁"这类人口学标签）
+5. 核心基调（如热血励志、压抑沉重、温情治愈、悬疑压抑等，1-3 个关键词即可）
+6. 每章字数（如 3000 字、5000 字）
+7. 总字数目标（如 30 万字、100 万字）
+
+引导原则：
+- 不要一次追问多项——每轮主动提 1-2 项即可，混在自然对话里；
+- 允许在同一句里给 2-3 个可选项让用户挑（"你更倾向硬核战斗流还是心理内省流？"）；
+- 用户已经明确表达过的项目就不要重复问；
+- 上述 7 项与核心主题、世界观、核心冲突齐平；这 7 项没聊清就不要建议用户「结束脑爆」。
+
+【定期小结（每 3-4 轮，或聊完一个大话题时）】
+以自然、简短、非机械的方式回顾一次，附在正文末尾即可（不必每一轮都做，避免观感啰嗦）：
+- 「目前咱们已经敲定的：<列 3-6 条要点，可涵盖 7 基础参数中已定项 + 主题 / 世界观 / 冲突方向>」
+- 「还想跟你聊清楚的：<列 1-3 条剩余项，优先点名 7 基础参数中尚未明确的>」
+让用户能一眼看出雏形成型进度，也能主动补足缺项。"""
 
 # 力量体系分支硬规则：由前端 switch 决定。开关状态实时写回 state.has_power_system，
 # 每轮 brainstorm_respond 按 flag 拼进 system prompt 让 AI 引导风格与用户意图对齐——
@@ -486,8 +508,8 @@ def _split_finalize_markdown(md: str, has_power_system: bool) -> tuple[dict[str,
 _ALLOWED_GENRES = frozenset({"通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"})
 
 _BASIC_EXTRACT_SYSTEM_PROMPT = """你是一位小说信息抽取员。你的唯一任务是从一段脑爆对话历史 + 完整版整理稿里，
-把用户和 AI 已经共同敲定的 7 个基础参数抽成一份严格的 JSON。**不要脑补、不要总结、不要改写**——
-用户没有明确提到的字段一律给空字符串 ""。"""
+把用户和 AI 已经共同敲定的 7 个基础参数抽成一份严格的 JSON。**不同字段有不同的严格度**——
+硬事实类字段绝不允许脑补，氛围类字段可以做温和归纳（详见下方规则）。"""
 
 _BASIC_EXTRACT_PROMPT = """以下是一段小说灵感脑爆对话（含 AI 已整理的完整版 markdown）。请只抽取
 **基础参数**（7 个字段），输出一份严格 JSON。
@@ -495,10 +517,31 @@ _BASIC_EXTRACT_PROMPT = """以下是一段小说灵感脑爆对话（含 AI 已�
 【硬性规则】
 1. 直接输出 JSON 对象，不要围栏 ```json，不要任何前后语；
 2. 7 个键必须都在（缺失或未讨论的字段值给空字符串 ""）；
-3. genre 必须从下列六选一，其他一律给 ""：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感；
-4. chapter_word_count / total_word_count 保持用户在对话里说的原文（如 "3000字" / "100万字"），
-   没提就给 ""；
-5. novel_name 若用户没起名，就给 ""——不要用主题/世界观概念替代书名。
+3. 按下面的三级严格度分别处理：
+
+【明确类 · 用户没明说必空，禁止脑补】
+- `novel_name`: 用户没起名就 ""，不要用主题词 / 世界观名词代替书名。
+- `chapter_word_count` / `total_word_count`: 保留用户原文（如 "3000字" / "100万字"），
+  用户没提就 ""；**禁止按题材套模板猜**（如"网文一般 300 万"这种 stereotype 一律不允许）。
+
+【半严格类 · 白名单命中才收】
+- `genre`: 必须从下列六选一，其他一律给 ""：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感。
+  用户如果说了"武侠""奇幻""穿越"这种候选外的词，一律 "" 让用户下拉手选，不要强行归类。
+
+【推断类 · 有线索可温和归纳】
+- `writing_style` / `target_audience` / `core_tone`: 允许从对话整体的场景色彩、
+  人物语气、想追求的读感中做**温和归纳**（1-3 个关键词，不要写长句创作）。
+  只在有可归纳线索时归纳，仍**没线索仍 ""**——不允许纯凭题材套 stereotype。
+
+  正例：用户说"想写一个抑郁症女主的心灵治愈故事" →
+    - writing_style: "细腻内省"（对话有明确的心理描写倾向）
+    - target_audience: "关注情感成长的成年女性"（对话有明确的读者共鸣倾向）
+    - core_tone: "温情压抑"（对话有明确的基调关键词）
+
+  反例（禁止）：用户只说"想写玄幻爽文" → 不要硬凑
+    - target_audience: "18-25 岁男性" ← 禁止臆造人口学标签
+    - writing_style: "热血爽快，节奏紧凑，注重打斗" ← 禁止长句创作
+  只有对话真出现了对应线索时才归纳；纯题材词不足以推断这三项。
 
 【JSON 结构】
 {{
@@ -678,19 +721,25 @@ confirm_brainstorm_core_conflicts = _make_confirm(
 
 
 def brainstorm_extract_review(state: NovelState) -> dict:
-    """脑爆产物整合 review：把 4 个正式设定字段一次性交给用户 review + 编辑，取代原 4 个逐项 confirm。
+    """脑爆产物整合 review：把 4 个正式设定字段 + 7 个基础参数一次性交给用户 review + 编辑。
 
     resume 值为 dict（前端 BrainstormExtractReview 提交）：
-      - {"action": "advance", ...4 字段} → 覆写字段 + 置 brainstorm_review_advance=True → 路由到 collect_user_inputs
-      - {"action": "back_to_chat"}       → 不写回字段，把 brainstorm_done 置回 False → 路由回 brainstorm_chat 继续聊天
+      - {"action": "advance", ...4 设定 + 7 基础字段} → 覆写字段 + 置 brainstorm_review_advance=True
+        → 路由到 collect_user_inputs（作为必填校验的最后兜底）
+      - {"action": "back_to_chat"}                    → 不写回字段，brainstorm_done 置回 False
+        → 路由回 brainstorm_chat 继续聊天
 
-    payload 里带 has_power_system 供前端判定是否渲染力量体系编辑区。此值来源于 state（用户在
-    聊天页 switch 已经决定过），本节点不再让用户在抽屉里覆盖 flag——避免"聊天时说不要 → 抽屉里
-    又勾上但没有内容可展示"的错位。
+    payload 里带 has_power_system 供前端判定是否渲染力量体系编辑区；带 allowed_genres 供前端
+    渲染 genre 下拉。has_power_system 值来源于 state（用户在聊天页 switch 已经决定过），本节点
+    不再让用户在抽屉里覆盖 flag——避免"聊天时说不要 → 抽屉里又勾上但没有内容可展示"的错位。
+
+    向后兼容：老前端 resume dict 不带 7 基础字段的键 → `answer.get(k)` 返回 None → 该字段跳过，
+    保留 state 原值，等价现状（由后续 collect_user_inputs 弹表单让用户手填）。
     """
     answer = interrupt({
         "type": InterruptType.BRAINSTORM_EXTRACT_REVIEW.value,
-        "message": "请审阅并按需修改脑爆生成的正式设定；保存并推进将跳过逐项确认，直接进入基础参数填写。",
+        "message": "请审阅并按需修改脑爆生成的全书基础参数与正式设定；保存并推进将跳过逐项确认。",
+        # 4 设定字段
         "core_theme": state.core_theme,
         "world_building": state.world_building,
         "power_system": state.power_system,
@@ -700,6 +749,16 @@ def brainstorm_extract_review(state: NovelState) -> dict:
         # 未成功切到内容的字段名（core_theme/world_building/power_system/core_conflicts 之一或多个），
         # 供前端在对应 FieldBlock 头部挂黄色警告，提示用户手填或返回聊天补充。
         "missing_fields": list(state.finalize_missing_fields or []),
+        # 7 基础字段（由 brainstorm_finalize_confirm 的 _extract_basic_fields 预填，可能有值也可能空）
+        "novel_name": state.novel_name,
+        "genre": state.genre,
+        "writing_style": state.writing_style,
+        "target_audience": state.target_audience,
+        "core_tone": state.core_tone,
+        "chapter_word_count": state.chapter_word_count,
+        "total_word_count": state.total_word_count,
+        # genre 下拉候选：前端渲染 <select>，缺失时前端 fallback 到硬编码六选一
+        "allowed_genres": sorted(_ALLOWED_GENRES),
     })
 
     # 契约：前端必发 dict。非 dict 视为契约故障，回炉聊天避免坑住图；不试图猜测意图。
@@ -709,11 +768,12 @@ def brainstorm_extract_review(state: NovelState) -> dict:
 
     action = answer.get("action")
     if action == "back_to_chat":
-        # 不写回 4 字段（丢弃抽屉里未保存编辑），复位 brainstorm_done 让 route_after_chat 重新收用户消息
+        # 不写回任何字段（丢弃抽屉里未保存编辑），复位 brainstorm_done 让 route_after_chat 重新收用户消息
         return {"brainstorm_done": False, "brainstorm_review_advance": False}
 
     if action == "advance":
         out: dict = {"brainstorm_review_advance": True}
+        # 4 设定字段：非空才覆盖，与老版本行为保持一致
         for field_name in ("core_theme", "world_building", "power_system", "core_conflicts"):
             val = answer.get(field_name)
             if isinstance(val, str) and val.strip():
@@ -722,6 +782,21 @@ def brainstorm_extract_review(state: NovelState) -> dict:
         # 与聊天页开关关闭的语义一致。
         if not state.has_power_system:
             out.pop("power_system", None)
+        # 7 基础字段：语义与 4 设定不同——用户在抽屉里主动清空一个字段（比如把 core_tone 清空）
+        # 应该被尊重（表示"没想好，让 collect 表单再问一次"），所以键存在就写入（含空串），
+        # 键缺失才跳过（保留 state 原值）。这保证了老前端 resume 无该键时的向后兼容。
+        for field_name in _BASIC_FIELDS:
+            val = answer.get(field_name)
+            if not isinstance(val, str):
+                continue
+            stripped = val.strip()
+            # genre 二次白名单校验：防坏 payload 塞野值（如 "武侠"），落库 "" 让 collect 下拉引导手选
+            if field_name == "genre" and stripped and stripped not in _ALLOWED_GENRES:
+                _logger.info(
+                    "brainstorm_extract_review 收到 genre='%s' 不在下拉候选，降级为空", stripped
+                )
+                stripped = ""
+            out[field_name] = stripped
         return out
 
     # action 未识别：契约故障，回炉聊天

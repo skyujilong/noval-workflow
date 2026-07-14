@@ -115,11 +115,15 @@ export interface BrainstormConfirmPayload {
 }
 
 /**
- * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段。
+ * 脑爆产物整合 review payload：一次性 review + 编辑 4 个正式设定字段 + 7 个基础参数字段。
  * has_power_system 反映 state 里的作品级决策（初始由题材默认建议，用户可在抽屉里覆盖），
  * 前端据此决定 checkbox 初始状态与力量体系编辑区显隐。
  * missing_fields 由 v2 finalize_confirm 节点纯 python 切分后累积——切不到内容的字段名列表，
  * 前端在对应 FieldBlock 头部挂黄色警告，提示用户手填或返回脑爆补充。
+ *
+ * 7 基础参数字段由后端 _extract_basic_fields 在 brainstorm_finalize_confirm 时预填（可能有值可能空），
+ * 前端渲染专区让用户 review + 修改。allowed_genres 为 genre 下拉候选，缺失时前端 fallback
+ * 到硬编码六选一。
  */
 export interface BrainstormExtractReviewPayload {
   type: InterruptTypeValue;
@@ -130,6 +134,16 @@ export interface BrainstormExtractReviewPayload {
   core_conflicts: string;
   has_power_system: boolean;
   missing_fields: string[];
+  // 7 基础参数（新增。老后端不带这些键 → undefined → 前端渲染空 input）
+  novel_name?: string;
+  genre?: string;
+  writing_style?: string;
+  target_audience?: string;
+  core_tone?: string;
+  chapter_word_count?: string;
+  total_word_count?: string;
+  // genre 下拉候选（新增。老后端不带 → 前端 fallback 到硬编码六选一）
+  allowed_genres?: string[];
 }
 
 /**
@@ -434,7 +448,13 @@ export function buildConsistencyDiscardResume(): ConsistencyDiffDiscard {
 /**
  * 脑爆产物整合 review 的结构化 resume 值。has_power_system 由聊天页 switch 在结束脑爆前决定
  * 并已写回 state，抽屉不再产生此值——power_system 字段仅在 has_power_system=true 时透传。
- * - advance：用户 review 完成，携带编辑后 4 字段 → 后端覆写 state + 推进到 collect_user_inputs
+ *
+ * 7 基础参数字段（novel_name / genre / writing_style / target_audience / core_tone /
+ * chapter_word_count / total_word_count）由抽屉里的「全书基础参数」分区收集，用户可保留
+ * 预填、修改、或主动清空（后端语义：键存在就写入，含空串——尊重"没想好"的意图，由 collect
+ * 表单再兜底问一次）。
+ *
+ * - advance：用户 review 完成，携带编辑后字段 → 后端覆写 state + 推进到 collect_user_inputs
  * - back_to_chat：用户想再和 AI 聊几轮 → 后端不写字段、复位 brainstorm_done → 回 brainstorm_chat
  */
 export interface BrainstormReviewAdvance {
@@ -443,24 +463,47 @@ export interface BrainstormReviewAdvance {
   world_building: string;
   power_system?: string;
   core_conflicts: string;
+  // 7 基础参数（新增；后端向后兼容：老前端不发这些键时后端跳过写入）
+  novel_name: string;
+  genre: string;
+  writing_style: string;
+  target_audience: string;
+  core_tone: string;
+  chapter_word_count: string;
+  total_word_count: string;
 }
 export interface BrainstormReviewBackToChat {
   action: "back_to_chat";
 }
 export type BrainstormReviewResume = BrainstormReviewAdvance | BrainstormReviewBackToChat;
 
-/** 构造「保存并推进」resume 值。power_system 仅在调用方判定 has_power_system=true 时传入。 */
+/** 构造「保存并推进」resume 值。power_system 仅在调用方判定 has_power_system=true 时传入；
+ * 7 基础参数字段 trim 后传入（含空串——允许用户主动清空，后端会尊重该意图）。 */
 export function buildBrainstormReviewAdvanceResume(fields: {
   core_theme: string;
   world_building: string;
   power_system?: string;
   core_conflicts: string;
+  novel_name: string;
+  genre: string;
+  writing_style: string;
+  target_audience: string;
+  core_tone: string;
+  chapter_word_count: string;
+  total_word_count: string;
 }): BrainstormReviewAdvance {
   const out: BrainstormReviewAdvance = {
     action: "advance",
     core_theme: fields.core_theme.trim(),
     world_building: fields.world_building.trim(),
     core_conflicts: fields.core_conflicts.trim(),
+    novel_name: fields.novel_name.trim(),
+    genre: fields.genre.trim(),
+    writing_style: fields.writing_style.trim(),
+    target_audience: fields.target_audience.trim(),
+    core_tone: fields.core_tone.trim(),
+    chapter_word_count: fields.chapter_word_count.trim(),
+    total_word_count: fields.total_word_count.trim(),
   };
   if (fields.power_system !== undefined) out.power_system = fields.power_system.trim();
   return out;

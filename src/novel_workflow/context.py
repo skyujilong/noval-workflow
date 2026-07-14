@@ -110,20 +110,36 @@ def build_foundation_context(
         parts.append(f"{pack.flavor.system_identity}\n以下是本次作品的核心设定，请严格遵守：\n")
 
     # User inputs
+    # Phase 0 基础参数：`novel_name` 空则不占位（若走到这里说明 collect_user_inputs 必填校验被绕过，
+    # 这是上游 bug 应就地暴露而非在 context 层修补）；其余 6 字段空时输出显式占位——
+    # 让 LLM 感知"用户没明说" + 附带安全兜底行为指令（光说"未设定"反而更放飞），避免下游 prompt
+    # 静默丢失字段头部导致 LLM 瞎编。
     if state.novel_name:
         parts.append(f"【小说名称】{state.novel_name}")
-    if state.genre:
-        parts.append(f"【小说类型】{state.genre}")
-    if state.writing_style:
-        parts.append(f"【写作风格】{state.writing_style}")
-    if state.target_audience:
-        parts.append(f"【目标读者】{state.target_audience}")
-    if state.core_tone:
-        parts.append(f"【核心基调】{state.core_tone}")
-    if state.chapter_word_count:
-        parts.append(f"【每章字数】{state.chapter_word_count}")
-    if state.total_word_count:
-        parts.append(f"【总字数目标】{state.total_word_count}")
+    parts.append(
+        f"【小说类型】{state.genre}" if state.genre
+        else "【小说类型】未设定(按通用大众题材处理)"
+    )
+    parts.append(
+        f"【写作风格】{state.writing_style}" if state.writing_style
+        else "【写作风格】未设定,请按题材通用文风自然呈现,不要额外增添强烈风格标签"
+    )
+    parts.append(
+        f"【目标读者】{state.target_audience}" if state.target_audience
+        else "【目标读者】未设定,请按题材主流读者群自然呈现"
+    )
+    parts.append(
+        f"【核心基调】{state.core_tone}" if state.core_tone
+        else "【核心基调】未设定,请按情节内在逻辑自然呈现,不要人为渲染额外基调"
+    )
+    parts.append(
+        f"【每章字数】{state.chapter_word_count}" if state.chapter_word_count
+        else "【每章字数】未设定(按默认 3000 字左右自适应)"
+    )
+    parts.append(
+        f"【总字数目标】{state.total_word_count}" if state.total_word_count
+        else "【总字数目标】未设定(按情节需要收束,不追求特定总量)"
+    )
 
     # Foundation results
     if state.core_theme:

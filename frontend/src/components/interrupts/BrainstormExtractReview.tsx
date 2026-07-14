@@ -1,17 +1,20 @@
-// 脑爆产物整合 review 面板：一次性展示 + 编辑 4 个正式设定字段（取代原 4 个逐项 confirm）。
+// 脑爆产物整合 review 面板：一次性展示 + 编辑 4 个正式设定字段 + 7 个全书基础参数。
 //
 // 渲染形态：静态右侧面板，与其他 interrupt 表单一致（不再用抽屉——interrupt 消费后
 // 父层 InterruptHandler 会直接卸载本组件，抽屉的开关动画/受控 open 逻辑纯属画蛇添足，
 // 反而带来「关闭动画期间又被打开一次」这类时序 bug）。
 //
-// 每个字段用「预览 / 编辑」双 tab：
-//   - 预览：react-markdown + remark-gfm，力量体系里 LLM 输出的 GFM 表格能真渲染成表格
-//     （靠 @tailwindcss/typography 的 .prose 提供表格边框样式）。
-//   - 编辑：保留 textarea，用户改完切回预览即可可视化确认。
-// 首次进入面板时：字段有值 → 预览；字段为空且必填 → 落到编辑态帮用户第一眼就能填。
+// 面板结构（顶→底）：
+//   1. 全书基础参数（7 个短字段，用 <input>/<select> 直接填；genre 走下拉，其他走 text input）
+//   2. 正式设定（4 个长字段，用 FieldBlock 双 tab：预览/编辑；力量体系视 has_power_system 显隐）
+//   3. 按钮区：返回脑爆 / 保存并推进
+//
+// 必填校验：正式设定 3 项（core_theme / world_building / core_conflicts）+ 基础参数 4 项
+//   （novel_name / genre / chapter_word_count / total_word_count）。写作风格 / 目标读者 /
+//   核心基调允许空——build_foundation_context 会用占位文案兜底，不阻塞下游生成。
 //
 // resume 值为 dict（透传 langgraph Command(resume=...)）：
-//   - 保存并推进 → { action: "advance", core_theme, world_building, [power_system], core_conflicts }
+//   - 保存并推进 → { action: "advance", ...4 设定 + 7 基础字段 }
 //     后端 brainstorm_extract_review 覆写 state 后路由到 collect_user_inputs
 //   - 返回脑爆继续修改 → { action: "back_to_chat" }
 //     后端复位 brainstorm_done、不写字段、路由回 brainstorm_chat
@@ -31,6 +34,9 @@ import {
   type BrainstormReviewResume,
 } from "../../lib/interruptTypes";
 
+// 老后端不带 allowed_genres 时的 fallback（与 nodes/brainstorm.py._ALLOWED_GENRES 一致）
+const FALLBACK_GENRES = ["通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"];
+
 interface Props {
   payload: BrainstormExtractReviewPayload;
   onSubmit: (value: BrainstormReviewResume) => void;
@@ -38,12 +44,21 @@ interface Props {
 }
 
 export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) {
-  // 4 个字段的初始值来自 payload；父层 InterruptHandler 用 payload.type 作 key，
+  // 4 设定字段初始值来自 payload；父层 InterruptHandler 用 payload.type 作 key，
   // 每个新 interrupt 都会重挂载本组件，useState 的初值即本次生命周期唯一值。
   const [coreTheme, setCoreTheme] = useState(payload.core_theme ?? "");
   const [worldBuilding, setWorldBuilding] = useState(payload.world_building ?? "");
   const [powerSystem, setPowerSystem] = useState(payload.power_system ?? "");
   const [coreConflicts, setCoreConflicts] = useState(payload.core_conflicts ?? "");
+  // 7 基础字段初始值：后端 _extract_basic_fields 已预填（可能有值可能空），
+  // 用户在本面板 review 时可保留 / 修改 / 主动清空
+  const [novelName, setNovelName] = useState(payload.novel_name ?? "");
+  const [genre, setGenre] = useState(payload.genre ?? "");
+  const [writingStyle, setWritingStyle] = useState(payload.writing_style ?? "");
+  const [targetAudience, setTargetAudience] = useState(payload.target_audience ?? "");
+  const [coreTone, setCoreTone] = useState(payload.core_tone ?? "");
+  const [chapterWordCount, setChapterWordCount] = useState(payload.chapter_word_count ?? "");
+  const [totalWordCount, setTotalWordCount] = useState(payload.total_word_count ?? "");
   const [submitting, setSubmitting] = useState(false);
 
   // v2 保真度改造：finalize_confirm 节点纯 python 切分完整版 markdown 后，切不到内容的字段名
@@ -51,11 +66,21 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
   // 命中的字段头部渲染黄色警告条提示用户手填或返回聊天补充。
   const missing = new Set(payload.missing_fields ?? []);
 
-  // 三个必填字段（力量体系视 has_power_system 可选，不算必填）
+  // genre 下拉候选：优先用后端传的 allowed_genres，老后端未传时 fallback 到硬编码六选一
+  const genreOptions =
+    payload.allowed_genres && payload.allowed_genres.length > 0
+      ? payload.allowed_genres
+      : FALLBACK_GENRES;
+
+  // 必填校验：3 设定 + 4 基础参数（写作风格/目标读者/核心基调允许空，下游有占位兜底）
   const canAdvance =
     coreTheme.trim().length > 0 &&
     worldBuilding.trim().length > 0 &&
-    coreConflicts.trim().length > 0;
+    coreConflicts.trim().length > 0 &&
+    novelName.trim().length > 0 &&
+    genre.trim().length > 0 &&
+    chapterWordCount.trim().length > 0 &&
+    totalWordCount.trim().length > 0;
 
   const isDisabled = disabled || submitting;
 
@@ -68,6 +93,13 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
         world_building: worldBuilding,
         power_system: payload.has_power_system ? powerSystem : undefined,
         core_conflicts: coreConflicts,
+        novel_name: novelName,
+        genre,
+        writing_style: writingStyle,
+        target_audience: targetAudience,
+        core_tone: coreTone,
+        chapter_word_count: chapterWordCount,
+        total_word_count: totalWordCount,
       })
     );
   };
@@ -84,6 +116,72 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
         <p className="mt-1 text-sm text-gray-500">{payload.message}</p>
       </div>
 
+      {/* 全书基础参数区：7 个短字段，AI 已从脑爆对话预填，用户可 review 修改 */}
+      <section className="rounded border border-gray-200 bg-gray-50/50 p-3">
+        <h4 className="mb-2 text-sm font-semibold text-gray-800">
+          全书基础参数
+          <span className="ml-2 text-xs font-normal text-gray-500">
+            （AI 已从脑爆对话预填，可修改或补充；带 * 为必填）
+          </span>
+        </h4>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <BasicInput
+            label="小说名称"
+            value={novelName}
+            onChange={setNovelName}
+            disabled={isDisabled}
+            required
+            placeholder="如：星际迷途、长安风云"
+          />
+          <BasicSelect
+            label="小说类型"
+            value={genre}
+            onChange={setGenre}
+            disabled={isDisabled}
+            required
+            options={genreOptions}
+          />
+          <BasicInput
+            label="写作风格"
+            value={writingStyle}
+            onChange={setWritingStyle}
+            disabled={isDisabled}
+            placeholder="如：硬核、意识流、白描、细腻内省"
+          />
+          <BasicInput
+            label="目标读者"
+            value={targetAudience}
+            onChange={setTargetAudience}
+            disabled={isDisabled}
+            placeholder="如：青少年男性、职场女性"
+          />
+          <BasicInput
+            label="核心基调"
+            value={coreTone}
+            onChange={setCoreTone}
+            disabled={isDisabled}
+            placeholder="如：热血励志、温情治愈、悬疑压抑"
+          />
+          <BasicInput
+            label="每章字数"
+            value={chapterWordCount}
+            onChange={setChapterWordCount}
+            disabled={isDisabled}
+            required
+            placeholder="如：3000字、5000字"
+          />
+          <BasicInput
+            label="总字数目标"
+            value={totalWordCount}
+            onChange={setTotalWordCount}
+            disabled={isDisabled}
+            required
+            placeholder="如：30万字、100万字"
+          />
+        </div>
+      </section>
+
+      {/* 正式设定区：4 个长字段（力量体系视 has_power_system 显隐），保留原有 FieldBlock 双 tab */}
       <div className="space-y-5">
         <FieldBlock
           label="核心主题与立意"
@@ -123,7 +221,7 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
 
       <div className="flex flex-col items-stretch gap-2 border-t pt-4 sm:flex-row sm:items-center">
         <div className="mr-auto text-xs text-gray-400">
-          {canAdvance ? "" : "至少填写主题、世界观、核心冲突后可推进"}
+          {canAdvance ? "" : "请补齐必填的基础参数与正式设定后再推进"}
         </div>
         <Button variant="ghost" onClick={handleBackToChat} disabled={isDisabled}>
           返回脑爆继续修改
@@ -132,6 +230,73 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
           {submitting ? "⏳ 提交中…" : "保存并推进"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+// 基础参数专用短文本输入：单行 input，label 在左、input 在右
+interface BasicInputProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  required?: boolean;
+  placeholder?: string;
+}
+
+function BasicInput({ label, value, onChange, disabled, required, placeholder }: BasicInputProps) {
+  const showEmpty = required && !value.trim();
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-1 text-xs font-medium text-gray-700">
+        <span>{label}</span>
+        {required && <span className="text-red-500">*</span>}
+        {showEmpty && <span className="text-amber-600">（必填）</span>}
+      </label>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        placeholder={placeholder}
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+      />
+    </div>
+  );
+}
+
+// 基础参数专用下拉：genre 用（六选一 + 空选项让用户显式选未定）
+interface BasicSelectProps {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  required?: boolean;
+  options: string[];
+}
+
+function BasicSelect({ label, value, onChange, disabled, required, options }: BasicSelectProps) {
+  const showEmpty = required && !value.trim();
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-1 text-xs font-medium text-gray-700">
+        <span>{label}</span>
+        {required && <span className="text-red-500">*</span>}
+        {showEmpty && <span className="text-amber-600">（必填）</span>}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
+      >
+        <option value="">（请选择）</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
