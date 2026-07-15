@@ -80,3 +80,8 @@
 - 每场景由用户手工确认通过 → 更新本 Notes 记录 → `update_step_state.py ... 09-e2e-verify complate`
 - 遇问题：回退到具体前端/后端 step 修补，本 step 保持 runing 不推进
 
+### 2026-07-15 · 用户手工验收结果
+- 用户口头确认：场景 A-D 手工端到端验收通过（`09是e2e是吧？不用执行了 我验证过了。`）
+- 状态推进：09-e2e-verify runing → complate
+- **分卷（Volume）结构化中间层特性整体交付 ✓**
+

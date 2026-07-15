@@ -2,9 +2,10 @@
 
 **原计划**: `original-plan.md`
 **执行时间戳**: 2026-07-15_16-35-32
-**当前步骤**: 09-e2e-verify（runing，待用户手工场景验收）
+**当前步骤**: 全部完成 ✓
 **上一 compact 检查点**: 08-frontend-ui（已完成）
-**Step 08 完成产物**：VolumeRibbon（顶部横条 + 详情弹窗）/ VolumesReviewForm（可编辑 review 表单）/ VolumeBoundaryGateForm（三选一 gate）— 全部通过 tsc/build/pytest 静态门禁；用户手工场景 A-D 步骤见 `09-e2e-verify.md`。
+**Step 08 完成产物**：VolumeRibbon（顶部横条 + 详情弹窗）/ VolumesReviewForm（可编辑 review 表单）/ VolumeBoundaryGateForm（三选一 gate）— 全部通过 tsc/build/pytest 静态门禁。
+**Step 09 状态**：用户手工场景 A-D 于 2026-07-15 验收通过，分卷（Volume）结构化中间层特性整体交付。
 
 ## 恢复命令
 ```
