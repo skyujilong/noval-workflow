@@ -172,3 +172,9 @@ output/
 # 提示词自进化中央库（SQLite，运行时生成）
 data/prompt_evolution.db
 data/prompt_evolution.db-*
+
+# Node / pnpm（前端）
+node_modules/
+# pnpm 判定跨设备时会在项目根建本地内容寻址包缓存（vs 默认 ~/.local/share/pnpm/store）
+# 纯缓存，删了 pnpm install 会重建
+.pnpm-store/
