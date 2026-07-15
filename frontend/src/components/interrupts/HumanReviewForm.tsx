@@ -15,6 +15,7 @@ import { ChapterReviewReference } from "./ChapterReviewReference";
 import { SceneBeatsCards } from "./SceneBeatsCards";
 import { ChapterPlanCards } from "./ChapterPlanCards";
 import { VolumesReviewCards } from "./VolumesReviewCards";
+import { VolumesReviewForm } from "./VolumesReviewForm";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
@@ -24,9 +25,12 @@ interface Props {
   disabled?: boolean;
   // 父图 NovelState 快照：章节正文审核时用于展示上一章 / 近期弧线大纲等参考资料。
   novelState?: NovelState;
+  // 当前 thread ID：volumes review 表单需要在「通过」时通过 update_state 覆写 current_draft。
+  // 未传（普通 review 类型）→ volumes 分支回退到 VolumesReviewCards 只读展示。
+  threadId?: string;
 }
 
-export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Props) {
+export function HumanReviewForm({ payload, onSubmit, disabled, novelState, threadId }: Props) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"approve" | "revise">("approve");
   // 深度思考开关初值跟随后端给的默认值（创作类开 / 快照类关），未带则按开处理
@@ -51,6 +55,19 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
     setMode("approve");
     setThinkingOn(payload.default_thinking !== "disabled");
   }, [disabled, payload]);
+
+  // volumes 是结构化 JSON + 需要就地编辑,直接 delegate 到专用表单;要求 threadId 才能覆写
+  // current_draft(update_state 通道)。无 threadId 时降级为默认展示,继续走通用只读 + 打回。
+  if (reviewType === "volumes" && threadId) {
+    return (
+      <VolumesReviewForm
+        payload={payload}
+        onSubmit={onSubmit}
+        disabled={disabled}
+        threadId={threadId}
+      />
+    );
+  }
 
   const handleSubmit = () => {
     setSubmitting(true);

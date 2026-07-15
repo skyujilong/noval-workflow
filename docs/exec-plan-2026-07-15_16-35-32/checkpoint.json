@@ -1,4 +1,4 @@
 {
-  "last_compact_after_step": "06-graph-and-prompt-injection",
-  "next_step": "07-frontend-types"
+  "last_compact_after_step": "08-frontend-ui",
+  "next_step": "09-e2e-verify"
 }

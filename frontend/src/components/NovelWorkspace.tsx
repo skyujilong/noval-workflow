@@ -18,6 +18,7 @@ import { InterruptHandler } from "./interrupts/InterruptHandler";
 import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
+import { VolumeRibbon } from "./novel/VolumeRibbon";
 import { StateEditPanel } from "./state/StateEditPanel";
 import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
@@ -255,6 +256,9 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
 
         {/* 右侧：中断表单 / 流式 / 小说详情（顺序刻意保留：resume 期保留旧中断表单） */}
         <aside className="relative flex-1 overflow-y-auto border-l bg-white">
+          {/* 顶部分卷横条：横向大结构一眼可见（volumes 为空自动不渲染，老小说无干扰）。
+              跨所有右侧态显示——不管当前在 interrupt/running/detail,横向大结构始终可见。 */}
+          <VolumeRibbon state={state} />
           {inBrainstorm ? (
             <BrainstormChat
               summary={state.brainstorm_summary ?? ""}
@@ -334,6 +338,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                 }}
                 disabled={inputDisabled}
                 novelState={state}
+                threadId={threadId}
               />
             </div>
           ) : running ? (

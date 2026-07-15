@@ -18,6 +18,7 @@ import { ForeshadowingReviewForm } from "./ForeshadowingReviewForm";
 import { ForeshadowPruneConfirmForm } from "./ForeshadowPruneConfirmForm";
 import { HumanReviewForm } from "./HumanReviewForm";
 import { UserInputsForm } from "./UserInputsForm";
+import { VolumeBoundaryGateForm } from "./VolumeBoundaryGateForm";
 
 interface Props {
   payload: unknown;
@@ -25,9 +26,12 @@ interface Props {
   disabled?: boolean;
   // 父图 NovelState 快照：仅 human_review（章节正文审核）用于展示参考资料，其余表单忽略。
   novelState?: NovelState;
+  // 当前 thread ID：volumes review 表单需要在「通过」时通过 update_state 覆写 current_draft。
+  // 其余表单不需要，故为可选（未传时 volumes review 会退化到只读展示）。
+  threadId?: string;
 }
 
-export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Props) {
+export function InterruptHandler({ payload, onSubmit, disabled, novelState, threadId }: Props) {
   const kind = formKindOfPayload(payload);
   // fallback 场景的 textarea 引用，避免脆弱的 DOM 遍历
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -87,6 +91,7 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Pr
           onSubmit={onSubmit}
           disabled={disabled}
           novelState={novelState}
+          threadId={threadId}
         />
       );
 
@@ -176,6 +181,16 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState }: Pr
         <ForeshadowPruneConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof ForeshadowPruneConfirmForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "volume_boundary_gate":
+      return (
+        <VolumeBoundaryGateForm
+          key={formKey}
+          payload={payload as Parameters<typeof VolumeBoundaryGateForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
         />

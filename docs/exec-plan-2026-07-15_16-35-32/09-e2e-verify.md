@@ -32,6 +32,51 @@
 2. **应观察**：`arc_outline` 的 task_prompt 头部含【当前卷位置】段
 
 ## Notes
-- 端到端跑通即算 Step 09 通过；发现问题回退到具体 step 修
-- LLM 生成有随机性，如观察不到"卷二铺垫"语义可多跑 2-3 次；若始终不含则回 Step 06 检查 prompt 注入
-- 若发现前端 payload 字段名不匹配 → 回 Step 07-08 对齐
+
+### 2026-07-15 · Step 08 完成后落地状态
+- 前端 3 组件已就位：
+  - `frontend/src/components/novel/VolumeRibbon.tsx` — 顶部横条 + 只读详情对话框
+  - `frontend/src/components/interrupts/VolumesReviewForm.tsx` — 可编辑 review 表单（title/summary/setup_for_next/target_min/target_max，chapter_start 联动重算，「通过」时通过 `updateThreadState` 覆写 `current_draft`）
+  - `frontend/src/components/interrupts/VolumeBoundaryGateForm.tsx` — 三选一 gate 表单
+- 契约衔接：
+  - `HumanReviewForm.tsx` 在 `reviewType === "volumes" && threadId` 时 early-return delegate 到 `VolumesReviewForm`（其他 review_type 走原逻辑不变）
+  - `InterruptHandler.tsx` 新增 `volume_boundary_gate` 分派 + 透传 `threadId`
+  - `NovelWorkspace.tsx` 挂 `<VolumeRibbon state={state} />` 到右侧 aside 顶部（跨 interrupt/running/detail 各态可见），`threadId` 透传给 InterruptHandler
+- 自动化门禁全绿：
+  - `pnpm tsc --noEmit` → EXIT=0
+  - `pnpm build` → 2747 modules, 2.06s
+  - `uv run pytest -x -q` → 202 passed（含 56 volume 相关单测）
+
+### 用户手工验收步骤（复现路径）
+以下场景需实际 LLM 生成 + 用户交互，Step 09 状态保持 `runing` 直到用户逐场景确认通过。
+
+**场景 A — 新建小说走到分卷 review + 顶部横条出现**
+1. `make dev` 启动前后端
+2. 新建小说 → 走脑爆 → 基础设定 → overall_outline 通过
+3. 应观察：抽屉切换到「人工审核 · 分卷规划」，展示 N 卷可编辑卡片（每卷含 title 输入框 / summary textarea / setup_for_next textarea / target_min number / target_max number；chapter_start 灰色只读）
+4. 改某卷 target_max（如卷 1 从 25 → 30）→ 应观察：卷 2 起的 chapter_start 立即联动重算
+5. 点击「确认通过」→ 应观察：抽屉关闭，右侧顶部出现横条 4 卷条，卷 1 蓝色高亮 + ring，其余虚线未开启
+6. 点击横条上某卷卡片 → 应观察：弹只读对话框展示 title/summary/卷尾 setup
+
+**场景 B — 首次 chapter_plan 触发 gate**
+1. 继续推进：人物档案审核 → 一致性总审通过 → save_config → 走到首次 `prepare_chapter_plan` 之前
+2. 假设卷 1 `target_min=22 / target_max=28`，`total_chapters_written=0`，`CHAPTER_PLAN_WINDOW=40`
+3. 应观察：`window=[1,40]` 命中卷 1 边界 → 弹出 `VolumeBoundaryGateForm`，顶部黄条列穿越点（卷 1 target_min=22 落入 / target_max=28 落入）
+4. 应观察：三选一 radio 组，默认选中「继续本卷」；「在第 X 章收卷」的数字框预填 AI 建议中位（约 25），「延长 target_max」预填 target_max+5（约 33）
+5. 点击「继续本卷」→ 提交 → 应观察：chapter_plan 生成 40 章条目；抽屉切换到「章节规划」审核卡片视图
+
+**场景 C — 卷边界调整回改（收卷）**
+1. 走到下一次 chapter_plan 前的 gate（`total_chapters_written` 已推进），触发新一轮 VolumeBoundaryGateForm
+2. 选「在第 25 章收卷」（或自行改数字）→ 提交
+3. 应观察后端 log / state：`volumes[0].actual_end=25`, `volumes[0].status="closed"`；`volumes[1].chapter_start=26`, `volumes[1].status="in_progress"`
+4. 应观察前端横条：卷 1 变绿色 ✓「已收卷」+ 区间 `1-25`；卷 2 蓝色高亮进行中
+
+**场景 D — arc_outline task_prompt 头部含【当前卷位置】**
+1. 走到下一次 `prepare_arc_outline` 节点
+2. 通过后端 log 或 `getThreadState(...).values.task_prompt` 观察
+3. 应观察：task_prompt 头部包含 markdown 段落「【当前卷位置】- 当前所在：第 K 卷《...》」等 6 行字段
+
+### 收尾条件
+- 每场景由用户手工确认通过 → 更新本 Notes 记录 → `update_step_state.py ... 09-e2e-verify complate`
+- 遇问题：回退到具体前端/后端 step 修补，本 step 保持 runing 不推进
+
