@@ -24,6 +24,27 @@ export interface ChapterPlanItem {
   intensity?: string;
 }
 
+/** 分卷条目（镜像 state.py::Volume）。横向大结构中间层——overall_outline 之下、chapter_plan 之上。
+ *
+ * 弹性 range 语义（与后端一致）：
+ *  - chapter_start 是本卷**起始章号**（1-based，锁定）
+ *  - target_min / target_max 是本卷**章数**（数量，软约束），不是绝对章号
+ *  - 卷内绝对章号窗口 = [chapter_start, chapter_start + target_max - 1]
+ *  - actual_end 只有在 VOLUME_BOUNDARY_GATE 用户点「在此收卷」后才写入绝对章号
+ *  - status: planning(未开启) | in_progress(进行中) | closed(已收卷)
+ */
+export interface Volume {
+  index: number;
+  title: string;
+  summary: string;
+  setup_for_next: string;
+  chapter_start: number;
+  target_min: number;
+  target_max: number;
+  actual_end: number | null;
+  status: "planning" | "in_progress" | "closed";
+}
+
 /** 统一实体卡(镜像 state.py::EntityCard)。type 条件字段不适用时为空串。 */
 export interface EntityCard {
   name: string;
@@ -102,6 +123,11 @@ export interface NovelState {
   chapter_plan: ChapterPlanItem[];
   chapter_plan_planned_upto: number;
 
+  // Phase 1.5：分卷规划（Volumes，横向大结构中间层）
+  // 由 prepare_volumes 从 overall_outline 抽取 → review_volumes 用户编辑 → save_volumes 落库。
+  // 空数组代表未启用分卷（老小说向后兼容）。
+  volumes: Volume[];
+
   // Phase 2.7：统一实体卡库(EntityCard 人物/物品/装备/势力/地点)
   entity_cards: EntityCard[];
 
@@ -152,6 +178,7 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   phase_summary: "",
   chapter_plan: [],
   chapter_plan_planned_upto: 0,
+  volumes: [],
   entity_cards: [],
 };
 
@@ -168,6 +195,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   chapter: "章节正文",
   arc_outline: "弧线大纲",
   chapter_plan: "章节规划(远端锚点)",
+  volumes: "分卷规划",
   character_status: "人物动态状态",
   character_relations: "人物关系/势力格局",
   foreshadowing: "伏笔台账",

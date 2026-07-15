@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Protocol, Union
 
+from noval_workflow.volume_utils import volume_position_card
+
 if TYPE_CHECKING:
     from noval_workflow.state import ChapterPlanItem, NovelState
 
@@ -413,6 +415,48 @@ class PromptPack:
 {_FOUNDATION_RIGOR}
 输出要求：直接输出纯大纲正文，无需开场白、解释、标题，四卷内容分段清晰；四卷骨架总字数约 2500-3500 字（与后续审核口径一致），过短则骨架信息不足、过长则侵占细分大纲的留白空间。"""
 
+    def volumes_prompt(self, overall_outline: str) -> str:
+        """从 overall_outline 抽取结构化分卷列表（Volume）——严格 JSON 数组。
+
+        与 overall_outline_prompt 的分工：那里出 markdown 四卷骨架大纲；这里把它转成
+        结构化 JSON 供后续 volume_position_card / volume_boundary_gate 消费。
+
+        弹性 range 语义（关键，与 volume_utils / Volume dataclass 一致）：
+          - chapter_start = 本卷起始「章号」（1-based，锁定）
+          - target_min / target_max = 本卷「章数」（数量，软约束），不是绝对章号
+          - 拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]
+        Step 01 已跑通 3/3 通过率；字段/示例/校验规则严格照抄验证版。
+        """
+        return f"""你是网文分卷结构化抽取助手。任务：从下面这份「整体大纲」中抽取分卷结构，返回严格 JSON 数组。
+
+# 输入
+{overall_outline}
+
+# 硬约束
+1. 输出**纯 JSON 数组**，不要 markdown 代码围栏（```），不要任何解释文字，不要前后空行。
+2. 每个数组元素必须包含且仅包含 7 个字段：
+   - index: int（1-based，第几卷）
+   - title: str（卷名，如「第一卷 · 少年入宗」；若原文有卷名照抄，否则简短概括不超 20 字）
+   - summary: str（本卷主线目标 + 情绪基调 + 收尾状态，≤80 字）
+   - setup_for_next: str（卷尾要为下一卷埋的钩子/线索；最后一卷可空字符串 ""）
+   - chapter_start: int（本卷起始**章号**，1-based）
+   - target_min: int（本卷目标**章数**下限，例如原文"约 25 章"→ target_min=22）
+   - target_max: int（本卷目标**章数**上限，例如原文"约 25 章"→ target_max=28，保守放 20%）
+3. chapter_start 必须顺次拼接：第一卷 chapter_start=1；之后每卷 chapter_start = 上一卷 chapter_start + 上一卷 target_max。
+4. target_min ≤ target_max，都必须 > 0；target_min/target_max 是**章数**（数量），不是章号。
+5. 若原文已明确写「共 X 卷」或「第 X 卷」的分卷，严格按其分（不合并、不拆分、不重排）。
+6. 若原文没有明确分卷且没写「N 卷」，默认 4 卷。
+
+# 输出样例（仅示格式，不要照抄内容）
+[
+  {{"index": 1, "title": "第一卷 · 破题", "summary": "主角从平凡进入江湖，初识伙伴与敌人，卷末踏入下一阶段", "setup_for_next": "母亲身份真相埋点", "chapter_start": 1, "target_min": 22, "target_max": 28}},
+  {{"index": 2, "title": "第二卷 · 内争", "summary": "主角卷入宗门斗争，母亲身份揭开", "setup_for_next": "血月教盯上主角", "chapter_start": 29, "target_min": 35, "target_max": 42}}
+]
+
+说明：卷 1 chapter_start=1，target_max=28 表示第 1-28 章占位给卷 1；卷 2 chapter_start = 1 + 28 = 29。
+
+现在开始，直接输出 JSON 数组："""
+
     def titles_prompt(self, all_titles: list[str], chapter_context: str = "", arc_outline: str = "") -> str:
         """生成下 BATCH_SIZE 章的章节标题。
 
@@ -480,6 +524,7 @@ class PromptPack:
         batch_total: int = 0,
         scene_beats: list[dict] | None = None,
         chapter_plan_entry: "ChapterPlanItem | None" = None,
+        state: "NovelState | None" = None,
     ) -> str:
         """生成章节正文。通用骨架 + 题材文风规则 + 题材示例。
 
@@ -494,6 +539,9 @@ class PromptPack:
         chapter_plan_entry（可选）：本章对应的 chapter_plan 条目（4 字段远端锚点）；非空时
         作为「大局锚点」注入,与 arc/beats 是层级关系(远端 → 批级 → 章级),冲突时以更细一层为准,
         它只帮 LLM 把握本章在中景规划中的定位。为空则不注入,向后兼容。
+
+        state（可选）：传入 NovelState 以启用【当前卷位置】注入。为空则不注入（旧调用点/单测
+        不受影响）；prepare_chapter 会传入，让本章创作能感知横向分卷定位（卷内位置、上下卷）。
         """
         all_titles_text = "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(all_titles)
@@ -575,9 +623,17 @@ class PromptPack:
                 "章尾钩（hook_chapter_end）必须落在最后一个 beat 上，在情绪/动作最高点前一秒断章。"
             )
 
+        # 【当前卷位置】——横向分卷位置卡，非空时插在头部让本章创作感知卷内定位。
+        # state 参数为空（旧调用点/单测）或 volumes 空时返回 ""，不影响原逻辑。
+        volume_section = ""
+        if state is not None:
+            card = volume_position_card(state)
+            if card:
+                volume_section = f"\n\n{card}"
+
         return f"""{self.flavor.system_identity}
 
-请撰写第{chapter_num}章：《{title}》
+请撰写第{chapter_num}章：《{title}》{volume_section}
 
 全书章节目录（供参考）：
 {all_titles_text}{context_section}{arc_section}{chapter_plan_section}{beats_section}
@@ -667,6 +723,11 @@ class PromptPack:
             f"{plan_coverage_note}"
         )
 
+        # 【当前卷位置】——横向分卷位置卡，让 LLM 知道本批处于哪一卷、卷进度、上下卷。
+        # 未启用分卷（state.volumes==[]）时 volume_position_card 返回 ""，不影响原逻辑。
+        volume_card = volume_position_card(state)
+        volume_section = f"\n\n{volume_card}" if volume_card else ""
+
         is_first_batch = state.total_chapters_written == 0
         continuity_rule = (
             "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
@@ -677,7 +738,7 @@ class PromptPack:
         max_words = BATCH_SIZE * 500
         focus = f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
 
-        return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{position_section}{prev_section}{chapter_plan_section}
+        return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{volume_section}{position_section}{prev_section}{chapter_plan_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
@@ -893,6 +954,10 @@ def render_chapter_plan_prompt(
     locked_section = format_chapter_plan_locked_section(state, locked_entries)
     status_section = format_chapter_plan_state_snapshot(state)
 
+    # 【当前卷位置】——横向分卷位置卡；未启用分卷时为空串不注入。
+    volume_card = volume_position_card(state)
+    volume_section = f"\n\n{volume_card}" if volume_card else ""
+
     q = compute_chapter_plan_quotas(count)
     burst_max = q["burst_max"]
     burst_min = q["burst_min"]
@@ -957,7 +1022,7 @@ def render_chapter_plan_prompt(
 
     genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
 
-    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{written_section}{locked_section}{status_section}
+    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{written_section}{locked_section}{status_section}
 
 # 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出 {count} 章的滚动路线图。
 

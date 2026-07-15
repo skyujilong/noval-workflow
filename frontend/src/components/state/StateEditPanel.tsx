@@ -34,6 +34,7 @@ import { ForeshadowingEditor } from "./ForeshadowingEditor";
 import { FieldExpandDialog } from "./FieldExpandDialog";
 import { ChapterPlanReadonly } from "./ChapterPlanReadonly";
 import { EntityCardsEditor } from "./EntityCardsEditor";
+import { VolumesEditor } from "./VolumesEditor";
 
 interface Props {
   open: boolean;
@@ -160,6 +161,8 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
     ledger,
     entityCardsJson,
     entityCardsError,
+    volumesJson,
+    volumesError,
     dirtyKeys,
     dirtyCount,
     saving,
@@ -168,6 +171,7 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
     setTextField,
     setLedger,
     setEntityCardsJson,
+    setVolumesJson,
     resetField,
     resetAll,
     save,
@@ -177,8 +181,8 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
   const [expanded, setExpanded] = useState<EditableFieldDef | null>(null);
   const expandedKey = expanded?.key as EditableTextKey | undefined;
 
-  // 实体卡 JSON 非法时禁止整次保存（避免脏数据经 update_state 覆盖进卡库）。
-  const canSave = !disabled && !saving && dirtyCount > 0 && !entityCardsError;
+  // 实体卡 / 分卷 JSON 任一非法时禁止整次保存（避免脏数据经 update_state 覆盖）。
+  const canSave = !disabled && !saving && dirtyCount > 0 && !entityCardsError && !volumesError;
 
   const renderField = (f: EditableFieldDef) => {
     const dirty = dirtyKeys.has(f.key as EditableStateKey);
@@ -242,6 +246,41 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
               ).map(renderField)}
             </section>
           ))}
+
+          {/* 分卷规划(volumes)——横向大结构中间层,位于 overall_outline 之下、chapter_plan 之上。
+              JSON 源码可编辑,与 entity_cards 同款范式:解析成功即预览「保存后长什么样」。
+              手改安全:volumes 覆盖语义、除非 VOLUME_BOUNDARY_GATE 命中程序才更新,普通节点不触碰。 */}
+          <section className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  分卷规划(volumes)
+                </h4>
+                {dirtyKeys.has("volumes") && (
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">
+                    已改
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] text-gray-400">JSON 可编辑 · 横向大结构中间层</span>
+                <button
+                  type="button"
+                  onClick={() => resetField("volumes")}
+                  disabled={!dirtyKeys.has("volumes")}
+                  className="text-xs text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  撤销
+                </button>
+              </div>
+            </div>
+            <VolumesEditor
+              value={volumesJson}
+              error={volumesError}
+              disabled={disabled}
+              onChange={setVolumesJson}
+            />
+          </section>
 
           {/* 远期规划(chapter_plan) 只读观测——不进 dirty/patch,仅让用户看到滚动窗口当前锚点分布。
               暂不支持编辑:每 STRIDE 章会被 LLM 覆盖重写,手动改易被冲掉,故只做观测窗口。 */}

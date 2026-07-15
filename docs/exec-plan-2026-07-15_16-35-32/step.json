@@ -1,0 +1,38 @@
+[
+  {
+    "step": "01-assumption-check",
+    "state": "complate"
+  },
+  {
+    "step": "02-schema-and-contracts",
+    "state": "complate"
+  },
+  {
+    "step": "03-volume-utils",
+    "state": "complate"
+  },
+  {
+    "step": "04-volumes-node",
+    "state": "complate"
+  },
+  {
+    "step": "05-volume-gate-node",
+    "state": "complate"
+  },
+  {
+    "step": "06-graph-and-prompt-injection",
+    "state": "complate"
+  },
+  {
+    "step": "07-frontend-types",
+    "state": "complate"
+  },
+  {
+    "step": "08-frontend-ui",
+    "state": "pending"
+  },
+  {
+    "step": "09-e2e-verify",
+    "state": "pending"
+  }
+]

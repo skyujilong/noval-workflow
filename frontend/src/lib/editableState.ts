@@ -9,7 +9,7 @@
 // foreshadowing（伏笔台账）是结构化 dict，见 src/novel_workflow/prompts/ledger.py：
 //   { "pending": [entry...], "collected": [entry...] }，故用结构化编辑器而非手写 JSON。
 
-import type { EntityCard, ForeshadowingLedger, NovelState } from "./types";
+import type { EntityCard, ForeshadowingLedger, NovelState, Volume } from "./types";
 
 // ── 字段定义 ─────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ export type EditableTextKey =
   | "current_draft";
 
 /** 结构化 JSON 类可编辑字段（源码编辑 + 解析校验，非白名单文本）。 */
-export type EditableJsonKey = "entity_cards";
+export type EditableJsonKey = "entity_cards" | "volumes";
 
 /** 全部可编辑字段（含结构化的 foreshadowing 与 JSON 类 entity_cards） */
 export type EditableStateKey = EditableTextKey | "foreshadowing" | EditableJsonKey;
@@ -286,6 +286,163 @@ export function parseEntityCardsJson(text: string): EntityCardsParse {
 export function entityCardsJsonEqual(a: string, b: string): boolean {
   const pa = parseEntityCardsJson(a);
   const pb = parseEntityCardsJson(b);
+  if (pa.ok && pb.ok) return JSON.stringify(pa.value) === JSON.stringify(pb.value);
+  return a === b;
+}
+
+// ── 分卷规划（volumes，结构化 JSON 源码编辑）──────────────────────────────────
+//
+// volumes 是 list[Volume]（≤5 卷小规模数据），字段固定 9 个 + 弹性 range 硬约束
+// （chapter_start 顺次拼接、target_min<=target_max、actual_end 可 null）。因数据量小、
+// 校验规则明确，同样走「JSON 源码 + 解析校验」路径，与 entity_cards 同构。校验严格对齐
+// 后端 save_volumes（src/novel_workflow/nodes/volumes.py）——任一不合格禁止保存，避免脏
+// 数据经 update_state 覆盖后在 volume_boundary_gate / volume_position_card 处炸。
+//
+// 允许字段：index/title/summary/setup_for_next/chapter_start/target_min/target_max/actual_end/status
+// 手改安全性：volumes 覆盖语义（无 reducer），除非命中 VOLUME_BOUNDARY_GATE 分支才被程序覆盖。
+
+const VOLUME_STATUS_VALUES = ["planning", "in_progress", "closed"] as const;
+const VOLUME_STRING_FIELDS = ["title", "summary", "setup_for_next"] as const;
+const VOLUME_INT_FIELDS = ["index", "chapter_start", "target_min", "target_max"] as const;
+const VOLUME_ALLOWED_KEYS = new Set<string>([
+  "index",
+  "title",
+  "summary",
+  "setup_for_next",
+  "chapter_start",
+  "target_min",
+  "target_max",
+  "actual_end",
+  "status",
+]);
+
+/** 把分卷列表序列化成缩进 JSON 源码（编辑器初值）。 */
+export function buildVolumesJson(state: NovelState): string {
+  return JSON.stringify(state.volumes ?? [], null, 2);
+}
+
+export interface VolumesParse {
+  ok: boolean;
+  value?: Volume[];
+  /** 校验失败原因（定位到第几卷 + 字段），供编辑器 inline 提示。 */
+  error?: string;
+}
+
+/**
+ * 解析并校验分卷 JSON 源码。空串视为「清空 volumes」（合法，返回空数组=禁用分卷特性）。
+ * 严格对齐后端 Volume dataclass + save_volumes 校验：
+ *   - 顶层必须是数组
+ *   - 每项字段严格在白名单内（额外字段直接拒绝，对齐 Volume(**item) 的 TypeError）
+ *   - index 从 1 严格顺次
+ *   - chapter_start 顺次拼接：chapter_start[i+1] = chapter_start[i] + target_max[i]
+ *   - target_min/target_max > 0，target_min <= target_max
+ *   - status 必须是 planning/in_progress/closed
+ *   - actual_end 允许 null 或正整数
+ */
+export function parseVolumesJson(text: string): VolumesParse {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: true, value: [] };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch (e) {
+    return { ok: false, error: `JSON 语法错误：${(e as Error).message}` };
+  }
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "顶层必须是数组 [ ... ]（每个元素是一卷）" };
+  }
+
+  const volumes: Volume[] = [];
+  let nextExpectedStart = 1;
+  for (let i = 0; i < raw.length; i++) {
+    const at = `第 ${i + 1} 卷`;
+    const o = raw[i];
+    if (typeof o !== "object" || o === null || Array.isArray(o)) {
+      return { ok: false, error: `${at}不是对象 { ... }` };
+    }
+    const rec = o as Record<string, unknown>;
+
+    // 白名单外的字段直接拒绝（对齐 Volume(**item) 的 TypeError 语义）
+    for (const key of Object.keys(rec)) {
+      if (!VOLUME_ALLOWED_KEYS.has(key)) {
+        return { ok: false, error: `${at}含未知字段「${key}」（Volume 只支持 9 个字段）` };
+      }
+    }
+
+    // int 字段：必填且必须是整数
+    for (const f of VOLUME_INT_FIELDS) {
+      if (typeof rec[f] !== "number" || !Number.isInteger(rec[f])) {
+        return { ok: false, error: `${at} ${f} 必须是整数` };
+      }
+    }
+    const index = rec.index as number;
+    const chapter_start = rec.chapter_start as number;
+    const target_min = rec.target_min as number;
+    const target_max = rec.target_max as number;
+
+    // string 字段：必填（可空串）、必须是字符串
+    for (const f of VOLUME_STRING_FIELDS) {
+      if (typeof rec[f] !== "string") {
+        return { ok: false, error: `${at} ${f} 必须是字符串（可为空串）` };
+      }
+    }
+    const title = rec.title as string;
+    const summary = rec.summary as string;
+    const setup_for_next = rec.setup_for_next as string;
+
+    // actual_end: 允许 null 或正整数
+    let actual_end: number | null = null;
+    if (rec.actual_end !== undefined && rec.actual_end !== null) {
+      if (typeof rec.actual_end !== "number" || !Number.isInteger(rec.actual_end) || rec.actual_end <= 0) {
+        return { ok: false, error: `${at} actual_end 必须是正整数或 null` };
+      }
+      actual_end = rec.actual_end;
+    }
+
+    // status: 必填枚举
+    const status = rec.status;
+    if (typeof status !== "string" || !VOLUME_STATUS_VALUES.includes(status as Volume["status"])) {
+      return { ok: false, error: `${at} status 必须是 ${VOLUME_STATUS_VALUES.join("/")} 之一` };
+    }
+
+    // 拼接规则 + range 合法性
+    if (index !== i + 1) {
+      return { ok: false, error: `${at} index=${index}，应为 ${i + 1}（1-based 严格顺次）` };
+    }
+    if (chapter_start !== nextExpectedStart) {
+      return {
+        ok: false,
+        error: `${at} chapter_start=${chapter_start}，应为 ${nextExpectedStart}（拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]）`,
+      };
+    }
+    if (target_min <= 0 || target_max <= 0) {
+      return { ok: false, error: `${at} target_min/target_max 必须 > 0` };
+    }
+    if (target_min > target_max) {
+      return { ok: false, error: `${at} target_min=${target_min} > target_max=${target_max}` };
+    }
+
+    volumes.push({
+      index,
+      title,
+      summary,
+      setup_for_next,
+      chapter_start,
+      target_min,
+      target_max,
+      actual_end,
+      status: status as Volume["status"],
+    });
+    nextExpectedStart = chapter_start + target_max;
+  }
+  return { ok: true, value: volumes };
+}
+
+/** 分卷 JSON 源码等价比较：合法则解析后比对（忽略格式化），非法退化为文本比较。 */
+export function volumesJsonEqual(a: string, b: string): boolean {
+  const pa = parseVolumesJson(a);
+  const pb = parseVolumesJson(b);
   if (pa.ok && pb.ok) return JSON.stringify(pa.value) === JSON.stringify(pb.value);
   return a === b;
 }

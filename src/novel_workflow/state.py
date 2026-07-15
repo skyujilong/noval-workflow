@@ -24,6 +24,38 @@ class ChapterPlanItem:
 
 
 @dataclass
+class Volume:
+    """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上。
+
+    弹性 range 语义（关键，与作者/LLM 直觉对齐）：
+      - chapter_start 是本卷**起始章号**（1-based，锁定）
+      - target_min / target_max 是本卷**章数**（数量，软约束），不是绝对章号
+      - 卷内绝对章号窗口 = [chapter_start, chapter_start + target_max - 1]
+      - actual_end 只有在 VOLUME_BOUNDARY_GATE 用户点「在此收卷」后才写入绝对章号，
+        在此之前 = None（当前卷进行中）
+      - 拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]（前卷按上限占位；
+        实际收卷 actual_end < 上限时可重算后续卷 chapter_start，Step 05 处理）
+
+    章 → 卷映射由 volume_utils.volume_of_chapter(chapter_num, volumes) 提供：
+      - 已收卷（actual_end != None）：chapter ∈ [chapter_start, actual_end]
+      - 进行中卷（actual_end == None）：chapter >= chapter_start 且是最靠前的未收卷
+
+    序列化/容错照抄 ChapterPlanItem：LangGraph checkpoint 序列化时 dataclass 自动转 dict；
+    LLM 出的 JSON 由 save_volumes 逐条 `Volume(**item)` 造实例，字段缺失/类型错时抛
+    TypeError 触发审核循环重生成。老 state 快照反序列化时缺字段走默认值。
+    """
+    index: int                     # 第几卷（1-based）
+    title: str                     # 卷名，如「第一卷 · 少年入宗」
+    summary: str = ""              # 本卷主线目标 + 情绪基调 + 收尾状态（≤80 字）
+    setup_for_next: str = ""       # 卷尾要为下一卷埋的钩（≤60 字，最后一卷可空）
+    chapter_start: int = 1         # 起始**章号**（1-based，硬锁定）
+    target_min: int = 0            # 目标**章数**下限（数量，软约束）
+    target_max: int = 0            # 目标**章数**上限（数量，软约束）
+    actual_end: int | None = None  # 实际收卷**章号**，None = 仍在进行中
+    status: str = "planning"       # planning | in_progress | closed
+
+
+@dataclass
 class EntityCard:
     """统一实体卡——人物/物品/装备/势力/地点的结构化「触发式档案卡」。
 
@@ -145,6 +177,14 @@ class NovelState:
     core_conflicts: str = ""        # 核心冲突设计
     overall_outline: str = ""       # 整体大纲与结局
     character_profiles: str = ""    # 人物档案（主角 + 主要配角 + 反派）
+
+    # ── Phase 1.5：分卷规划（Volumes，横向大结构中间层）─────────────────────────
+    # 位于 overall_outline 之下、chapter_plan 之上。由 prepare_volumes 从 overall_outline
+    # 抽取结构化 Volume 列表（默认 4 卷），走 review_volumes 人审后写入。弹性 range 语义
+    # （详见 Volume dataclass 注释）：卷起点锁定，卷终点用 target_min/target_max 章数软约束
+    # 表达，实际章数由 VOLUME_BOUNDARY_GATE（Step 05）根据剧情动态调整。
+    # 覆盖语义：save_volumes 全量覆盖返回；不使用 operator.add（用户可能删卷/合并卷）。
+    volumes: list[Volume] = field(default_factory=list)
 
     # ── 设定一致性总审（save_config 冻结前的跨设定闸门；transient，覆盖语义，无 reducer）──
     # 每次进入 audit_consistency / consistency_gate 都被节点主动覆盖，无残留风险；

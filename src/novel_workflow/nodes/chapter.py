@@ -112,6 +112,7 @@ def prepare_chapter(state: NovelState) -> dict:
             batch_total=batch_total,
             scene_beats=scene_beats_for_prompt,
             chapter_plan_entry=chapter_plan_entry_for_prompt,
+            state=state,
         ) + cards_section,
         "review_type": "chapter",
         **reset_review_fields(),
@@ -244,13 +245,17 @@ def route_chapter_or_continue(state: NovelState) -> str:
 
 
 def route_continue_or_end(state: NovelState) -> str:
-    """批次结束后三分:END(用户停) / prepare_chapter_plan(需滚动重规划) / prepare_arc_outline(直接下一批)。
+    """批次结束后三分:END(用户停) / volume_boundary_gate(需滚动重规划先过分卷闸门) / prepare_arc_outline(直接下一批)。
 
     滚动重规划触发条件(任一即触发):
     1. `chapter_plan` 为空——首次进入或老工程懒生成兜底。
     2. 已写完章数 - 上次触发时进度 >= CHAPTER_PLAN_STRIDE——步长滚动。
 
     ENABLED=False 时直接跳过 chapter_plan 路径,链路等价旧行为。
+
+    需触发 chapter_plan 时先经 volume_boundary_gate：若 state.volumes 非空且本次前瞻窗口
+    穿越某卷 target 边界，gate 会 interrupt 让用户确认（继续本卷 / 收卷 / 延长）；无 volumes
+    或未穿越时 gate 直接透传，无副作用。
     """
     from noval_workflow.config import CHAPTER_PLAN_ENABLED, CHAPTER_PLAN_STRIDE
 
@@ -262,5 +267,5 @@ def route_continue_or_end(state: NovelState) -> str:
     done = state.total_chapters_written
     since_last = done - state.chapter_plan_last_regen_at
     if not state.chapter_plan or since_last >= CHAPTER_PLAN_STRIDE:
-        return "prepare_chapter_plan"
+        return "volume_boundary_gate"
     return "prepare_arc_outline"

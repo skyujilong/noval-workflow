@@ -1,0 +1,20 @@
+[
+  {
+    "run": 1,
+    "ok": true,
+    "err": "",
+    "raw": "[{\"index\":1,\"title\":\"第一卷 · 少年入宗\",\"summary\":\"林渊从边陲山村入青云宗外门，得星河剑经，信念从怯懦转坚定，位列外门前32\",\"setup_for_next\":\"母亲身份存疑，与赵烈结仇引内门冲突\",\"chapter_start\":1,\"target_min\":22,\"target_max\":28},{\"index\":2,\"title\":\"第二卷 · 内门风云\",\"summary\":\"林渊晋升内门卷入派系与妖族危机，母亲剑心真人身份揭晓\",\"setup_for_next\":\"血月教锁定林渊为目标\",\"chapter_start\":29,\"target_min\":35,\"target_max\":42},{\"index\":3,\"title\":\"第三卷 · 远征异域\",\"summary\":\"林渊率同门远征雾隐界，经生死检验护秩序，带剑经残章重伤归宗\",\"setup_for_next\":\"血月教主发必杀令，青云宗陷风口浪尖\",\"chapter_start\":71,\"target_min\":40,\"target_max\":49},{\"index\":4,\"title\":\"第四卷 · 剑指九霄\",\"summary\":\"林渊决战血月教主，母陨剑道升华，重整宗门后与苏晚归隐，主题闭环\",\"setup_for_next\":\"\",\"chapter_start\":120,\"target_min\":44,\"target_max\":55}]"
+  },
+  {
+    "run": 2,
+    "ok": true,
+    "err": "",
+    "raw": "[{\"index\":1,\"title\":\"第一卷 · 少年入宗\",\"summary\":\"边陲少年林渊拜入青云宗外门，获《星河剑经》崭露头角，从怯懦变坚定，生守护信念，达外门巅峰\",\"setup_for_next\":\"与外门恶霸赵烈结仇，母亲身份不明埋点\",\"chapter_start\":1,\"target_min\":20,\"target_max\":30},{\"index\":2,\"title\":\"第二卷 · 内门风云\",\"summary\":\"林渊晋升内门卷入派系与妖族危机，揭开母亲身份，承担超出年龄的重量\",\"setup_for_next\":\"血月教锁定林渊为目标\",\"chapter_start\":31,\"target_min\":32,\"target_max\":48},{\"index\":3,\"title\":\"第三卷 · 远征异域\",\"summary\":\"林渊率同门远征雾隐界，历经生死考验，信念升级为守护一方秩序\",\"setup_for_next\":\"血月教教主发必杀令，青云宗被推上风口浪尖\",\"chapter_start\":79,\"target_min\":36,\"target_max\":54},{\"index\":4,\"title\":\"第四卷 · 剑指九霄\",\"summary\":\"林渊集结势力决战血月教主，完成剑道升华，主题「以剑守心」闭环\",\"setup_for_next\":\"\",\"chapter_start\":133,\"target_min\":40,\"target_max\":60}]"
+  },
+  {
+    "run": 3,
+    "ok": true,
+    "err": "",
+    "raw": "[\n{\"index\":1,\"title\":\"第一卷 · 少年入宗\",\"summary\":\"林渊从山村入青云宗外门，获《星河剑经》崭露头角，从怯懦变坚定，达外门巅峰\",\"setup_for_next\":\"与赵烈结仇、母亲身份不明、《星河剑经》关联伏笔\",\"chapter_start\":1,\"target_min\":22,\"target_max\":28},\n{\"index\":2,\"title\":\"第二卷 · 内门风云\",\"summary\":\"林渊晋升内门卷入内外危机，揭开母亲身份，承担起超出年龄的重量\",\"setup_for_next\":\"血月教锁定林渊为目标\",\"chapter_start\":29,\"target_min\":35,\"target_max\":45},\n{\"index\":3,\"title\":\"第三卷 · 远征异域\",\"summary\":\"林渊率同门远征雾隐界，护秩序经生死考验，重伤归宗带回剑经缺失章节\",\"setup_for_next\":\"血月教教主发必杀令，青云宗被推至风口浪尖\",\"chapter_start\":74,\"target_min\":40,\"target_max\":50},\n{\"index\":4,\"title\":\"第四卷 · 剑指九霄\",\"summary\":\"林渊集结势力决战血月教，完成剑道升华，主题“以剑守心”闭环\",\"setup_for_next\":\"\",\"chapter_start\":124,\"target_min\":45,\"target_max\":55}\n]"
+  }
+]

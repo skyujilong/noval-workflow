@@ -90,6 +90,30 @@ OVERALL_OUTLINE_REVIEW_PROMPT = """请审核以下【整体大纲与结局】：
 如内容合格，只输出：无问题
 否则指出具体问题并给出修改建议。"""
 
+
+# ── 分卷规划(volumes)审核 ─────────────────────────────────────────────────────
+# 弹性 range 语义（与 state.Volume / volume_utils.py / nodes/volumes.py 严格对齐）：
+#   - chapter_start = 本卷起始章号(1-based, 锁定)
+#   - target_min / target_max = 本卷「章数」(数量, 软约束)，不是绝对章号
+#   - 拼接规则: chapter_start[i+1] = chapter_start[i] + target_max[i]
+#   - actual_end 只有触发 VOLUME_BOUNDARY_GATE 用户点「在此收卷」才写入，抽取时不填/为 null
+# 审核关注结构合法 + range 合理 + 与 overall_outline 覆盖对齐，不越权改剧情走向（那是 overall_outline 的职责）。
+VOLUMES_REVIEW_PROMPT = """请审核以下【分卷规划】(严格 JSON 数组)：
+
+{draft}
+
+审核要点：
+1. 【结构合法】是否为合法 JSON 数组、无 markdown 围栏、无前置解释？每条对象是否严格包含且仅包含 7 个字段 `index / title / summary / setup_for_next / chapter_start / target_min / target_max`？字段类型是否正确(index/chapter_start/target_min/target_max=int，其余=str)？
+2. 【index 顺次】是否 1-based 严格顺次(1,2,3,...)、无跳号无重复？
+3. 【章号拼接】是否满足 `chapter_start[i+1] = chapter_start[i] + target_max[i]`？第一卷 chapter_start 是否等于 1？
+4. 【range 合理】每卷 `target_min > 0` 且 `target_max >= target_min`？target_min / target_max 差值是否合理(通常 3-10 章弹性区间，避免相等=硬边界或差 >20 章=过宽失去规划意义)？
+5. 【与整体大纲对齐】各卷 title / summary / setup_for_next 是否与 overall_outline 中对应阶段(起承转合)骨架一致，无遗漏、无凭空增卷、无删卷？总章数(∑ target_max) 是否与整体章数预期同数量级？
+6. 【卷尾 setup】除最后一卷外，`setup_for_next` 是否明确说明为下一卷埋的钩子/悬念/角色转折，而非泛泛"承接下一卷"套话？最后一卷 setup_for_next 是否留空或说明"本作终卷,无下一卷"？
+7. 【summary 质量】每卷 `summary` 是否点出本卷主线目标 + 情绪基调，避免"讲述主角冒险"这类无信息量套话？
+
+如内容合格，只输出：无问题
+否则逐条指出问题并给出具体修改建议。"""
+
 CHARACTER_PROFILES_REVIEW_PROMPT = """作为资深创作者，请审核以下【人物档案】：
 
 {draft}

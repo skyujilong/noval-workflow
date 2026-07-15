@@ -102,6 +102,13 @@ class InterruptType(str, Enum):
     FORESHADOW_PRUNE_CONFIRM = "foreshadow_prune_confirm"  # 确认精简结果
 
     # ============================================================
+    # 分卷（Volume）相关中断
+    # ============================================================
+    # 分卷边界穿越闸门：chapter_plan 前瞻窗口若穿越某卷 target_min/target_max 时，
+    # interrupt 让用户三选一（继续本卷 / 在第 X 章收卷 / 延长 target_max）。
+    VOLUME_BOUNDARY_GATE = "volume_boundary_gate"
+
+    # ============================================================
     # 其他中断
     # ============================================================
     ASK_CONTINUE = "ask_continue"  # 是否继续写下一批
@@ -129,6 +136,8 @@ _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
     "entity_cards": InterruptType.ENTITY_CARDS_REVIEW,
     # 章末实体发现/更新走专属 InterruptType
     "entity_discover": InterruptType.ENTITY_DISCOVER_REVIEW,
+    # 分卷规划走通用 review 表单（前端 VolumesReviewForm 按 review_type 分派渲染）
+    "volumes": InterruptType.REVIEW_GENERIC,
     # 以下 review_type 共用通用审核表单，归入 REVIEW_GENERIC：
     #   foundation / core_theme / world_building / core_conflicts /
     #   overall_outline / character_profiles / titles / arc_outline

@@ -22,6 +22,11 @@ from noval_workflow.nodes.chapter_plan import (
     prepare_chapter_plan,
     save_chapter_plan,
 )
+from noval_workflow.nodes.volumes import (
+    prepare_volumes,
+    save_volumes,
+)
+from noval_workflow.nodes.volume_gate import volume_boundary_gate
 from noval_workflow.nodes.foundation import (
     prepare_character_profiles,
     prepare_core_conflicts,
@@ -113,6 +118,16 @@ builder.add_node("save_overall_outline", save_overall_outline)
 builder.add_node("save_character_profiles", save_character_profiles)
 builder.add_node("save_initial_status", save_initial_status)
 builder.add_node("save_config", save_config)
+
+# Phase 1.5 — 分卷规划（Volumes，横向大结构中间层）
+# 插在 save_overall_outline 之后、prepare_character_profiles 之前：LLM 从整书大纲抽卷
+# → 用户 review 编辑（含 target_min/target_max）→ 落库到 state.volumes。
+builder.add_node("prepare_volumes", prepare_volumes)
+builder.add_node("review_volumes", review_subgraph)
+builder.add_node("save_volumes", save_volumes)
+
+# Phase 2.5 — 分卷边界闸门（chapter_plan 前：检查前瞻窗口是否穿越卷 target 边界）
+builder.add_node("volume_boundary_gate", volume_boundary_gate)
 
 # Phase 1 → 冻结前的设定一致性总审闸门（脑爆链与常规链在此汇合后统一覆盖）
 builder.add_node("audit_consistency", audit_consistency)
@@ -225,7 +240,11 @@ builder.add_edge("save_core_conflicts", "prepare_overall_outline")
 
 builder.add_edge("prepare_overall_outline", "review_overall_outline")
 builder.add_edge("review_overall_outline", "save_overall_outline")
-builder.add_edge("save_overall_outline", "prepare_character_profiles")
+# Phase 1.5 — 分卷规划：save_overall_outline → prepare_volumes → review → save → 继续人物档案
+builder.add_edge("save_overall_outline", "prepare_volumes")
+builder.add_edge("prepare_volumes", "review_volumes")
+builder.add_edge("review_volumes", "save_volumes")
+builder.add_edge("save_volumes", "prepare_character_profiles")
 
 builder.add_edge("prepare_character_profiles", "review_character_profiles")
 builder.add_edge("review_character_profiles", "save_character_profiles")
@@ -263,19 +282,26 @@ builder.add_conditional_edges(
 
 
 def _route_after_save_config(_state) -> str:
-    """save_config 冻结设定后:ENABLED=True 走 chapter_plan 首次生成,否则直接进 arc_outline(旧行为)。"""
+    """save_config 冻结设定后:ENABLED=True 走 volume_boundary_gate → chapter_plan 首次生成,否则直接进 arc_outline(旧行为)。
+
+    分卷闸门 volume_boundary_gate 会在无 volumes / 未穿越时透传（return {}），有穿越时
+    interrupt 让用户三选一决策，然后再进 prepare_chapter_plan。
+    """
     from noval_workflow.config import CHAPTER_PLAN_ENABLED
-    return "prepare_chapter_plan" if CHAPTER_PLAN_ENABLED else "prepare_arc_outline"
+    return "volume_boundary_gate" if CHAPTER_PLAN_ENABLED else "prepare_arc_outline"
 
 
 builder.add_conditional_edges(
     "save_config",
     _route_after_save_config,
     {
-        "prepare_chapter_plan": "prepare_chapter_plan",
+        "volume_boundary_gate": "volume_boundary_gate",
         "prepare_arc_outline": "prepare_arc_outline",
     },
 )
+
+# Phase 2.5 — 分卷边界闸门 → 章节规划：gate 透传或用户决策后必进 prepare_chapter_plan
+builder.add_edge("volume_boundary_gate", "prepare_chapter_plan")
 
 # Phase 2.5 — chapter plan chain(首次进入 → 生成 → 审核 → 落库 → arc_outline)
 builder.add_edge("prepare_chapter_plan", "review_chapter_plan")
@@ -315,7 +341,7 @@ builder.add_conditional_edges(
     route_continue_or_end,
     {
         "prepare_arc_outline": "prepare_arc_outline",
-        "prepare_chapter_plan": "prepare_chapter_plan",
+        "volume_boundary_gate": "volume_boundary_gate",
         END: END,
     },
 )

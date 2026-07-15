@@ -8,12 +8,15 @@ import type { NovelState } from "../lib/types";
 import {
   buildEntityCardsJson,
   buildTextDraft,
+  buildVolumesJson,
   diffTextKeys,
   entityCardsJsonEqual,
   ledgerDraftEqual,
   ledgerDraftValue,
   parseEntityCardsJson,
+  parseVolumesJson,
   toLedgerDraft,
+  volumesJsonEqual,
   type EditableStateKey,
   type EditableStatePatch,
   type EditableTextKey,
@@ -41,7 +44,11 @@ export interface UseStateEditor {
   entityCardsJson: string;
   /** 实体卡 JSON 校验错误（null = 合法）——非 null 时禁止保存 */
   entityCardsError: string | null;
-  /** 与基线不同的字段集合（含 "foreshadowing" / "entity_cards"，供逐字段标记「已改」） */
+  /** 分卷规划 JSON 源码草稿 */
+  volumesJson: string;
+  /** 分卷 JSON 校验错误（null = 合法）——非 null 时禁止保存 */
+  volumesError: string | null;
+  /** 与基线不同的字段集合（含 "foreshadowing" / "entity_cards" / "volumes"，供逐字段标记「已改」） */
   dirtyKeys: Set<EditableStateKey>;
   dirtyCount: number;
   saving: boolean;
@@ -51,6 +58,7 @@ export interface UseStateEditor {
   setTextField: (key: EditableTextKey, value: string) => void;
   setLedger: (draft: LedgerDraft) => void;
   setEntityCardsJson: (value: string) => void;
+  setVolumesJson: (value: string) => void;
   resetField: (key: EditableStateKey) => void;
   resetAll: () => void;
   save: () => Promise<void>;
@@ -69,6 +77,8 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
   const [entityCardsBaseline, setEntityCardsBaseline] = useState<string>(() =>
     buildEntityCardsJson(state)
   );
+  const [volumesJson, setVolumesJsonState] = useState<string>(() => buildVolumesJson(state));
+  const [volumesBaseline, setVolumesBaseline] = useState<string>(() => buildVolumesJson(state));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
@@ -79,12 +89,15 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     const text = buildTextDraft(state);
     const led = toLedgerDraft(state.foreshadowing);
     const cardsJson = buildEntityCardsJson(state);
+    const volsJson = buildVolumesJson(state);
     setTextDraft(text);
     setTextBaseline(text);
     setLedgerState(led);
     setLedgerBaseline(led);
     setEntityCardsJsonState(cardsJson);
     setEntityCardsBaseline(cardsJson);
+    setVolumesJsonState(volsJson);
+    setVolumesBaseline(volsJson);
     setSaveError(null);
     setJustSaved(false);
     // 仅在「打开」或「切换 thread」时重置；刻意不依赖 state。
@@ -95,14 +108,30 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     const keys = new Set<EditableStateKey>(diffTextKeys(textDraft, textBaseline));
     if (!ledgerDraftEqual(ledger, ledgerBaseline)) keys.add("foreshadowing");
     if (!entityCardsJsonEqual(entityCardsJson, entityCardsBaseline)) keys.add("entity_cards");
+    if (!volumesJsonEqual(volumesJson, volumesBaseline)) keys.add("volumes");
     return { dirtyKeys: keys, dirtyCount: keys.size };
-  }, [textDraft, textBaseline, ledger, ledgerBaseline, entityCardsJson, entityCardsBaseline]);
+  }, [
+    textDraft,
+    textBaseline,
+    ledger,
+    ledgerBaseline,
+    entityCardsJson,
+    entityCardsBaseline,
+    volumesJson,
+    volumesBaseline,
+  ]);
 
   // 实体卡 JSON 校验错误——仅在「已改」时校验（未改动的基线值默认合法，不打扰）。
   const entityCardsError = useMemo(() => {
     if (!dirtyKeys.has("entity_cards")) return null;
     return parseEntityCardsJson(entityCardsJson).error ?? null;
   }, [dirtyKeys, entityCardsJson]);
+
+  // 分卷 JSON 校验错误——同 entity_cards：仅在「已改」时校验。
+  const volumesError = useMemo(() => {
+    if (!dirtyKeys.has("volumes")) return null;
+    return parseVolumesJson(volumesJson).error ?? null;
+  }, [dirtyKeys, volumesJson]);
 
   const setTextField = useCallback((key: EditableTextKey, value: string) => {
     setTextDraft((prev) => ({ ...prev, [key]: value }));
@@ -119,24 +148,32 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     setJustSaved(false);
   }, []);
 
+  const setVolumesJson = useCallback((value: string) => {
+    setVolumesJsonState(value);
+    setJustSaved(false);
+  }, []);
+
   const resetField = useCallback(
     (key: EditableStateKey) => {
       if (key === "foreshadowing") {
         setLedgerState(ledgerBaseline);
       } else if (key === "entity_cards") {
         setEntityCardsJsonState(entityCardsBaseline);
+      } else if (key === "volumes") {
+        setVolumesJsonState(volumesBaseline);
       } else {
         setTextDraft((prev) => ({ ...prev, [key]: textBaseline[key as EditableTextKey] }));
       }
     },
-    [textBaseline, ledgerBaseline, entityCardsBaseline]
+    [textBaseline, ledgerBaseline, entityCardsBaseline, volumesBaseline]
   );
 
   const resetAll = useCallback(() => {
     setTextDraft(textBaseline);
     setLedgerState(ledgerBaseline);
     setEntityCardsJsonState(entityCardsBaseline);
-  }, [textBaseline, ledgerBaseline, entityCardsBaseline]);
+    setVolumesJsonState(volumesBaseline);
+  }, [textBaseline, ledgerBaseline, entityCardsBaseline, volumesBaseline]);
 
   const save = useCallback(async () => {
     // 用宽松类型累积，边界处断言回 patch 类型（规避联合 key 写入的 TS 限制）
@@ -154,6 +191,16 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
       }
       patch.entity_cards = parsed.value;
     }
+    const volsDirty = !volumesJsonEqual(volumesJson, volumesBaseline);
+    if (volsDirty) {
+      // 分卷 JSON 校验同款 fail-fast：非法直接中止整次保存。
+      const parsed = parseVolumesJson(volumesJson);
+      if (!parsed.ok) {
+        setSaveError(`分卷规划未保存：${parsed.error}`);
+        return;
+      }
+      patch.volumes = parsed.value;
+    }
     if (Object.keys(patch).length === 0) return;
 
     setSaving(true);
@@ -163,6 +210,7 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
       setTextBaseline(textDraft); // 基线推进到已保存态，dirty 归零
       setLedgerBaseline(ledger);
       setEntityCardsBaseline(entityCardsJson);
+      setVolumesBaseline(volumesJson);
       setJustSaved(true);
       await onSaved?.(); // 父层只刷新 values，不动 interrupt
     } catch (e) {
@@ -177,6 +225,8 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     ledgerBaseline,
     entityCardsJson,
     entityCardsBaseline,
+    volumesJson,
+    volumesBaseline,
     threadId,
     onSaved,
   ]);
@@ -186,6 +236,8 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     ledger,
     entityCardsJson,
     entityCardsError,
+    volumesJson,
+    volumesError,
     dirtyKeys,
     dirtyCount,
     saving,
@@ -194,6 +246,7 @@ export function useStateEditor({ threadId, state, open, onSaved }: Params): UseS
     setTextField,
     setLedger,
     setEntityCardsJson,
+    setVolumesJson,
     resetField,
     resetAll,
     save,

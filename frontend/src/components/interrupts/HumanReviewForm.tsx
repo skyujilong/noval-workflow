@@ -14,6 +14,7 @@ import { recordReject } from "../../lib/langgraph";
 import { ChapterReviewReference } from "./ChapterReviewReference";
 import { SceneBeatsCards } from "./SceneBeatsCards";
 import { ChapterPlanCards } from "./ChapterPlanCards";
+import { VolumesReviewCards } from "./VolumesReviewCards";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface Props {
@@ -141,6 +142,11 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState }: Pro
             // chapter_plan 也是结构化 JSON（ChapterPlanItem[]），走专用卡片视图，
             // 让「第 N 章 / 本章目标 / 关键转折 / 章末钩子」分区可扫，并用 chip 区分锁定 vs 新增段。
             <ChapterPlanCards draft={draft} novelState={novelState} />
+          ) : reviewType === "volumes" ? (
+            // volumes 是结构化 JSON（Volume[]），走专用卡片视图，让 4 卷 title/summary/
+            // setup_for_next 分卡展示，卷标题条突出 chapter_start + target range + status。
+            // 前端只读——想改仍走「提出修改意见」文本打回重跑。
+            <VolumesReviewCards draft={draft} />
           ) : draft ? (
             <ArticleParagraphs text={draft} />
           ) : (
