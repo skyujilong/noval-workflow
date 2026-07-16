@@ -10,6 +10,8 @@ interface Props {
   cards: EntityCard[];
   /** 提供时，在「次要角色」人物卡上渲染「提升为重要角色」入口（仅「当前状态」视图传，审核草稿视图不传）。 */
   onPromote?: (card: EntityCard) => void;
+  /** 提供时，在每张卡上渲染「删除」入口，供人工剔除噪音卡（仅「当前状态」视图传）。 */
+  onDelete?: (card: EntityCard) => void;
 }
 
 // type → 分组展示顺序 + 徽标样式。未知 type 兜底到「其他」组。
@@ -33,13 +35,24 @@ function Row({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function Card({ card, onPromote }: { card: EntityCard; onPromote?: (card: EntityCard) => void }) {
+function Card({
+  card,
+  onPromote,
+  onDelete,
+}: {
+  card: EntityCard;
+  onPromote?: (card: EntityCard) => void;
+  onDelete?: (card: EntityCard) => void;
+}) {
   const isPerson = card.type === "人物";
   const isItem = card.type === "装备" || card.type === "物品";
   const aliases = card.aliases?.length ? `（${card.aliases.join("/")}）` : "";
   const badge = TYPE_BADGE[card.type] ?? "border-gray-200 bg-gray-50 text-gray-600";
   // 次要角色 + 父层给了 onPromote → 可提升为重要角色
   const canPromote = isPerson && card.role === "次要角色" && !!onPromote;
+  const canDelete = !!onDelete;
+  // 提升/删除任一存在 → 徽标不再靠 ml-auto 顶到最右（交给按钮组占位）
+  const hasActions = canPromote || canDelete;
   return (
     <div className="space-y-1 rounded-md border border-gray-200 bg-gray-50/70 p-2">
       <div className="flex items-center gap-2">
@@ -61,7 +74,17 @@ function Card({ card, onPromote }: { card: EntityCard; onPromote?: (card: Entity
             提升
           </button>
         ) : null}
-        <span className={`${canPromote ? "" : "ml-auto "}rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
+        {canDelete ? (
+          <button
+            type="button"
+            onClick={() => onDelete!(card)}
+            className={`${canPromote ? "" : "ml-auto "}rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-rose-600 hover:bg-rose-50`}
+            title="从卡库删除这张卡（用于剔除一次性碎屑/误建的噪音卡）"
+          >
+            删除
+          </button>
+        ) : null}
+        <span className={`${hasActions ? "" : "ml-auto "}rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
           {card.type || "未分类"}
         </span>
       </div>
@@ -98,7 +121,7 @@ function Card({ card, onPromote }: { card: EntityCard; onPromote?: (card: Entity
   );
 }
 
-export function EntityCardsReadonly({ cards, onPromote }: Props) {
+export function EntityCardsReadonly({ cards, onPromote, onDelete }: Props) {
   if (!cards || cards.length === 0) {
     return (
       <div className="rounded border border-dashed border-gray-200 py-3 text-center text-[11px] text-gray-400">
@@ -133,7 +156,7 @@ export function EntityCardsReadonly({ cards, onPromote }: Props) {
             </div>
             <div className="space-y-2">
               {g.items.map((c, i) => (
-                <Card key={`${g.label}-${c.name}-${i}`} card={c} onPromote={onPromote} />
+                <Card key={`${g.label}-${c.name}-${i}`} card={c} onPromote={onPromote} onDelete={onDelete} />
               ))}
             </div>
           </div>

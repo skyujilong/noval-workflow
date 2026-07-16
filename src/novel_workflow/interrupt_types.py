@@ -90,6 +90,11 @@ class InterruptType(str, Enum):
     FORESHADOW_PRUNE_CONFIRM = "foreshadow_prune_confirm"  # 确认精简结果
 
     # ============================================================
+    # 章末实体发现·入库筛选（产出时人工勾选哪些 new_cards/updates 真正入库）
+    # ============================================================
+    ENTITY_SELECT_CONFIRM = "entity_select_confirm"  # 勾选确认入库项
+
+    # ============================================================
     # 分卷（Volume）相关中断
     # ============================================================
     # 分卷边界穿越闸门：chapter_plan 前瞻窗口若穿越某卷 target_min/target_max 时，

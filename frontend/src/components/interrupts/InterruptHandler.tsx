@@ -2,7 +2,7 @@
 // 的 TYPE_TO_FORM 契约表）。表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
 import { useRef } from "react";
-import { formKindOfPayload } from "../../lib/interruptTypes";
+import { entryGateTitleOf, formKindOfPayload } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
 import { ArcConfirmForm } from "./ArcConfirmForm";
 import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
@@ -16,6 +16,7 @@ import { DirectionForm } from "./DirectionForm";
 import { EntryGateForm } from "./EntryGateForm";
 import { ForeshadowingReviewForm } from "./ForeshadowingReviewForm";
 import { ForeshadowPruneConfirmForm } from "./ForeshadowPruneConfirmForm";
+import { EntitySelectConfirmForm } from "./EntitySelectConfirmForm";
 import { HumanReviewForm } from "./HumanReviewForm";
 import { UserInputsForm } from "./UserInputsForm";
 import { VolumeBoundaryGateForm } from "./VolumeBoundaryGateForm";
@@ -112,6 +113,8 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
           payload={payload as Parameters<typeof EntryGateForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
+          // 标题由 payload.type 派生，区分各 step 的执行/跳过闸门（否则一律「步骤确认」）
+          title={entryGateTitleOf((payload as { type?: unknown }).type)}
         />
       );
 
@@ -181,6 +184,16 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
         <ForeshadowPruneConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof ForeshadowPruneConfirmForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "entity_select_confirm":
+      return (
+        <EntitySelectConfirmForm
+          key={formKey}
+          payload={payload as Parameters<typeof EntitySelectConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
         />

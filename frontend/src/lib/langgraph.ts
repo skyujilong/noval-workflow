@@ -309,6 +309,25 @@ export async function promoteCharacterApply(
   return (await res.json()).card as EntityCard;
 }
 
+// ── 实体卡「人工删除」──────────────────────────────────────────────────────────────
+// 走自定义 HTTP 路由 /entity/delete，直连 API_URL。按 name+type 从卡库剔除一张噪音卡，
+// 全量覆盖 entity_cards 回写 checkpoint。不触发 graph resume，落库后由调用方刷新卡库展示。
+
+/** 从卡库删除一张实体卡（按 name + type 精确定位）。返回删除后剩余卡数。 */
+export async function deleteEntityCard(
+  threadId: string,
+  name: string,
+  type: string
+): Promise<number> {
+  const res = await fetch(`${API_URL}/entity/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, name, type }),
+  });
+  if (!res.ok) throw await _promoteError(res, "删除实体卡");
+  return (await res.json()).remaining as number;
+}
+
 // ── 提示词自进化（按小说：提炼/应用/还原）+ 整改库（跨小说：精炼入库/查询/导入）──
 // 同样走自定义 HTTP 路由（src/http_app.py），直连 API_URL。台账与整改库在中央 SQLite；
 // 应用/导入写入该小说 prompt_overrides.json 的 evolved_directives，下一次生成新鲜读取即生效。

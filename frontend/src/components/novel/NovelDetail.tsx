@@ -6,6 +6,7 @@ import { reviewTypeLabel, type NovelState } from "../../lib/types";
 import { EntityCardsReadonly } from "../state/EntityCardsReadonly";
 import { PromoteCharacterPanel } from "../state/PromoteCharacterPanel";
 import { usePromoteCharacter } from "../../hooks/usePromoteCharacter";
+import { useDeleteEntityCard } from "../../hooks/useDeleteEntityCard";
 
 interface Props {
   state: NovelState;
@@ -29,9 +30,10 @@ function Field({ label, value }: { label: string; value?: string }) {
 
 export function NovelDetail({ state, threadId, onPromoted }: Props) {
   const titles = state.all_chapter_titles ?? [];
-  // 提升会话状态机——hook 需无条件调用；threadId 缺省时不给卡片挂 onPromote（按钮不出现）。
+  // 提升 / 删除会话状态机——hook 需无条件调用；threadId 缺省时不给卡片挂回调（按钮不出现）。
   const promote = usePromoteCharacter(threadId ?? "", onPromoted ?? (() => {}));
-  const canPromote = !!threadId;
+  const del = useDeleteEntityCard(threadId ?? "", onPromoted ?? (() => {}));
+  const canManage = !!threadId;
   return (
     <div className="space-y-3 p-3">
       <div className="flex items-center justify-between">
@@ -63,9 +65,35 @@ export function NovelDetail({ state, threadId, onPromoted }: Props) {
       {state.entity_cards?.length > 0 && (
         <div>
           <div className="mb-0.5 text-xs font-medium text-gray-500">人物档案 / 实体卡库</div>
+          {/* 删除二次确认条：有待确认卡时置顶展示，确认前不真正删除 */}
+          {del.pending && (
+            <div className="mb-2 flex items-center gap-2 rounded border border-rose-200 bg-rose-50 p-2 text-xs">
+              <span className="text-rose-700">
+                删除「{del.pending.name}」（{del.pending.type}）？此操作直接改写卡库。
+              </span>
+              <button
+                type="button"
+                onClick={del.confirm}
+                disabled={del.busy}
+                className="ml-auto rounded bg-rose-600 px-2 py-0.5 text-white hover:bg-rose-700 disabled:bg-gray-300"
+              >
+                {del.busy ? "删除中…" : "确认删除"}
+              </button>
+              <button
+                type="button"
+                onClick={del.cancel}
+                disabled={del.busy}
+                className="rounded border border-gray-300 bg-white px-2 py-0.5 text-gray-600 hover:bg-gray-50"
+              >
+                取消
+              </button>
+            </div>
+          )}
+          {del.error && <div className="mb-2 text-xs text-rose-600">删除失败：{del.error}</div>}
           <EntityCardsReadonly
             cards={state.entity_cards}
-            onPromote={canPromote ? promote.open : undefined}
+            onPromote={canManage ? promote.open : undefined}
+            onDelete={canManage ? del.request : undefined}
           />
         </div>
       )}

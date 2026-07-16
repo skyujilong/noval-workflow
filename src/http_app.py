@@ -861,6 +861,46 @@ async def post_character_promote_apply(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "card": updated})
 
 
+# ── 实体卡「人工删除」──────────────────────────────────────────────────────────────
+# 带外操作：从卡库剔除一张噪音卡（一次性碎屑、误建的一幕 NPC 等）。与 promote 同一真源、
+# 同一套读写入口——get_state 读 entity_cards → 按 name+type 过滤掉目标 → update_state 全量覆盖
+# （entity_cards 无 reducer，last-value 语义，直接少一张即删除）。不进主图、不占 interrupt 流。
+
+async def post_entity_card_delete(request: Request) -> JSONResponse:
+    """从卡库删除一张实体卡（按 name + type 精确定位）。
+
+    body: {thread_id, name, type}
+    fail-loud：缺参→400，卡不存在→404，update_state 失败→502。
+    按 name+type 双条件定位，避免误删同名异类卡（如同名的物品与地点）。
+    """
+    body = await _json_body(request)
+    thread_id, name, card_type = body.get("thread_id"), body.get("name"), body.get("type")
+    if not thread_id or not name or not card_type:
+        return JSONResponse({"error": "缺 thread_id / name / type"}, status_code=400)
+
+    try:
+        st = await _get_lg_client().threads.get_state(thread_id)
+    except Exception as e:
+        return JSONResponse({"error": f"get_state failed: {e}"}, status_code=502)
+    values = (st or {}).get("values") or {}
+    cards = values.get("entity_cards") or []
+
+    def _match(c) -> bool:
+        return isinstance(c, dict) and c.get("name") == name and c.get("type") == card_type
+
+    kept = [c for c in cards if not _match(c)]
+    if len(kept) == len(cards):
+        return JSONResponse(
+            {"error": f"未找到实体卡 name={name!r} type={card_type!r}"}, status_code=404
+        )
+
+    try:
+        await _get_lg_client().threads.update_state(thread_id, values={"entity_cards": kept})
+    except Exception as e:
+        return JSONResponse({"error": f"update_state failed: {e}"}, status_code=502)
+    return JSONResponse({"ok": True, "deleted": {"name": name, "type": card_type}, "remaining": len(kept)})
+
+
 # ── 应用组装 ─────────────────────────────────────────────────────────────────────
 # 前端直连 langgraph dev（跨域），写接口（PUT）会触发预检，故挂 CORS 中间件放行。
 routes = [
@@ -889,6 +929,7 @@ routes = [
     # 次要角色「提升为重要角色」：LLM 聚焦生成深层设计草稿 → 人工审改 → 落库
     Route("/character/promote/draft", post_character_promote_draft, methods=["POST"]),
     Route("/character/promote/apply", post_character_promote_apply, methods=["POST"]),
+    Route("/entity/delete", post_entity_card_delete, methods=["POST"]),
     # 不挂 html 索引：仅按文件名访问，避免暴露所有小说的文件清单
     Mount("/output", StaticFiles(directory=_output_dir), name="output"),
 ]

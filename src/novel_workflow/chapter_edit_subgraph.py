@@ -22,6 +22,7 @@ from langgraph.graph import END, StateGraph
 from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
+from noval_workflow.entity_select_subgraph import EntityDiscoverSubState, entity_select_step
 from noval_workflow.foreshadow_prune_subgraph import ForeshadowSubState, foreshadow_prune_step
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
@@ -171,7 +172,8 @@ _PHASE_STEP = make_edit_step_subgraph(
 )
 
 # 章末实体发现 + 动态更新：读本章正文补新卡 + 更新已有卡装备状态/人物动机。
-# 默认 state_cls=EditStepSubState（已含 entity_cards 桥接字段，可读入 + 写回）。
+# 审核通过后挂「入库筛选」后处理，让人工勾选真正入库的项，剔除一次性碎屑；
+# state_cls 配套设成含 entity_select_selected 字段的子类，否则勾选结果被 langgraph 丢弃。
 _ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
     entry_prompt="是否发现本章新实体 / 更新实体卡库（装备状态、人物动机）？" + _ENTRY_HINT,
     prepare_fn=_prepare_entity_discover,
@@ -180,6 +182,8 @@ _ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
     direction_type=InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
+    post_review_subgraph=entity_select_step,
+    state_cls=EntityDiscoverSubState,
 )
 
 

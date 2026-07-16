@@ -64,6 +64,8 @@ export const InterruptType = {
   // 伏笔台账精简流程
   FORESHADOW_PRUNE_ASK: "foreshadow_prune_ask",
   FORESHADOW_PRUNE_CONFIRM: "foreshadow_prune_confirm",
+  // 章末实体发现·入库筛选（产出时勾选哪些 new_cards/updates 真正入库）
+  ENTITY_SELECT_CONFIRM: "entity_select_confirm",
 } as const;
 
 export type InterruptTypeValue = (typeof InterruptType)[keyof typeof InterruptType];
@@ -241,6 +243,27 @@ export interface ForeshadowPruneConfirmPayload {
   collected_count: number; // 当前已收伏笔总数
 }
 
+/**
+ * 章末实体发现·入库筛选 payload。
+ * 展示本章 LLM 发现的 new_cards（新建卡）与 updates（已有卡动态更新），
+ * 让用户勾选真正入库的项，剔除一次性碎屑。resume 值 = 选中 key 的 JSON 数组。
+ */
+export interface EntitySelectConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  new_cards: Array<{
+    key: string; // 稳定 key，如 "new:圣焰皇家骑士团"
+    name: string;
+    type: string; // 人物/物品/装备/势力/地点
+    summary: string;
+  }>;
+  updates: Array<{
+    key: string; // 稳定 key，如 "update:陆默"
+    name: string;
+    changes: Record<string, string>; // 本条改动的动态字段 → 新值
+  }>;
+}
+
 // ── type → 表单种类 分发 ───────────────────────────────────────────────────────
 
 export type FormKind =
@@ -259,6 +282,7 @@ export type FormKind =
   | "arc_titles_confirm"
   | "foreshadowing_review"
   | "foreshadow_prune_confirm"
+  | "entity_select_confirm"
   | "consistency_gate"
   | "consistency_diff"
   | "volume_boundary_gate"
@@ -316,6 +340,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.CONSISTENCY_DIFF]: "consistency_diff",
   [InterruptType.FORESHADOW_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
   [InterruptType.FORESHADOW_PRUNE_CONFIRM]: "foreshadow_prune_confirm", // 专用确认表单
+  [InterruptType.ENTITY_SELECT_CONFIRM]: "entity_select_confirm", // 入库筛选专用勾选表单
   // 分卷边界闸门：专用 3 选 1 表单（继续本卷 / 收卷 / 延长 target_max）
   [InterruptType.VOLUME_BOUNDARY_GATE]: "volume_boundary_gate",
 };
@@ -352,6 +377,28 @@ const DIRECTION_TITLE: Record<string, string> = {
 /** 按 direction payload.type 查标题，未知 type 回退「调整方向」 */
 export function directionTitleOf(type: unknown): string {
   return (typeof type === "string" && DIRECTION_TITLE[type]) || "调整方向";
+}
+
+/**
+ * 各 entry_gate 类型 → EntryGateForm 标题（由 payload.type 派生，贯彻 type 自描述）。
+ * make_edit_step_subgraph 产出的 *_entry_gate 全共用同一张 EntryGateForm，标题不派生就一律
+ * 显示默认「步骤确认」，用户分不清是哪一步的执行/跳过闸门。未登记的回退到通用「步骤确认」。
+ * 新增 *_ENTRY_GATE 时在此登记即可，无需改组件。
+ */
+const ENTRY_GATE_TITLE: Record<string, string> = {
+  [InterruptType.ARC_ENTRY_GATE]: "弧线大纲 · 是否执行",
+  [InterruptType.FORESHADOWING_ENTRY_GATE]: "伏笔台账快照 · 是否执行",
+  [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "阶段固化数据 · 是否执行",
+  [InterruptType.SCENE_BEATS_ENTRY_GATE]: "Scene beats 节拍表 · 是否执行",
+  [InterruptType.ENTITY_CARDS_ENTRY_GATE]: "章前登场实体卡 · 是否执行",
+  [InterruptType.ENTITY_DISCOVER_ENTRY_GATE]: "章末实体发现 / 更新 · 是否执行",
+  // 伏笔精简复用 entry_gate 形式（是/否），单独给标题
+  [InterruptType.FORESHADOW_PRUNE_ASK]: "伏笔台账精简 · 是否执行",
+};
+
+/** 按 entry_gate payload.type 查标题，未知 type 回退「步骤确认」 */
+export function entryGateTitleOf(type: unknown): string {
+  return (typeof type === "string" && ENTRY_GATE_TITLE[type]) || "步骤确认";
 }
 
 // ── resume 值构造辅助 ─────────────────────────────────────────────────────────
