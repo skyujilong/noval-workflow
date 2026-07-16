@@ -14,7 +14,7 @@ def _clean_title(line: str) -> str:
 def chapter_edit_done(state) -> dict:
     """Pass-through sentinel node signalling end of chapter editing.
 
-    Returns empty lists so the parent graph's operator.add reducers
-    do not append any spurious values.
+    父图已改覆盖语义（无 reducer），子图回写同值覆盖无害——
+    这里绝不能再返回空列表，否则会把父图的累积列表清空。
     """
-    return {"all_chapter_titles": [], "all_chapter_summaries": []}
+    return {}

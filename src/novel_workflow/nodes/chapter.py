@@ -201,12 +201,11 @@ def generate_summary(state: NovelState) -> dict:
         except OSError as e:
             _logger.error("Failed to write summary file %s: %s", filename, e)
 
-    # Append the chapter title to all_chapter_titles (one per chapter, so mid-batch
-    # title edits are reflected). Also append the summary (even if empty) to keep
-    # all_chapter_summaries index aligned with all_chapter_titles (index N-1 == chapter N).
+    # 覆盖语义：返回「历史 + 本章」的完整新列表（父图无 reducer，见 NovelState 注释——
+    # 追加语义会被子图镜像字段回写放大爆炸）。摘要即使为空也占位，保持与标题索引对齐。
     return {
-        "all_chapter_titles": [title],
-        "all_chapter_summaries": [summary],
+        "all_chapter_titles": state.all_chapter_titles + [title],
+        "all_chapter_summaries": state.all_chapter_summaries + [summary],
     }
 
 

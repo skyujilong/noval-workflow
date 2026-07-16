@@ -1,8 +1,6 @@
 import logging
-import operator
 from dataclasses import dataclass, field, fields
 from enum import Enum
-from typing import Annotated
 
 _logger = logging.getLogger(__name__)
 
@@ -339,11 +337,13 @@ class NovelState:
     current_batch_titles: list[str] = field(default_factory=list)
     # 当前批次的章节标题列表（每批 BATCH_SIZE 个，每批开始时重置）
 
-    # LangGraph >= 1.2 对 dataclass 支持 Annotated reducer；operator.add 实现追加语义
-    all_chapter_titles: Annotated[list[str], operator.add] = field(default_factory=list)
+    # 覆盖语义：generate_summary 每章返回完整新 list（历史 + 本章）。切勿加 operator.add——
+    # 子图（scene_beats/entity_cards/chapter_edit 等）结束时会把镜像字段原样回写父图，
+    # 追加语义会把整份列表重复 append，导致列表每章翻倍爆炸。
+    all_chapter_titles: list[str] = field(default_factory=list)
     # 全书已生成的所有章节标题（跨批次累积，索引 i 对应第 i+1 章）
 
-    all_chapter_summaries: Annotated[list[str], operator.add] = field(default_factory=list)
+    all_chapter_summaries: list[str] = field(default_factory=list)
     # 全书已生成的所有章节摘要（与 all_chapter_titles 索引对齐，缺失章节存空字符串）
 
     current_chapter_index: int = 0  # 当前批次内的写作进度（0 = 第 1 章未写；每批开始时重置为 0）
