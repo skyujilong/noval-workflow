@@ -253,12 +253,14 @@ export function useRun(threadId: string): UseRunResult {
     [runGuarded, threadId, onEvent]
   );
 
-  // 「继续执行」：无 interrupt + next 非空的 pending 场景。等价于新 run 无 resume（input:{}），
-  // langgraph 会从 checkpoint 的 next 节点继续跑，不会重复执行已完成节点。
+  // 「继续执行」：无 interrupt + next 非空的 pending 场景。必须传 input:null（不是 {}）——
+  // langgraph 只把 null input 当「继续 pending」，从 checkpoint 的 next 节点接着跑；
+  // 传非 null 的 {} 会被当成新输入、从 __start__ 重跑整图（曾把已写到第7章的 thread
+  // 一路冲回 brainstorm_chat）。参照 replayFromCheckpoint 同样用 input:null。
   const continueRun = useCallback(
     () =>
       runGuarded(
-        (signal) => runStream(threadId, onEvent, { input: {}, signal }),
+        (signal) => runStream(threadId, onEvent, { input: null, signal }),
         "继续执行失败"
       ),
     [runGuarded, threadId, onEvent]
