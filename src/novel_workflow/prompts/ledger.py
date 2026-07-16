@@ -133,6 +133,38 @@ JSON 结构如下：
 请只输出 JSON 字符串，不要有任何其他内容。"""
 
 
+# 阶段固化数据不固化的角色定位——「次要角色/龙套」不进本台账，避免挤爆 500 字上限。
+# 用字符串常量而非 import CharacterRole，避免 prompts 层反向依赖 state 层枚举。
+_PHASE_EXCLUDED_ROLE = "次要角色"
+
+
+def _format_phase_roster(cards: list) -> str:
+    """从 entity_cards 筛出「需固化的角色名册」——人物卡中剔除「次要角色」，渲染成「- 名字〔role〕」。
+
+    只固化主角与各类重要角色（主要配角/功能性反派/根源反派/感情线角色）；次要角色/龙套不入本台账。
+    兼容 CharacterCard 实例与 checkpoint roundtrip 后的 dict；role/type 可能是 str-enum，取 .value 归一。
+    返回空串 = 无可固化角色（老工程/早期章节还没建卡），调用方据此回退到「LLM 自行判定」的原行为。
+    """
+    if not cards:
+        return ""
+    lines: list[str] = []
+    for card in cards:
+        get = (lambda k: card.get(k, "")) if isinstance(card, dict) else (lambda k: getattr(card, k, ""))
+        etype = get("type")
+        etype = etype.value if hasattr(etype, "value") else etype
+        if etype != "人物":
+            continue
+        role = get("role")
+        role = role.value if hasattr(role, "value") else role
+        if role == _PHASE_EXCLUDED_ROLE:
+            continue
+        name = get("name")
+        if not name:
+            continue
+        lines.append(f"- {name}〔{role}〕" if role else f"- {name}")
+    return "\n".join(lines)
+
+
 def phase_summary_prompt(state: _PromptState, chapter_context: str = "") -> str:
     """Build the prompt for updating phase-frozen hard data."""
     prev = ""
@@ -143,16 +175,28 @@ def phase_summary_prompt(state: _PromptState, chapter_context: str = "") -> str:
     if chapter_context:
         chapter_section = f"\n\n【近期章节内容（请据此更新硬性数据）】\n{chapter_context}"
 
-    carry_over = "\n- 完整保留上次快照中所有条目，本批无变化者直接沿用原文；有变化者标注【变化】" if prev else ""
-    return f"""请根据已完成的章节内容，更新【阶段固化数据】。{prev}{chapter_section}
+    # 代码层圈定固化范围：只喂主角 + 重要角色名册，次要角色已剔除；名单外角色一律不建分块。
+    # 名册为空（还没建卡）时不加约束，回退到「LLM 自行判定关键角色」的旧行为。
+    roster = _format_phase_roster(getattr(state, "entity_cards", []) or [])
+    roster_section = ""
+    roster_rule = ""
+    if roster:
+        roster_section = f"\n\n【固化角色名单（只固化这些角色，勿自行增删）】\n{roster}"
+        roster_rule = (
+            "\n- **只固化上方【固化角色名单】中列出的角色**，名单外的角色（次要角色 / 龙套 / "
+            "一次性配角）一律不建分块；名单内角色即使本批无戏份也须保留上次条目"
+        )
 
-要求：{carry_over}
+    carry_over = "\n- 完整保留上次快照中所有条目，本批无变化者直接沿用原文；有变化者标注【变化】" if prev else ""
+    return f"""请根据已完成的章节内容，更新【阶段固化数据】。{prev}{roster_section}{chapter_section}
+
+要求：{roster_rule}{carry_over}
 - 严格按照以下固定格式输出，每条不超过30字，全部合计不超过500字
 - 本批新增或变化的条目末尾标注【变化】
 - 【核心能力】不得超出【人物档案】为该角色设定的本卷成长天花板；越界视为战力崩坏，须回退到设定上限
 - **装备/物品不在此登记**：已迁移到【登场实体卡】统一维护，本处只管人物的状态/能力/资源/承诺/限制
 
-**固定输出格式（每位关键角色一组，按角色分块）**
+**固定输出格式（名单内每位角色一组，按角色分块）**
 
 角色：XXX
 【当前状态/定位】（当前实力层级、身份或队伍中的角色定位，≤20字）
