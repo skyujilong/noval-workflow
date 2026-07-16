@@ -15,6 +15,7 @@ repair_and_parse(kind=dict) 解析 → _save_entity_cards 逐条造 EntityCard�
 
 from __future__ import annotations
 
+import json
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -545,6 +546,39 @@ def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> 
     return "\n".join(blocks)
 
 
+def format_cards_digest_for_prune(cards: list) -> str:
+    """把整个卡库压成「精简分析」用的紧凑 JSON——每卡只留判定「是否可删」所需字段。
+
+    精简针对全类型（人物/物品/装备/势力/地点），故不复用只渲染人物的
+    format_character_profiles_from_cards；这里给 LLM 一份可按 name 精确定位的清单，
+    LLM 回填的 to_delete[].name 必须与此处 name 完全一致，apply 才能按名删卡。
+    """
+    if not cards:
+        return "[]"
+    items: list[dict] = []
+    for card in cards:
+        get = (lambda k: card.get(k, "")) if isinstance(card, dict) else (lambda k: getattr(card, k, ""))
+        name = _text(get("name"))
+        if not name:
+            continue
+        item: dict = {"name": name, "type": _text(get("type"))}
+        # role/summary/current_state/首登章：有则带上，帮 LLM 判定重要度与是否已彻底离场
+        role = _text(get("role"))
+        if role:
+            item["role"] = role
+        summary = _text(get("summary"))
+        if summary:
+            item["summary"] = summary
+        cur = _text(get("current_state"))
+        if cur:
+            item["current_state"] = cur
+        ch = get("first_appear_chapter")
+        if ch:
+            item["first_appear_chapter"] = ch
+        items.append(item)
+    return json.dumps(items, ensure_ascii=False, indent=2)
+
+
 # Phase-1 结构化卡司审核 prompt（取代原 bible 的 CHARACTER_PROFILES_REVIEW_PROMPT）。
 # 静态常量，不含题材 flavor——卡司配额/双层人设/落体系/深层设计的合规检查与题材无关。
 CHARACTER_CARDS_REVIEW_PROMPT = """请审核以下 Phase-1「全套核心人物卡（结构化 JSON）」草稿。这是全书卡司的一次性建卡，标准从严。
@@ -696,6 +730,7 @@ __all__ = [
     "entity_cards_prompt",
     "entity_discover_prompt",
     "format_cards_for_chapter_prompt",
+    "format_cards_digest_for_prune",
     "format_character_profiles_from_cards",
     "format_equipment_for_context",
     "normalize_entity_name",

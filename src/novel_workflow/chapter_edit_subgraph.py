@@ -2,7 +2,10 @@
 
 Topology (zero conditional branches at this level):
   arc_step → foreshadow_step → phase_step → entity_discover_step
-  → chapter_edit_done → END
+  → entity_cards_prune_step → chapter_edit_done → END
+
+entity_cards_prune_step 在本章新卡/更新全部入库后，对累积卡库做一次 LLM 分析 + 人工勾选精简
+（整卡删除），抑制人物档案/装备清单膨胀；与伏笔精简同构。
 
 人物动态（处境/动机/关系）已并入 CharacterCard，由 entity_discover_step 单腿覆盖更新——
 原 status_step / relations_step 两条散文快照腿已删。
@@ -22,6 +25,7 @@ from langgraph.graph import END, StateGraph
 from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
+from noval_workflow.entity_cards_prune_subgraph import entity_cards_prune_step
 from noval_workflow.entity_select_subgraph import EntityDiscoverSubState, entity_select_step
 from noval_workflow.foreshadow_prune_subgraph import ForeshadowSubState, foreshadow_prune_step
 from noval_workflow.interrupt_types import InterruptType
@@ -195,6 +199,7 @@ _builder.add_node("arc_step", _ARC_STEP)
 _builder.add_node("foreshadow_step", _FORESHADOW_STEP)
 _builder.add_node("phase_step", _PHASE_STEP)
 _builder.add_node("entity_discover_step", _ENTITY_DISCOVER_STEP)
+_builder.add_node("entity_cards_prune_step", entity_cards_prune_step)
 _builder.add_node("chapter_edit_done", chapter_edit_done)
 
 _builder.set_entry_point("arc_step")
@@ -202,7 +207,9 @@ _builder.set_entry_point("arc_step")
 _builder.add_edge("arc_step", "foreshadow_step")
 _builder.add_edge("foreshadow_step", "phase_step")
 _builder.add_edge("phase_step", "entity_discover_step")
-_builder.add_edge("entity_discover_step", "chapter_edit_done")
+# 本章卡库更新全部入库后，再对累积卡库做一次精简（LLM 分析 + 人工勾选整卡删除）
+_builder.add_edge("entity_discover_step", "entity_cards_prune_step")
+_builder.add_edge("entity_cards_prune_step", "chapter_edit_done")
 _builder.add_edge("chapter_edit_done", END)
 
 chapter_edit_subgraph = _builder.compile()

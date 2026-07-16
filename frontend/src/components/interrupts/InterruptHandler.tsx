@@ -17,6 +17,7 @@ import { EntryGateForm } from "./EntryGateForm";
 import { ForeshadowingReviewForm } from "./ForeshadowingReviewForm";
 import { ForeshadowPruneConfirmForm } from "./ForeshadowPruneConfirmForm";
 import { EntitySelectConfirmForm } from "./EntitySelectConfirmForm";
+import { EntityCardsPruneConfirmForm } from "./EntityCardsPruneConfirmForm";
 import { HumanReviewForm } from "./HumanReviewForm";
 import { UserInputsForm } from "./UserInputsForm";
 import { VolumeBoundaryGateForm } from "./VolumeBoundaryGateForm";
@@ -194,6 +195,16 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
         <EntitySelectConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof EntitySelectConfirmForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+        />
+      );
+
+    case "entity_cards_prune_confirm":
+      return (
+        <EntityCardsPruneConfirmForm
+          key={formKey}
+          payload={payload as Parameters<typeof EntityCardsPruneConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
         />

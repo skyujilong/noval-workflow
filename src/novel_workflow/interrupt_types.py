@@ -95,6 +95,12 @@ class InterruptType(str, Enum):
     ENTITY_SELECT_CONFIRM = "entity_select_confirm"  # 勾选确认入库项
 
     # ============================================================
+    # 章末实体卡库精简（LLM 分析整个卡库，人工勾选整卡删除，抑制人物档案膨胀）
+    # ============================================================
+    ENTITY_CARDS_PRUNE_ASK = "entity_cards_prune_ask"  # 询问是否精简卡库
+    ENTITY_CARDS_PRUNE_CONFIRM = "entity_cards_prune_confirm"  # 展示全库 + 预选建议删除，人工勾选
+
+    # ============================================================
     # 分卷（Volume）相关中断
     # ============================================================
     # 分卷边界穿越闸门：chapter_plan 前瞻窗口若穿越某卷 target_min/target_max 时，

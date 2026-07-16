@@ -66,6 +66,9 @@ export const InterruptType = {
   FORESHADOW_PRUNE_CONFIRM: "foreshadow_prune_confirm",
   // 章末实体发现·入库筛选（产出时勾选哪些 new_cards/updates 真正入库）
   ENTITY_SELECT_CONFIRM: "entity_select_confirm",
+  // 章末实体卡库精简（LLM 分析整库，人工勾选整卡删除；ASK 复用 entry_gate 是/否）
+  ENTITY_CARDS_PRUNE_ASK: "entity_cards_prune_ask",
+  ENTITY_CARDS_PRUNE_CONFIRM: "entity_cards_prune_confirm",
 } as const;
 
 export type InterruptTypeValue = (typeof InterruptType)[keyof typeof InterruptType];
@@ -264,6 +267,30 @@ export interface EntitySelectConfirmPayload {
   }>;
 }
 
+/**
+ * 章末实体卡库精简确认 payload。
+ * 展示**全部**卡（不只 AI 建议删的），suggested=true 的默认预选、附 reason；
+ * 用户可自行增减后提交。resume 值 = 选中删除的实体名 JSON 数组，如 ["张三","遣散费"]，
+ * 空数组表示不删除任何卡。定位主键是实体 name（卡库以 name 归一去重）。
+ */
+export interface EntityCardsPruneConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  cards: Array<{
+    name: string;
+    type: string; // 人物/物品/装备/势力/地点
+    role: string; // 人物卡的角色定位，非人物为空
+    summary: string;
+    current_state: string;
+    first_appear_chapter: number | null;
+    suggested: boolean; // AI 是否建议删除（用于默认预选）
+    reason: string; // AI 建议删除的理由（suggested=true 时非空）
+  }>;
+  suggestion: string; // 整体精简说明
+  suggested_count: number; // AI 建议删除张数
+  total_count: number; // 卡库总张数
+}
+
 // ── type → 表单种类 分发 ───────────────────────────────────────────────────────
 
 export type FormKind =
@@ -283,6 +310,7 @@ export type FormKind =
   | "foreshadowing_review"
   | "foreshadow_prune_confirm"
   | "entity_select_confirm"
+  | "entity_cards_prune_confirm"
   | "consistency_gate"
   | "consistency_diff"
   | "volume_boundary_gate"
@@ -341,6 +369,8 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.FORESHADOW_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
   [InterruptType.FORESHADOW_PRUNE_CONFIRM]: "foreshadow_prune_confirm", // 专用确认表单
   [InterruptType.ENTITY_SELECT_CONFIRM]: "entity_select_confirm", // 入库筛选专用勾选表单
+  [InterruptType.ENTITY_CARDS_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
+  [InterruptType.ENTITY_CARDS_PRUNE_CONFIRM]: "entity_cards_prune_confirm", // 卡库精简专用勾选表单
   // 分卷边界闸门：专用 3 选 1 表单（继续本卷 / 收卷 / 延长 target_max）
   [InterruptType.VOLUME_BOUNDARY_GATE]: "volume_boundary_gate",
 };
@@ -394,6 +424,7 @@ const ENTRY_GATE_TITLE: Record<string, string> = {
   [InterruptType.ENTITY_DISCOVER_ENTRY_GATE]: "章末实体发现 / 更新 · 是否执行",
   // 伏笔精简复用 entry_gate 形式（是/否），单独给标题
   [InterruptType.FORESHADOW_PRUNE_ASK]: "伏笔台账精简 · 是否执行",
+  [InterruptType.ENTITY_CARDS_PRUNE_ASK]: "实体卡库精简 · 是否执行",
 };
 
 /** 按 entry_gate payload.type 查标题，未知 type 回退「步骤确认」 */
