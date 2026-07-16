@@ -4,7 +4,9 @@
 // 补卡/更新，人工手改易被下一章覆盖，故只做「状态观测窗口」。按 type 分组（人物/装备/物品/
 // 势力/地点），装备/物品是本作真源（phase_summary 已不再存装备）。
 
+import { useState } from "react";
 import type { EntityCard } from "../../lib/types";
+import { EntityCardEditForm } from "./EntityCardEditForm";
 
 interface Props {
   cards: EntityCard[];
@@ -12,6 +14,9 @@ interface Props {
   onPromote?: (card: EntityCard) => void;
   /** 提供时，在每张卡上渲染「删除」入口，供人工剔除噪音卡（仅「当前状态」视图传）。 */
   onDelete?: (card: EntityCard) => void;
+  /** 提供时，在每张卡上渲染「编辑」入口——点开就地展开结构化字段表单，保存回写整卡
+   * （仅 entity_cards JSON 编辑器预览传；readonly 展示不传）。updated 为编辑后的整卡。 */
+  onEdit?: (card: EntityCard, updated: EntityCard) => void;
 }
 
 // type → 分组展示顺序 + 徽标样式。未知 type 兜底到「其他」组。
@@ -39,10 +44,18 @@ function Card({
   card,
   onPromote,
   onDelete,
+  onEditStart,
+  editing,
+  onEditSave,
+  onEditCancel,
 }: {
   card: EntityCard;
   onPromote?: (card: EntityCard) => void;
   onDelete?: (card: EntityCard) => void;
+  onEditStart?: () => void;
+  editing?: boolean;
+  onEditSave?: (updated: EntityCard) => void;
+  onEditCancel?: () => void;
 }) {
   const isPerson = card.type === "人物";
   const isItem = card.type === "装备" || card.type === "物品";
@@ -51,8 +64,17 @@ function Card({
   // 次要角色 + 父层给了 onPromote → 可提升为重要角色
   const canPromote = isPerson && card.role === "次要角色" && !!onPromote;
   const canDelete = !!onDelete;
-  // 提升/删除任一存在 → 徽标不再靠 ml-auto 顶到最右（交给按钮组占位）
-  const hasActions = canPromote || canDelete;
+  const canEdit = !!onEditStart;
+  // 任一动作存在 → 徽标不再靠 ml-auto 顶到最右（交给按钮组占位）
+  const hasActions = canPromote || canDelete || canEdit;
+
+  // 编辑态：整卡让位给结构化字段表单（表单自带 name/type 等主键字段）
+  if (editing) {
+    return (
+      <EntityCardEditForm card={card} onSave={onEditSave!} onCancel={onEditCancel!} />
+    );
+  }
+
   return (
     <div className="space-y-1 rounded-md border border-gray-200 bg-gray-50/70 p-2">
       <div className="flex items-center gap-2">
@@ -64,25 +86,39 @@ function Card({
           </span>
         ) : null}
         <span className="text-[10px] text-gray-400">{aliases}</span>
-        {canPromote ? (
-          <button
-            type="button"
-            onClick={() => onPromote!(card)}
-            className="ml-auto rounded border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-indigo-600 hover:bg-indigo-50"
-            title="补齐深层设计，提升为重要角色"
-          >
-            提升
-          </button>
-        ) : null}
-        {canDelete ? (
-          <button
-            type="button"
-            onClick={() => onDelete!(card)}
-            className={`${canPromote ? "" : "ml-auto "}rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-rose-600 hover:bg-rose-50`}
-            title="从卡库删除这张卡（用于剔除一次性碎屑/误建的噪音卡）"
-          >
-            删除
-          </button>
+        {hasActions ? (
+          <span className="ml-auto flex items-center gap-1">
+            {canEdit ? (
+              <button
+                type="button"
+                onClick={onEditStart}
+                className="rounded border border-blue-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-blue-600 hover:bg-blue-50"
+                title="就地编辑这张卡的字段"
+              >
+                编辑
+              </button>
+            ) : null}
+            {canPromote ? (
+              <button
+                type="button"
+                onClick={() => onPromote!(card)}
+                className="rounded border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-indigo-600 hover:bg-indigo-50"
+                title="补齐深层设计，提升为重要角色"
+              >
+                提升
+              </button>
+            ) : null}
+            {canDelete ? (
+              <button
+                type="button"
+                onClick={() => onDelete!(card)}
+                className="rounded border border-rose-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-rose-600 hover:bg-rose-50"
+                title="从卡库删除这张卡（用于剔除一次性碎屑/误建的噪音卡）"
+              >
+                删除
+              </button>
+            ) : null}
+          </span>
         ) : null}
         <span className={`${hasActions ? "" : "ml-auto "}rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
           {card.type || "未分类"}
@@ -121,7 +157,10 @@ function Card({
   );
 }
 
-export function EntityCardsReadonly({ cards, onPromote, onDelete }: Props) {
+export function EntityCardsReadonly({ cards, onPromote, onDelete, onEdit }: Props) {
+  // 正在编辑的卡按 name 记录（name 是主键、稳定）——重解析预览会换对象引用，用 name 才不丢编辑态。
+  const [editingName, setEditingName] = useState<string | null>(null);
+
   if (!cards || cards.length === 0) {
     return (
       <div className="rounded border border-dashed border-gray-200 py-3 text-center text-[11px] text-gray-400">
@@ -156,7 +195,19 @@ export function EntityCardsReadonly({ cards, onPromote, onDelete }: Props) {
             </div>
             <div className="space-y-2">
               {g.items.map((c, i) => (
-                <Card key={`${g.label}-${c.name}-${i}`} card={c} onPromote={onPromote} onDelete={onDelete} />
+                <Card
+                  key={`${g.label}-${c.name}-${i}`}
+                  card={c}
+                  onPromote={onPromote}
+                  onDelete={onDelete}
+                  onEditStart={onEdit ? () => setEditingName(c.name) : undefined}
+                  editing={!!onEdit && editingName === c.name}
+                  onEditSave={(updated) => {
+                    onEdit?.(c, updated);
+                    setEditingName(null);
+                  }}
+                  onEditCancel={() => setEditingName(null)}
+                />
               ))}
             </div>
           </div>

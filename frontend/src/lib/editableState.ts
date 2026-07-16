@@ -192,7 +192,19 @@ export function ledgerDraftEqual(a: LedgerDraft, b: LedgerDraft): boolean {
 // 章末 _apply_updates 只改 status/owner/motivation——手改的核心字段不会被后续章节冲掉。
 
 /** 合法 type 枚举，与 prompts/entity_cards.py::ENTITY_TYPES / state.EntityCard.type 同步。 */
-const ENTITY_CARD_TYPES = ["人物", "物品", "装备", "势力", "地点"];
+export const ENTITY_CARD_TYPES = ["人物", "物品", "装备", "势力", "地点"];
+
+/** 人物 role 六枚举，与后端 state.CharacterRole 同步（供实体卡编辑表单的 role 下拉）。
+ * 注意：这与 langgraph.PROMOTABLE_ROLES（4 值，次要角色→重要角色的可提升目标）不同——
+ * 这里是「手改任意人物卡 role」的全集，含主角/次要角色。 */
+export const CHARACTER_ROLES = [
+  "主角",
+  "主要配角",
+  "功能性反派",
+  "根源反派",
+  "感情线角色",
+  "次要角色",
+] as const;
 
 /** EntityCard 里的字符串型可选字段（校验时逐一核对类型）。与后端判别联合字段并集对齐。 */
 const ENTITY_CARD_STRING_FIELDS = [

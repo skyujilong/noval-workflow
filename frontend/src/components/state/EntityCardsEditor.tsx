@@ -10,6 +10,7 @@
 
 import { Textarea } from "@/components/ui/textarea";
 import { parseEntityCardsJson } from "../../lib/editableState";
+import type { EntityCard } from "../../lib/types";
 import { EntityCardsReadonly } from "./EntityCardsReadonly";
 
 interface Props {
@@ -25,6 +26,15 @@ interface Props {
 export function EntityCardsEditor({ value, error, disabled, onChange }: Props) {
   // 解析成功时用结构化面板预览「保存后长什么样」；失败时预览区让位给错误提示。
   const parsed = parseEntityCardsJson(value);
+  const cards = parsed.value ?? [];
+
+  // 预览卡的结构化「编辑 / 删除」——直接在解析出的数组上增删改再回写 JSON 源码框（受控 value）。
+  // card 引用来自本次 render 的 parsed.value，事件闭包内与 cards 同源，故用引用等值定位这张卡。
+  // 只在可编辑（未 disabled）时挂回调；disabled（run 进行中）预览退化为只读。
+  const serialize = (next: EntityCard[]) => JSON.stringify(next, null, 2);
+  const handleDelete = (card: EntityCard) => onChange(serialize(cards.filter((c) => c !== card)));
+  const handleEdit = (card: EntityCard, updated: EntityCard) =>
+    onChange(serialize(cards.map((c) => (c === card ? updated : c))));
 
   return (
     <div className="space-y-2">
@@ -43,8 +53,14 @@ export function EntityCardsEditor({ value, error, disabled, onChange }: Props) {
         </div>
       ) : (
         <div className="rounded border border-gray-100 bg-white p-2">
-          <div className="mb-1 text-[10px] text-gray-400">保存后预览（结构化）</div>
-          <EntityCardsReadonly cards={parsed.value ?? []} />
+          <div className="mb-1 text-[10px] text-gray-400">
+            保存后预览（结构化）· 每张卡可就地编辑 / 删除，改动即回写上方 JSON
+          </div>
+          <EntityCardsReadonly
+            cards={cards}
+            onEdit={disabled ? undefined : handleEdit}
+            onDelete={disabled ? undefined : handleDelete}
+          />
         </div>
       )}
     </div>
