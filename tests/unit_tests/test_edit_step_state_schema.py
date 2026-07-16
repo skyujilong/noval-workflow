@@ -56,7 +56,6 @@ def test_prepare_fn_receives_full_subclass_state(monkeypatch):
         direction_type=InterruptType.ENTITY_CARDS_DIRECTION_INPUT,
         enable_llm_review=False,  # 免去自审，直达 human_review interrupt
         ask_direction=False,
-        enable_prune=False,
         state_cls=_ProbeSubState,
     )
     # 工厂返回的已编译子图不带 checkpointer；interrupt/resume 需要，重新挂一份。

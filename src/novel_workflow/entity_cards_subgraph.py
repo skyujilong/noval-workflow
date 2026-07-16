@@ -54,6 +54,5 @@ entity_cards_step = make_edit_step_subgraph(
     enable_llm_review=True,
     llm_review_max=3,
     ask_direction=False,  # 首版不做方向输入，与 scene_beats 一致
-    enable_prune=False,
     state_cls=EntityCardsSubState,  # 必须传：save_fn 写 entity_cards/current_chapter_cast/cast_chapter_index，需在 schema 里
 )

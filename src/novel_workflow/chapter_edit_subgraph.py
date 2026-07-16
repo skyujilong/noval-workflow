@@ -22,6 +22,7 @@ from langgraph.graph import END, StateGraph
 from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
+from noval_workflow.foreshadow_prune_subgraph import ForeshadowSubState, foreshadow_prune_step
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
@@ -153,7 +154,10 @@ _FORESHADOW_STEP = make_edit_step_subgraph(
     direction_type=InterruptType.FORESHADOWING_DIRECTION_INPUT,
     enable_llm_review=True,
     llm_review_max=3,
-    enable_prune=True,
+    # 审核通过后挂伏笔精简后处理；state_cls 必须配套设成含 prune 字段的子类，
+    # 否则子图写的 foreshadow_prune_* 不在 schema 里、被 langgraph 丢弃。
+    post_review_subgraph=foreshadow_prune_step,
+    state_cls=ForeshadowSubState,
 )
 
 _PHASE_STEP = make_edit_step_subgraph(

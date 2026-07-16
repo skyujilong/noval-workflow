@@ -48,6 +48,5 @@ scene_beats_step = make_edit_step_subgraph(
     enable_llm_review=True,
     llm_review_max=3,
     ask_direction=False,  # 首版不做方向输入，用户反馈需要再加
-    enable_prune=False,
     state_cls=SceneBeatsSubState,  # 必须传：子图 save_fn 写 current_chapter_beats/beats_chapter_index，需在 schema 里
 )
