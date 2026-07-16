@@ -26,8 +26,30 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 _PKG_LOGGER = "noval_workflow"
+# LLM 调用组成落盘用的专用 logger：独立 jsonl 文件，一次调用一行结构化记录，
+# 便于后期用脚本统计「哪个环节多少 token、system context 各 section 占多少」。
+_LLM_CALLS_LOGGER = "noval_workflow.llm_calls"
 # 幂等：langgraph 可能多次 import 触发本模块，只配置一次，避免 handler 叠加导致每行重复 N 遍
 _configured = False
+
+
+def _setup_llm_calls_logger(log_dir: Path) -> None:
+    """给 LLM 调用画像配一个只写 jsonl 的独立 logger（不混进主 log、不打控制台）。
+
+    每行是一条完整 JSON（环节 label + 各 section 长度/预览 + token 用量 + 耗时），
+    formatter 只输出 message 本体，propagate=False 避免冒泡到包 logger 再打印一遍。
+    """
+    logger = logging.getLogger(_LLM_CALLS_LOGGER)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = RotatingFileHandler(
+        log_dir / "llm_calls.jsonl",
+        maxBytes=20 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
 
 
 def setup_logging() -> None:
@@ -65,5 +87,8 @@ def setup_logging() -> None:
     )
     file_handler.setFormatter(fmt)
     logger.addHandler(file_handler)
+
+    # LLM 调用画像单独落一个 jsonl，供后期分析输入 token 组成/精简空间
+    _setup_llm_calls_logger(log_dir)
 
     logger.info("日志已初始化：level=%s 落盘=%s", level_name, log_file.resolve())

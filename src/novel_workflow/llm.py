@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
 import sys
 import time
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 from langchain_openai import ChatOpenAI
+
+# 每个 section / user prompt 落盘时保留正文前 N 字，用于后期反推「这段到底喂了什么」、
+# 评估精简空间。用户只需前 10-20 字即可推断，不落全文避免日志膨胀 + 泄漏正文。
+_PREVIEW_LEN = 20
 
 # 顶层 section 白名单——必须与 novel_workflow.context.build_foundation_context /
 # build_chapter_context 里 parts.append 出现的【】标签保持一致。
@@ -35,20 +43,55 @@ _SYSTEM_CONTEXT_TOP_SECTIONS: frozenset[str] = frozenset({
 _TOP_SECTION_RE = re.compile(r"(?:^|\n)【([^】\n]+)】")
 
 
+@dataclass(frozen=True)
+class _Section:
+    """system context 里一个顶层【】段落的落盘画像：名字 + 字符数 + 正文预览。"""
+
+    name: str
+    chars: int
+    preview: str
+
+
+@dataclass
+class _PendingCall:
+    """一次 LLM 调用在 start 时先攒下的输入画像。
+
+    token 用量与耗时要等 on_llm_end/on_llm_error 才知道，届时与这里的输入画像合并、
+    整条落盘。以 run_id 为键缓存，支持并发调用各自计时、互不串味。
+    """
+
+    label: str
+    started_at: float
+    ts: str
+    system_chars: int
+    user_chars: int
+    total_chars: int
+    user_preview: str
+    sections: list[_Section]
+
+
+def _preview(text: str, n: int = _PREVIEW_LEN) -> str:
+    """取正文前 n 个非空白字符（换行/多空格折叠成单空格），保证 jsonl 单行不被撑破。"""
+    return " ".join(text.split())[:n]
+
+
 class _PerfLogHandler(BaseCallbackHandler):
-    """打印 LLM 调用的开始事件与耗时/token 性能日志。
+    """记录 LLM 调用的输入组成画像 + 耗时/token 性能日志。
 
     职责：
-    - on_chat_model_start：在 LLM 真正发起请求时立即输出一行，让用户知道「正在跑哪个节点」。
-    - on_llm_end：请求返回后输出耗时与 token 用量，便于定位慢调用。
-    - on_llm_error：请求失败时输出错误与已耗时，避免静默卡住。
+    - on_chat_model_start：在 LLM 真正发起请求时立即输出一行，让用户知道「正在跑哪个节点」，
+      同时把输入组成（各 section 长度/预览）缓存起来等 end 合并落盘。
+    - on_llm_end：请求返回后输出耗时与 token 用量，并把整次调用画像写一条 jsonl。
+    - on_llm_error：请求失败时输出错误与已耗时，同样落一条 jsonl（status=error）。
 
-    每次调用以 run_id 为键记录起始时间，支持并发场景下多个调用同时计时。
+    每次调用以 run_id 为键缓存起始画像，支持并发场景下多个调用同时计时。
     """
 
     def __init__(self, label: str) -> None:
         self._label = label
-        self._starts: dict[UUID, float] = {}
+        self._pending: dict[UUID, _PendingCall] = {}
+        # 专用 jsonl logger，由 logging_setup.setup_logging 配置好 handler
+        self._calls_logger = logging.getLogger("noval_workflow.llm_calls")
 
     def _log(self, msg: str) -> None:
         # 统一走 stderr，避免与正常产出内容混在 stdout 里；flush 保证实时可见
@@ -57,12 +100,12 @@ class _PerfLogHandler(BaseCallbackHandler):
     def on_chat_model_start(
         self, serialized: dict, messages: list, *, run_id: UUID, **kwargs: Any
     ) -> None:
-        self._starts[run_id] = time.monotonic()
         # 估算输入规模（字符数），帮助判断慢是否由超长上下文导致
         total_chars = 0
         system_chars = 0
         user_chars = 0
-        breakdown: list[str] = []
+        user_preview = ""
+        sections: list[_Section] = []
 
         for batch in messages:
             for m in batch:
@@ -74,23 +117,40 @@ class _PerfLogHandler(BaseCallbackHandler):
                 msg_type = getattr(m, "type", "unknown")
                 if msg_type == "system":
                     system_chars += chars
+                    # 只解析第一个 system message 的组成结构
+                    if not sections:
+                        sections = _parse_system_sections(content)
                 elif msg_type == "human":
                     user_chars += chars
+                    # 用首条 human 的开头预览标记「这是哪种任务」
+                    if not user_preview:
+                        user_preview = _preview(content)
 
-                # 解析 system context 的组成结构（只统计第一个 system message）
-                if msg_type == "system" and not breakdown:
-                    breakdown = _parse_system_sections(content)
+        self._pending[run_id] = _PendingCall(
+            label=self._label,
+            started_at=time.monotonic(),
+            ts=datetime.now().isoformat(timespec="seconds"),
+            system_chars=system_chars,
+            user_chars=user_chars,
+            total_chars=total_chars,
+            user_preview=user_preview,
+            sections=sections,
+        )
 
-        # 打印详细组成
+        # 打印详细组成（stderr 即时可见，保留原行为）
         self._log(f"→ 开始调用 [{self._label}]")
         self._log(f"  总计: {total_chars} 字符 (system: {system_chars}, user: {user_chars})")
-        if breakdown:
-            self._log(f"  System Context 组成: {', '.join(breakdown)}")
+        if sections:
+            summary = ", ".join(f"{s.name}: ~{s.chars}字" for s in sections)
+            self._log(f"  System Context 组成: {summary}")
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
-        elapsed = time.monotonic() - self._starts.pop(run_id, time.monotonic())
+        pending = self._pending.pop(run_id, None)
+        elapsed = time.monotonic() - (pending.started_at if pending else time.monotonic())
         usage = self._extract_usage(response)
         finish = self._extract_finish_reason(response)
+        self._write_record(pending, status="ok", elapsed=elapsed, usage=usage, finish=finish)
+
         parts = [f"耗时 {elapsed:.1f}s"]
         if usage:
             parts.append(f"入 {usage['in']} tok")
@@ -103,8 +163,41 @@ class _PerfLogHandler(BaseCallbackHandler):
     def on_llm_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
     ) -> None:
-        elapsed = time.monotonic() - self._starts.pop(run_id, time.monotonic())
+        pending = self._pending.pop(run_id, None)
+        elapsed = time.monotonic() - (pending.started_at if pending else time.monotonic())
+        self._write_record(
+            pending, status="error", elapsed=elapsed, usage=None, finish=None, error=repr(error)
+        )
         self._log(f"✗ 失败 [{self._label}]，已耗时 {elapsed:.1f}s：{error!r}")
+
+    def _write_record(
+        self,
+        pending: _PendingCall | None,
+        *,
+        status: str,
+        elapsed: float,
+        usage: dict[str, int] | None,
+        finish: str | None,
+        error: str | None = None,
+    ) -> None:
+        """把一次调用的完整画像写成一行 jsonl；缺 start 画像（理论不会）时跳过。"""
+        if pending is None:
+            return
+        record = {
+            "ts": pending.ts,
+            "label": pending.label,
+            "status": status,
+            "elapsed_s": round(elapsed, 1),
+            "system_chars": pending.system_chars,
+            "user_chars": pending.user_chars,
+            "total_chars": pending.total_chars,
+            "tokens": usage,
+            "finish_reason": finish,
+            "error": error,
+            "user_preview": pending.user_preview,
+            "sections": [asdict(s) for s in pending.sections],
+        }
+        self._calls_logger.info(json.dumps(record, ensure_ascii=False))
 
     @staticmethod
     def _extract_usage(response: LLMResult) -> dict[str, int] | None:
@@ -153,8 +246,8 @@ class _PerfLogHandler(BaseCallbackHandler):
         return None
 
 
-def _parse_system_sections(text: str) -> list[str]:
-    """从 system message 里按顶层【】section 拆出「名字: ~N 字」列表。
+def _parse_system_sections(text: str) -> list[_Section]:
+    """从 system message 里按顶层【】section 拆出结构化画像（名字 + 字符数 + 正文预览）。
 
     为什么要白名单：LLM 生成的力量体系正文里也带【输出天花板】【治疗核心】这类
     子标题，伏笔台账里更是每个条目都有【伏笔编号】/【伏笔名称】等一堆【】——若不
@@ -178,11 +271,15 @@ def _parse_system_sections(text: str) -> list[str]:
     if not candidates:
         return []
 
-    # section 长度 = 从当前起点到下一个白名单顶层 section 起点（末尾一段到 text 末尾）
-    sections: list[str] = []
+    # section 长度 = 从当前起点到下一个白名单顶层 section 起点（末尾一段到 text 末尾）；
+    # 预览取剥掉【名字】标签后的正文开头，方便后期反推这段实际喂了什么。
+    sections: list[_Section] = []
     for i, (start, name) in enumerate(candidates):
         end = candidates[i + 1][0] if i + 1 < len(candidates) else len(text)
-        sections.append(f"{name}: ~{end - start} 字")
+        seg = text[start:end]
+        tag_end = seg.find("】")
+        body = seg[tag_end + 1:] if tag_end != -1 else seg
+        sections.append(_Section(name=name, chars=end - start, preview=_preview(body)))
     return sections
 
 
