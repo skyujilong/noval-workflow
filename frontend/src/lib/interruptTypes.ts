@@ -1,5 +1,5 @@
 // 各 interrupt() payload 类型定义 + 权威 type 分发。
-// payload 结构来自源码核实（subgraph.py / arc_edit_subgraph.py / edit_step_subgraph.py /
+// payload 结构来自源码核实（subgraph.py / chapter_plan_edit_subgraph.py / edit_step_subgraph.py /
 // nodes/inputs.py / nodes/chapter.py）。后端 interrupt() 必带 type 字段（见后端
 // InterruptType 枚举），前端按 type 显式查表分发，不再依赖 message 文案匹配。
 
@@ -22,11 +22,17 @@ export const InterruptType = {
   // 用户输入阶段
   USER_INPUTS: "user_inputs",
   USER_INPUTS_ERROR: "user_inputs_error",
-  // 弧线大纲步骤（arc_edit_subgraph）
+  // 章末长线章节规划调整步骤（chapter_plan_edit_subgraph）：调远端锚点，弧线自动派生跟随
+  CHAPTER_PLAN_EDIT_ENTRY_GATE: "chapter_plan_edit_entry_gate",
+  CHAPTER_PLAN_EDIT_DIRECTION: "chapter_plan_edit_direction",
+  CHAPTER_PLAN_EDIT_CONFIRM: "chapter_plan_edit_confirm",
+  CHAPTER_PLAN_EDIT_CONFIRM_ERROR: "chapter_plan_edit_confirm_error",
+  // 旧「直接手改弧线」步骤：已被 CHAPTER_PLAN_EDIT_* 取代（弧线改为纯派生），保留供回滚
   ARC_ENTRY_GATE: "arc_entry_gate",
   ARC_DIRECTION_INPUT: "arc_direction_input",
   ARC_CONFIRM: "arc_confirm",
   ARC_CONFIRM_ERROR: "arc_confirm_error",
+  // 弧线联动标题确认（chapter_plan 编辑收尾仍复用）
   ARC_TITLES_CONFIRM: "arc_titles_confirm",
   // 人物动态状态/关系已并入 CharacterCard（current_state/relations/standing），
   // 原 status/relations 两条独立快照腿已删；动态更新走章末 entity_discover。
@@ -207,6 +213,34 @@ export interface ArcTitlesConfirmPayload {
   shortage: number;
 }
 
+/** 章节规划条目（远端锚点单条）——与后端 ChapterPlanItem 一致，供编辑表单渲染 ChapterPlanCards。 */
+export interface ChapterPlanEditItem {
+  chapter: number;
+  purpose: string;
+  key_turn: string;
+  ending_hook: string;
+  intensity?: string;
+}
+/** 章末长线章节规划调整 · 方向输入 payload（cp_direction）：展示未写窗口锚点 + 输入调整方向。 */
+export interface ChapterPlanEditDirectionPayload {
+  type: InterruptTypeValue;
+  message: string;
+  chapter_plan_window: ChapterPlanEditItem[];
+  range: [number, number];
+}
+/** 章末长线章节规划调整 · AI 结果确认 payload（cp_confirm）：展示 AI 重规划的未写段草稿。 */
+export interface ChapterPlanEditConfirmPayload {
+  type: InterruptTypeValue;
+  message: string;
+  ai_chapter_plan: ChapterPlanEditItem[];
+}
+/** 章末长线章节规划调整 · AI 失败手动兜底 payload（cp_confirm_error）。 */
+export interface ChapterPlanEditConfirmErrorPayload {
+  type: InterruptTypeValue;
+  message: string;
+  error: string;
+}
+
 /**
  * human_review 富审稿表单 payload。
  * 后端 subgraph.py:human_review 把草稿/AI 自审意见/修改历史/review_type/轮次一并塞入，
@@ -307,6 +341,8 @@ export type FormKind =
   | "arc_direction"
   | "arc_confirm"
   | "arc_titles_confirm"
+  | "chapter_plan_edit_direction"
+  | "chapter_plan_edit_confirm"
   | "foreshadowing_review"
   | "foreshadow_prune_confirm"
   | "entity_select_confirm"
@@ -334,6 +370,7 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.USER_INPUTS]: "user_inputs",
   [InterruptType.USER_INPUTS_ERROR]: "user_inputs",
 
+  [InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE]: "entry_gate",
   [InterruptType.ARC_ENTRY_GATE]: "entry_gate",
   [InterruptType.FORESHADOWING_ENTRY_GATE]: "entry_gate",
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
@@ -360,6 +397,11 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.ARC_CONFIRM]: "arc_confirm",
   [InterruptType.ARC_CONFIRM_ERROR]: "arc_confirm",
   [InterruptType.ARC_TITLES_CONFIRM]: "arc_titles_confirm",
+
+  // 章末长线章节规划调整
+  [InterruptType.CHAPTER_PLAN_EDIT_DIRECTION]: "chapter_plan_edit_direction",
+  [InterruptType.CHAPTER_PLAN_EDIT_CONFIRM]: "chapter_plan_edit_confirm",
+  [InterruptType.CHAPTER_PLAN_EDIT_CONFIRM_ERROR]: "chapter_plan_edit_confirm",
 
   [InterruptType.ASK_CONTINUE]: "ask_continue",
   // 一致性总审：专用三选表单（通过冻结 / 让 AI 修订 / 重新审查），报告走 message 由 whitespace-pre-wrap 渲染
@@ -416,6 +458,7 @@ export function directionTitleOf(type: unknown): string {
  * 新增 *_ENTRY_GATE 时在此登记即可，无需改组件。
  */
 const ENTRY_GATE_TITLE: Record<string, string> = {
+  [InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE]: "后续章节规划调整（弧线自动跟随）· 是否执行",
   [InterruptType.ARC_ENTRY_GATE]: "弧线大纲 · 是否执行",
   [InterruptType.FORESHADOWING_ENTRY_GATE]: "伏笔台账快照 · 是否执行",
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "阶段固化数据 · 是否执行",

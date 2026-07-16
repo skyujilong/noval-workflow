@@ -1,8 +1,11 @@
 """Chapter-edit subgraph: 4-step serial chain after chapter generation.
 
 Topology (zero conditional branches at this level):
-  arc_step → foreshadow_step → phase_step → entity_discover_step
+  chapter_plan_edit_step → foreshadow_step → phase_step → entity_discover_step
   → entity_cards_prune_step → chapter_edit_done → END
+
+chapter_plan_edit_step 从上游 chapter_plan（远端锚点）发起调整，弧线大纲自动派生跟随——
+取代原「直接手改弧线」的 arc_step，从源头保证弧线 = f(chapter_plan)，二者永不分叉。
 
 entity_cards_prune_step 在本章新卡/更新全部入库后，对累积卡库做一次 LLM 分析 + 人工勾选精简
 （整卡删除），抑制人物档案/装备清单膨胀；与伏笔精简同构。
@@ -22,7 +25,7 @@ from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
 
-from noval_workflow.arc_edit_subgraph import make_arc_edit_subgraph
+from noval_workflow.chapter_plan_edit_subgraph import make_chapter_plan_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
 from noval_workflow.entity_cards_prune_subgraph import entity_cards_prune_step
@@ -76,8 +79,15 @@ class ChapterEditSubState:
     all_chapter_titles: list[str] = field(default_factory=list)
     all_chapter_summaries: list[str] = field(default_factory=list)
 
-    # ── Phase 2.5 弧线（读入 + 写回）──────────────────────────────────────────
+    # ── Phase 2.5 弧线（只读入 + 派生写回；不再手改，纯 chapter_plan 下游）────────
     current_arc_outline: str = ""
+
+    # ── Phase 2.5 长线章节规划 chapter_plan（读入 + 合并写回）──────────────────
+    # 章末编辑从这里发起：调 chapter_plan 未写窗口 → 弧线自动派生跟随，二者永不分叉。
+    chapter_plan: list = field(default_factory=list)
+    chapter_plan_planned_upto: int = 0
+    # chapter_plan_prompt 头部要注入分卷位置卡（volume_position_card 读 volumes）。
+    volumes: list = field(default_factory=list)
 
     # ── Phase 2.5 动态状态库（读入最新值 + 覆盖写回）─────────────────────────
     # 人物动态（处境/动机/关系）已并入 entity_cards，原 character_status/relations 桥接字段已删。
@@ -97,12 +107,13 @@ class ChapterEditSubState:
     llm_review_count: int = 0
     llm_review_max: int = 3
 
-    # ── 弧线子图私有中间状态（保留，由 arc_edit_subgraph 读写）─────────────────
-    arc_direction: str = ""
-    ai_arc: str = ""
-    arc_error: str = ""
-    final_arc: str = ""
-    arc_needs_rewrite: bool = False
+    # ── chapter_plan 编辑子图私有中间状态（由 chapter_plan_edit_subgraph 读写）─────
+    chapter_plan_direction: str = ""
+    ai_chapter_plan: str = ""
+    chapter_plan_error: str = ""
+    chapter_plan_needs_rewrite: bool = False
+    final_chapter_plan: list = field(default_factory=list)
+    # 弧线联动标题（沿用）
     ai_titles: list[str] = field(default_factory=list)
     titles_direction: str = ""
     titles_needs_regen: bool = False
@@ -147,8 +158,8 @@ def _save_phase(state) -> dict:
 
 _ENTRY_HINT = "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
 
-_ARC_STEP = make_arc_edit_subgraph(
-    entry_prompt="是否调整弧线大纲？",
+_CHAPTER_PLAN_EDIT_STEP = make_chapter_plan_edit_subgraph(
+    entry_prompt="是否调整后续章节规划？弧线大纲将自动跟随",
 )
 
 _FORESHADOW_STEP = make_edit_step_subgraph(
@@ -195,16 +206,16 @@ _ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
 
 _builder = StateGraph(ChapterEditSubState)
 
-_builder.add_node("arc_step", _ARC_STEP)
+_builder.add_node("chapter_plan_edit_step", _CHAPTER_PLAN_EDIT_STEP)
 _builder.add_node("foreshadow_step", _FORESHADOW_STEP)
 _builder.add_node("phase_step", _PHASE_STEP)
 _builder.add_node("entity_discover_step", _ENTITY_DISCOVER_STEP)
 _builder.add_node("entity_cards_prune_step", entity_cards_prune_step)
 _builder.add_node("chapter_edit_done", chapter_edit_done)
 
-_builder.set_entry_point("arc_step")
+_builder.set_entry_point("chapter_plan_edit_step")
 
-_builder.add_edge("arc_step", "foreshadow_step")
+_builder.add_edge("chapter_plan_edit_step", "foreshadow_step")
 _builder.add_edge("foreshadow_step", "phase_step")
 _builder.add_edge("phase_step", "entity_discover_step")
 # 本章卡库更新全部入库后，再对累积卡库做一次精简（LLM 分析 + 人工勾选整卡删除）

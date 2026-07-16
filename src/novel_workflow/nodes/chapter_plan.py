@@ -22,6 +22,61 @@ from noval_workflow.state import ChapterPlanItem, NovelState, reset_review_field
 _logger = logging.getLogger(__name__)
 
 
+def parse_chapter_plan_items(draft: str) -> list[ChapterPlanItem]:
+    """把 LLM 输出的严格 JSON 数组解析成 ChapterPlanItem 列表并校验章号连续升序。
+
+    解析失败 / 非对象 / 字段缺失 / 跳号倒序时抛 ValueError,让调用方(审核循环或
+    mid-batch 编辑的错误兜底)重生成——不静默吞掉。空数组合法,返回空 list。
+    """
+    try:
+        raw_items = repair_and_parse(draft, kind=list)
+    except JsonParseError as exc:
+        raise ValueError(f"章节规划 JSON 解析失败: {exc}") from exc
+
+    items: list[ChapterPlanItem] = []
+    for idx, raw in enumerate(raw_items):
+        if not isinstance(raw, dict):
+            raise ValueError(f"章节规划第 {idx} 条不是对象(dict),实际类型={type(raw).__name__}")
+        try:
+            item = ChapterPlanItem(**raw)
+        except TypeError as exc:
+            raise ValueError(f"章节规划第 {idx} 条字段不符: {exc}; 原始={raw!r}") from exc
+        items.append(item)
+
+    # 章号连续升序校验(LLM 常见错误:跳号 / 倒序)
+    if items:
+        chapters = [it.chapter for it in items]
+        expected = list(range(chapters[0], chapters[0] + len(chapters)))
+        if chapters != expected:
+            raise ValueError(
+                f"章节规划章号必须连续升序,实际={chapters}, 期望连续升序如 {expected}"
+            )
+    return items
+
+
+def merge_chapter_plan(
+    existing_plan: list[ChapterPlanItem],
+    new_items: list[ChapterPlanItem],
+    done: int,
+) -> list[ChapterPlanItem]:
+    """合并新旧章节规划:章号 <= done 的历史条目锁定为真值,LLM 若误输这些章号一律
+    丢弃并 warning;章号 > done 采用新条目。返回按 chapter 升序的完整 list。
+
+    唯一的锁定合并实现——主图 save_chapter_plan 与章末 mid-batch 编辑子图共用,
+    避免两套语义漂移成新的分叉源。
+    """
+    historical = _extract_chapter_plan_range(existing_plan, 1, done) if done > 0 else []
+    fresh: list[ChapterPlanItem] = []
+    for item in new_items:
+        if item.chapter <= done:
+            _logger.warning(
+                "章节规划 LLM 输出了已锁定章号 %d,丢弃(以历史真值为准)", item.chapter
+            )
+            continue
+        fresh.append(item)
+    return sorted(historical + fresh, key=lambda x: x.chapter)
+
+
 def _plan_range(state: NovelState) -> tuple[int, int]:
     """按当前进度算本次要规划的章号范围 [start, end]。
 
@@ -62,47 +117,11 @@ def save_chapter_plan(state: NovelState) -> dict:
     - 合并策略:章号 <= done 的条目走历史真值,LLM 若误输出这些章号一律丢弃;
       章号 > done 的条目采用 LLM 输出。最后按 chapter 升序返回。
     """
-    start, end = _plan_range(state)
     done = state.total_chapters_written
 
-    # 第一步:解析 JSON
-    try:
-        raw_items = repair_and_parse(state.current_draft, kind=list)
-    except JsonParseError as exc:
-        raise ValueError(f"章节规划 JSON 解析失败: {exc}") from exc
-
-    # 第二步:逐条造 dataclass 实例(字段缺失/类型错会抛 TypeError)
-    new_items: list[ChapterPlanItem] = []
-    for idx, raw in enumerate(raw_items):
-        if not isinstance(raw, dict):
-            raise ValueError(f"章节规划第 {idx} 条不是对象(dict),实际类型={type(raw).__name__}")
-        try:
-            item = ChapterPlanItem(**raw)
-        except TypeError as exc:
-            raise ValueError(f"章节规划第 {idx} 条字段不符: {exc}; 原始={raw!r}") from exc
-        new_items.append(item)
-
-    # 第三步:章号连续升序校验(LLM 常见错误:跳号 / 倒序)
-    if new_items:
-        chapters = [it.chapter for it in new_items]
-        expected = list(range(chapters[0], chapters[0] + len(chapters)))
-        if chapters != expected:
-            raise ValueError(
-                f"章节规划章号必须连续升序,实际={chapters}, 期望连续升序如 {expected}"
-            )
-
-    # 第四步:合并——历史条目(chapter<=done)优先,LLM 若误输这些章号直接丢弃并 warning
-    historical = _extract_chapter_plan_range(state.chapter_plan, 1, done) if done > 0 else []
-    fresh = []
-    for item in new_items:
-        if item.chapter <= done:
-            _logger.warning(
-                "章节规划 LLM 输出了已锁定章号 %d,丢弃(以历史真值为准)", item.chapter
-            )
-            continue
-        fresh.append(item)
-
-    merged = sorted(historical + fresh, key=lambda x: x.chapter)
+    # 解析 + 校验 + 锁定合并全部走公共 helper(与 mid-batch 编辑子图共用同一实现)
+    new_items = parse_chapter_plan_items(state.current_draft)
+    merged = merge_chapter_plan(state.chapter_plan, new_items, done)
     planned_upto = merged[-1].chapter if merged else state.chapter_plan_planned_upto
 
     return {

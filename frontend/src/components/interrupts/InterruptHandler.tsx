@@ -10,6 +10,8 @@ import { BrainstormExtractReview } from "./BrainstormExtractReview";
 import { BrainstormGateForm } from "./BrainstormGateForm";
 import { ArcTitlesConfirmForm } from "./ArcTitlesConfirmForm";
 import { AskContinueForm } from "./AskContinueForm";
+import { ChapterPlanEditConfirmForm } from "./ChapterPlanEditConfirmForm";
+import { ChapterPlanEditDirectionForm } from "./ChapterPlanEditDirectionForm";
 import { ConsistencyDiffForm } from "./ConsistencyDiffForm";
 import { ConsistencyGateForm } from "./ConsistencyGateForm";
 import { DirectionForm } from "./DirectionForm";
@@ -167,6 +169,28 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
           payload={payload as Parameters<typeof ArcTitlesConfirmForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
+        />
+      );
+
+    case "chapter_plan_edit_direction":
+      return (
+        <ChapterPlanEditDirectionForm
+          key={formKey}
+          payload={payload as Parameters<typeof ChapterPlanEditDirectionForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+          novelState={novelState}
+        />
+      );
+
+    case "chapter_plan_edit_confirm":
+      return (
+        <ChapterPlanEditConfirmForm
+          key={formKey}
+          payload={payload as Parameters<typeof ChapterPlanEditConfirmForm>[0]["payload"]}
+          onSubmit={onSubmit}
+          disabled={disabled}
+          novelState={novelState}
         />
       );
 

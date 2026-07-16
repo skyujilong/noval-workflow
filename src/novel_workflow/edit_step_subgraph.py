@@ -37,7 +37,7 @@ from noval_workflow.subgraph import (
     route_after_human,
 )
 
-# Shared with arc_edit_subgraph — imported there to avoid divergence.
+# Shared with chapter_plan_edit_subgraph — imported there to avoid divergence.
 _SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "否", "不", "none", "null"}
 
 

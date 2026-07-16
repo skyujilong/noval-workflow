@@ -38,11 +38,19 @@ class InterruptType(str, Enum):
     #（每个步骤都包含 entry_gate + direction_input + human_review）
     # ============================================================
 
-    # 弧线大纲步骤
-    ARC_ENTRY_GATE = "arc_entry_gate"  # 弧线调整入门（跳过/执行）
-    ARC_DIRECTION_INPUT = "arc_direction_input"  # 弧线调整方向输入
-    ARC_CONFIRM = "arc_confirm"  # 弧线 AI 生成结果确认
-    ARC_CONFIRM_ERROR = "arc_confirm_error"  # 弧线生成失败，手动输入
+    # 章末长线章节规划（chapter_plan）调整步骤 —— 调远端锚点，弧线大纲自动派生跟随。
+    # 取代原「直接手改弧线」的入口：调整从上游 chapter_plan 发起，保证弧线永不与远端锚点分叉。
+    CHAPTER_PLAN_EDIT_ENTRY_GATE = "chapter_plan_edit_entry_gate"  # 是否调整后续章节规划（跳过/执行）
+    CHAPTER_PLAN_EDIT_DIRECTION = "chapter_plan_edit_direction"  # 调整方向输入
+    CHAPTER_PLAN_EDIT_CONFIRM = "chapter_plan_edit_confirm"  # AI 重规划结果确认（接受/新方向迭代/手动替换）
+    CHAPTER_PLAN_EDIT_CONFIRM_ERROR = "chapter_plan_edit_confirm_error"  # AI 重规划失败，手动输入兜底
+
+    # 旧「直接手改弧线」步骤：已被 CHAPTER_PLAN_EDIT_* 取代（弧线改为纯派生），
+    # 枚举保留以便回滚，图上不再挂。
+    ARC_ENTRY_GATE = "arc_entry_gate"  # 弧线调整入门（跳过/执行）（已废弃）
+    ARC_DIRECTION_INPUT = "arc_direction_input"  # 弧线调整方向输入（已废弃）
+    ARC_CONFIRM = "arc_confirm"  # 弧线 AI 生成结果确认（已废弃）
+    ARC_CONFIRM_ERROR = "arc_confirm_error"  # 弧线生成失败，手动输入（已废弃）
 
     # 人物动态（处境/动机/关系）已并入 CharacterCard，由 entity_discover 单腿更新——
     # 原 STATUS_* / RELATIONS_* 两组快照 gate 已删。
@@ -73,7 +81,7 @@ class InterruptType(str, Enum):
     ENTITY_DISCOVER_REVIEW = "entity_discover_review"  # 实体发现/更新审核
 
     # ============================================================
-    # arc_edit_subgraph 独立使用的标题确认
+    # chapter_plan_edit_subgraph 收尾复用的弧线联动标题确认
     # ============================================================
     ARC_TITLES_CONFIRM = "arc_titles_confirm"  # 章节标题重生成确认
 

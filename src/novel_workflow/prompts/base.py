@@ -62,7 +62,7 @@ _FOUNDATION_RIGOR = """
 """
 
 
-# 8-field format shared by arc_outline_prompt (本文件) 与 arc_edit_subgraph 的内联大纲提示词
+# 8-field format shared by arc_outline_prompt (本文件) 与 chapter_plan_edit_subgraph 的弧线派生提示词
 # 档位字段置顶：先定"章性"再填内容，从源头允许淡章/铺垫章存在，避免章章强行塞转折导致赶进度。
 ARC_CHAPTER_FORMAT = """\
 ## 单章节固定必填字段（每章必须依次列出，缺一不可）
