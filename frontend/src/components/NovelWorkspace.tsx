@@ -8,6 +8,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -15,6 +16,7 @@ import {
 } from "react";
 import { GraphView } from "./graph/GraphView";
 import { InterruptHandler } from "./interrupts/InterruptHandler";
+import { LazyModeSwitch } from "./interrupts/LazyModeSwitch";
 import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
@@ -22,6 +24,7 @@ import { VolumeRibbon } from "./novel/VolumeRibbon";
 import { StateEditPanel } from "./state/StateEditPanel";
 import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
+import { useLazyAutoResume } from "../hooks/useLazyAutoResume";
 import { updateThreadMeta, updateThreadState } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
 import {
@@ -83,6 +86,10 @@ interface Props {
   onRefreshThreads: () => void;
   /** 把运行状态上报给 App 渲染 header / 错误条 */
   onStatusChange: (status: RunStatus) => void;
+  /** 自动模式开关（全局偏好，App 持有 + localStorage 持久化） */
+  lazyMode: boolean;
+  /** 切换自动模式 */
+  onLazyModeChange: (next: boolean) => void;
 }
 
 export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
@@ -100,6 +107,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       summaryBusy,
       onRefreshThreads,
       onStatusChange,
+      lazyMode,
+      onLazyModeChange,
     },
     ref
   ) {
@@ -182,6 +191,31 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     // 二者取或，避免对同一 thread_id 重复触发导致混乱。busy 轮询有 ≤3s 滞后，宁可多禁一会儿。
     const inputDisabled = running || !!summaryBusy;
 
+    // 中断表单的统一 resume 入口：手动提交与自动模式自动应答共用这一条路径，
+    // 天然不会双份逻辑；并发去重再由 useRun 的 runningRef + inputDisabled 兜底。
+    const handleInterruptSubmit = useCallback(
+      (value: unknown) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "action" in value &&
+          (value as { action: string }).action === "back_to_chat"
+        ) {
+          transitioningToChatRef.current = true;
+        }
+        void resume(value);
+      },
+      [resume]
+    );
+
+    // 自动模式：进入可自动应答的中断先 5s 倒计时，到点自动走 handleInterruptSubmit
+    const lazy = useLazyAutoResume({
+      interrupt,
+      enabled: lazyMode,
+      inputDisabled,
+      onAutoResume: handleInterruptSubmit,
+    });
+
     // 暴露 replay / continueRun 给 App（左侧「历史」面板「从此点重跑」、小说列表「▶」）
     useImperativeHandle(
       ref,
@@ -244,7 +278,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     return (
       <>
         {/* 中部：节点图 */}
-        <main className="flex-1 bg-gray-50">
+        <main className="relative flex-1 bg-gray-50">
           <GraphView
             schemaNodes={graphNodes}
             schemaEdges={graphEdges}
@@ -252,6 +286,42 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             schemaError={graphError}
             onRetrySchema={onRetryGraph}
           />
+          {/* 自动模式倒计时：悬浮在节点图上（不插进右侧表单 DOM，避免出现/消失时表单跳动）。
+              到点自动应答；可「立即执行」或「手动接管」（取消本次自动）。 */}
+          {lazy.active && lazy.plan && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-4">
+              <div className="pointer-events-auto w-full max-w-md rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 shadow-lg backdrop-blur">
+                <div className="flex items-center justify-between text-xs text-amber-800">
+                  <span>
+                    ⚡ 自动模式：{lazy.plan.actionLabel} ·{" "}
+                    {Math.ceil(lazy.remainingMs / 1000)}s 后自动执行
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={lazy.fireNow}
+                      className="rounded bg-amber-600 px-2 py-1 text-white hover:bg-amber-700"
+                    >
+                      立即执行
+                    </button>
+                    <button
+                      type="button"
+                      onClick={lazy.cancel}
+                      className="rounded border border-amber-400 px-2 py-1 text-amber-700 hover:bg-amber-100"
+                    >
+                      手动接管
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-amber-200">
+                  <div
+                    className="h-full bg-amber-500 transition-[width] duration-100 ease-linear"
+                    style={{ width: `${(lazy.remainingMs / lazy.totalMs) * 100}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </main>
 
         {/* 右侧：中断表单 / 流式 / 小说详情（顺序刻意保留：resume 期保留旧中断表单） */}
@@ -289,32 +359,36 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
             />
           ) : interrupt ? (
             <div className="p-4">
-              {/* 暂停点入口：进化提示词（仅章节正文/弧线大纲阶段，提炼本次打回意见即生效）/
-                  手动纠正当前 state 后再「通过 / 提交意见」继续。进化按钮不受 inputDisabled
+              {/* 顶部同一行：左侧「自动模式」开关（常驻、可随时开关），右侧暂停点入口
+                  （进化提示词：仅章节正文/弧线大纲阶段，提炼本次打回意见即生效；编辑当前状态：
+                  手动纠正 state 后再「通过 / 提交意见」继续）。进化按钮不受 inputDisabled
                   约束——它只读写 overrides/台账，不 resume 本 thread。 */}
-              {state.novel_name && (
-                <div className="mb-3 flex justify-end gap-2">
-                  {EVOLVABLE_REVIEW_TYPES.has(state.review_type) && (
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <LazyModeSwitch checked={lazyMode} onChange={onLazyModeChange} />
+                {state.novel_name && (
+                  <div className="flex gap-2">
+                    {EVOLVABLE_REVIEW_TYPES.has(state.review_type) && (
+                      <button
+                        type="button"
+                        onClick={() => setEvolveOpen(true)}
+                        title="把本次打回意见提炼进本书提示词（章节正文 / 弧线大纲阶段下一次生成即生效）"
+                        className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600"
+                      >
+                        🧬 提示词进化
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => setEvolveOpen(true)}
-                      title="把本次打回意见提炼进本书提示词（章节正文 / 弧线大纲阶段下一次生成即生效）"
-                      className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600"
+                      onClick={() => setEditorOpen(true)}
+                      disabled={inputDisabled}
+                      title={inputDisabled ? "运行中不可编辑状态" : undefined}
+                      className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-gray-200 disabled:hover:text-gray-500"
                     >
-                      🧬 提示词进化
+                      ✎ 编辑当前状态
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setEditorOpen(true)}
-                    disabled={inputDisabled}
-                    title={inputDisabled ? "运行中不可编辑状态" : undefined}
-                    className="rounded border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-gray-200 disabled:hover:text-gray-500"
-                  >
-                    ✎ 编辑当前状态
-                  </button>
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
               {/* 闸由 summary busy 触发、而非本地运行：陈旧 UI / 后台 run 正在跑同一 thread，
                   解释为何「确认通过」等被锁，避免看上去像坏掉。本地 running 期另有流式提示，不重复。 */}
               {summaryBusy && !running && (
@@ -325,17 +399,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
               )}
               <InterruptHandler
                 payload={interrupt.payload}
-                onSubmit={(value) => {
-                  if (
-                    typeof value === "object" &&
-                    value !== null &&
-                    "action" in value &&
-                    (value as { action: string }).action === "back_to_chat"
-                  ) {
-                    transitioningToChatRef.current = true;
-                  }
-                  void resume(value);
-                }}
+                onSubmit={handleInterruptSubmit}
                 disabled={inputDisabled}
                 novelState={state}
                 threadId={threadId}

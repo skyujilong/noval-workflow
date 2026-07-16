@@ -26,6 +26,10 @@ export default function App() {
     () => localStorage.getItem("selectedThreadId")
   );
   const [autoStart, setAutoStart] = useState(false);
+  // 自动模式总开关（跨小说全局偏好，localStorage 持久化）：打开后章节循环的人工中断自动应答
+  const [lazyMode, setLazyMode] = useState<boolean>(
+    () => localStorage.getItem("lazyModeOn") === "1"
+  );
   // 当从列表点「▶」进入 pending 卡住的 thread 时置为 true，workspace 挂载后自动触发一次 continueRun。
   // 与 autoStart 语义并行：autoStart 面向「新建自动 start」；autoContinue 面向「pending 一键继续」。
   const [autoContinue, setAutoContinue] = useState(false);
@@ -125,6 +129,11 @@ export default function App() {
     else localStorage.removeItem("selectedThreadId");
   }, [selectedId]);
 
+  // 持久化自动模式开关
+  useEffect(() => {
+    localStorage.setItem("lazyModeOn", lazyMode ? "1" : "0");
+  }, [lazyMode]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -214,6 +223,8 @@ export default function App() {
             summaryBusy={selectedThread?.status === "busy"}
             onRefreshThreads={refresh}
             onStatusChange={handleStatusChange}
+            lazyMode={lazyMode}
+            onLazyModeChange={setLazyMode}
           />
         ) : (
           <>
