@@ -493,13 +493,21 @@ def entity_discover_prompt(state, chapter_context: str = "") -> str:
 
 # ── Phase-1 结构化卡司 → 人物档案 markdown（取代原 character_profiles 散文注入）─────
 
+# 视为「已离场」的人物 current_state 关键词——离场角色在写正文视图里压成一行，避免死了/退场了
+# 仍全字段常驻膨胀 context（与物品 _RETIRED_STATUS 同思路）。判据用 current_state（entity_discover
+# 每章更新的动态字段）子串命中；只收「明确死亡/退场」，不含「重伤/昏迷/失踪」等仍可能回归的状态。
+_OFFSTAGE_MARKERS = ("死亡", "已死", "身死", "阵亡", "战死", "殒命", "陨落", "已故", "离场", "退场", "出局")
+
+
 def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> str:
     """把卡库里的人物卡（type=人物）渲染成【人物档案】markdown，取代原 character_profiles 散文。
 
     两档视图治上下文膨胀（原 bible 每次全量灌，这里默认有界）：
-    - deep=False（默认，写正文/常规 context）：操作视图——role/外貌/口吻/性格/能力/动机/处境/关系。
+    - deep=False（默认，写正文/常规 context）：操作视图——role/外貌/口吻/性格/能力/动机/处境/关系；
+      **已离场角色（current_state 命中 _OFFSTAGE_MARKERS）压成一行**，只留身份 + 离场状态，不占全字段。
     - deep=True（outline/arc/consistency 规划）：追加深层视图——隐藏人设/四卷弧光/底牌契约
-      （这些按 role 条件触发，次要/非战斗角色可留空，空值不渲染标签行）。
+      （这些按 role 条件触发，次要/非战斗角色可留空，空值不渲染标签行）；**不做离场收敛**，
+      一致性审计/长线设计需要看到退场角色的完整设定与弧光。
     非人物卡忽略（装备/物品走 format_equipment_for_context）。
     """
     if not cards:
@@ -511,8 +519,15 @@ def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> 
             continue
         aliases = get("aliases") or []
         alias_str = f"（{'/'.join(aliases)}）" if aliases else ""
+        header = f"- **{get('name')}〔{_text(get('role'))}〕{alias_str}**"
+        # 离场收敛（仅操作视图）：死亡/退场角色压成一行，保留 current_state 让 LLM 知道其已离场、
+        # 不复活不误写；数据层照旧全留，deep 视图仍渲染全字段。
+        cur = _text(get("current_state"))
+        if not deep and any(m in cur for m in _OFFSTAGE_MARKERS):
+            blocks.append(f"{header} · 已离场（{cur}）")
+            continue
         lines = [
-            f"- **{get('name')}〔{_text(get('role'))}〕{alias_str}**",
+            header,
             f"  - 定位:{get('summary')} ｜ 外貌:{get('appearance')} ｜ 口吻:{get('speech_style')}",
             f"  - 性格:{get('personality')} ｜ 能力:{get('abilities')}",
             f"  - 动机:{get('motivation')} ｜ 处境:{get('current_state')} ｜ 关系:{get('relations')}",
