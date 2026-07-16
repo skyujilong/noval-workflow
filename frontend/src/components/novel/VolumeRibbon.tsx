@@ -1,5 +1,7 @@
-// 顶部 4 卷横条：向用户一眼呈现「当前小说横向大结构」——从 state.volumes 读取。
-// 显示：卷号 + title + 状态徽章 + 章号区间/target range。当前卷高亮,已收卷 ✓,未开启虚线。
+// 顶部分卷横条：向用户一眼呈现「当前小说横向大结构」——从 state.volumes 读取。
+// 紧凑单行设计（右侧面板窄，避免占高）：每卷压成一小块 chip（状态色点 + 卷号 + 标题截断
+// + 进度），表头内联，整行横向滚动不换行。当前卷蓝高亮、已收卷绿、未开启虚线。
+// 章号区间等详情挪进点击弹窗。
 //
 // 交互：点击某卷 → 弹出只读详情对话框（title / summary / setup_for_next / 章号窗口）。
 // 编辑入口一律走审核表单/gate 表单，不在此处提供编辑（避免与 volumes review 语义冲突）。
@@ -31,14 +33,15 @@ function actualLength(volume: Volume): number {
   return volume.actual_end != null ? volume.actual_end - volume.chapter_start + 1 : 0;
 }
 
-function statusPill(status: Volume["status"]) {
+// 状态 → 紧凑 chip 的边框/底色 + 状态圆点色。
+function statusStyle(status: Volume["status"]) {
   switch (status) {
     case "in_progress":
-      return { cardCls: "border-blue-400 bg-blue-50", badge: "进行中", badgeCls: "bg-blue-100 text-blue-700" };
+      return { cardCls: "border-blue-300 bg-blue-50 ring-1 ring-blue-200", dotCls: "bg-blue-500" };
     case "closed":
-      return { cardCls: "border-green-300 bg-green-50", badge: "已收卷 ✓", badgeCls: "bg-green-100 text-green-700" };
+      return { cardCls: "border-green-200 bg-green-50/70", dotCls: "bg-green-500" };
     default:
-      return { cardCls: "border-dashed border-gray-300 bg-white", badge: "未开启", badgeCls: "bg-gray-100 text-gray-500" };
+      return { cardCls: "border-dashed border-gray-300 bg-white", dotCls: "bg-gray-300" };
   }
 }
 
@@ -51,22 +54,17 @@ function VolumeChip({
   totalWritten: number;
   onClick: () => void;
 }) {
-  const meta = statusPill(volume.status);
+  const meta = statusStyle(volume.status);
   const isCurrent = volume.status === "in_progress";
   const isClosed = volume.status === "closed";
 
-  // 章号范围文案：已收卷显示实际范围；否则显示 chapter_start-窗口末（target_max）。
-  const rangeLabel = isClosed
-    ? `${volume.chapter_start}-${volume.actual_end}`
-    : `${volume.chapter_start}-${volume.chapter_start + volume.target_max - 1}`;
-
-  // 进度/长度徽章：进行中「已 N/(min~max) 章」；已收卷「N 章」；未开启「target min~max」。
+  // 紧凑进度文案（章号区间挪进详情弹窗）：进行中「N/min~max」；已收卷「✓ N章」；未开启「min~max」。
   const doneN = chaptersDoneInVolume(volume, totalWritten);
   const progressLabel = isCurrent
-    ? `已 ${doneN}/(${volume.target_min}~${volume.target_max}) 章`
+    ? `${doneN}/${volume.target_min}~${volume.target_max}`
     : isClosed
-      ? `${actualLength(volume)} 章`
-      : `${volume.target_min}~${volume.target_max} 章`;
+      ? `✓ ${actualLength(volume)}章`
+      : `${volume.target_min}~${volume.target_max}`;
 
   return (
     <button
@@ -74,22 +72,19 @@ function VolumeChip({
       onClick={onClick}
       title={volume.summary || volume.title}
       className={
-        "flex min-w-[180px] flex-1 flex-col gap-0.5 rounded-lg border px-3 py-2 text-left transition-all hover:shadow-sm " +
+        "flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left transition-colors hover:brightness-95 " +
         meta.cardCls +
-        (isCurrent ? " font-medium ring-1 ring-blue-200" : "")
+        (isCurrent ? " font-medium" : "")
       }
     >
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-500">卷 {volume.index}</span>
-        <span className={`rounded px-1.5 py-0.5 text-[10px] ${meta.badgeCls}`}>{meta.badge}</span>
-      </div>
-      <div className="truncate text-sm text-gray-800">
-        {volume.title || <span className="text-gray-300">（无标题）</span>}
-      </div>
-      <div className="flex flex-wrap items-center gap-1 text-[11px] text-gray-500">
-        <span className="rounded bg-white/60 px-1 py-0.5">{rangeLabel}</span>
-        <span className="rounded bg-white/60 px-1 py-0.5">{progressLabel}</span>
-      </div>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dotCls}`} />
+      <span className="shrink-0 text-[10px] text-gray-500">卷{volume.index}</span>
+      <span className="max-w-[96px] truncate text-xs text-gray-800">
+        {volume.title || <span className="text-gray-300">无标题</span>}
+      </span>
+      <span className="shrink-0 rounded bg-white/70 px-1 text-[10px] tabular-nums text-gray-500">
+        {progressLabel}
+      </span>
     </button>
   );
 }
@@ -147,12 +142,12 @@ export function VolumeRibbon({ state }: Props) {
 
   return (
     <>
-      <div className="border-b border-gray-200 bg-gray-50 px-4 py-2">
-        <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-          <span>分卷规划</span>
-          <span className="rounded bg-white px-1.5 py-0.5 text-gray-500">共 {volumes.length} 卷</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      {/* 单行横向滚动的紧凑横条：表头内联在同一行，chip 不换行不撑满，节省右侧面板高度 */}
+      <div className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-1.5">
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+          分卷 · {volumes.length}
+        </span>
+        <div className="flex flex-1 gap-1.5 overflow-x-auto">
           {volumes.map((v) => (
             <VolumeChip
               key={v.index}
