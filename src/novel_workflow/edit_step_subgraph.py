@@ -140,8 +140,13 @@ def make_edit_step_subgraph(
     """
 
     # ── node closures ──────────────────────────────────────────────────────────
+    # ⚠️ 这些闭包**不能**把 state 注解成基类 EditStepSubState：LangGraph 会按节点函数第一个
+    # 参数的类型注解**窄化**传入的 state，注解写基类就只会构造出含基类字段的实例，丢掉 state_cls
+    # 子类才声明的字段（如 EntityCardsSubState.current_chapter_beats）。于是 prepare_fn/save_fn 读
+    # 子类字段时报 AttributeError（"'EditStepSubState' object has no attribute 'current_chapter_beats'"）。
+    # 不写注解 → LangGraph 回退到编译时的图 schema（state_cls），传入完整子类实例。
 
-    def step_entry(state: EditStepSubState) -> dict:
+    def step_entry(state) -> dict:
         answer = interrupt({"type": entry_gate_type.value, "message": entry_prompt})
         # 直接处理 None/falsy 值，避免 str(None) = "None" 的问题
         if not answer:
@@ -150,7 +155,7 @@ def make_edit_step_subgraph(
             execute = str(answer).strip().lower() not in _SKIP_WORDS
         return {"step_execute_gate": execute, "step_direction_input": ""}
 
-    def step_direction(state: EditStepSubState) -> dict:
+    def step_direction(state) -> dict:
         direction = interrupt({
             "type": direction_type.value,
             "message": "请输入调整方向（直接回车使用默认提示词）：",
@@ -158,16 +163,16 @@ def make_edit_step_subgraph(
         # 处理 None，避免 str(None) = "None"
         return {"step_direction_input": str(direction or "").strip()}
 
-    def step_prepare(state: EditStepSubState) -> dict:
+    def step_prepare(state) -> dict:
         result = prepare_fn(state)
         return {**reset_review_fields(), **result, "llm_review_max": llm_review_max}
 
-    def step_save(state: EditStepSubState) -> dict:
+    def step_save(state) -> dict:
         return save_fn(state)
 
     # ── 伏笔精简流程专用节点 ──────────────────────────────────────────────────
 
-    def foreshadow_prune_ask(state: EditStepSubState) -> dict:
+    def foreshadow_prune_ask(state) -> dict:
         """询问用户是否需要精简伏笔台账。"""
         answer = interrupt({
             "type": InterruptType.FORESHADOW_PRUNE_ASK.value,
@@ -178,7 +183,7 @@ def make_edit_step_subgraph(
         do_prune = answer_str not in _SKIP_WORDS and answer_str != ""
         return {"foreshadow_prune_enabled": do_prune}
 
-    def foreshadow_prune_analyze(state: EditStepSubState) -> dict:
+    def foreshadow_prune_analyze(state) -> dict:
         """调用LLM分析伏笔台账，给出精简建议。"""
         try:
             # 解析当前草稿中的伏笔数据（LLM 生成的 JSON 台账，先修复再解析）
@@ -219,7 +224,7 @@ def make_edit_step_subgraph(
             # 失败时返回空建议，不中断流程
             return {"foreshadow_prune_suggestion": {"s_level_count": 0, "a_level_count": 0, "to_delete": [], "suggestion": "分析失败，跳过精简"}}
 
-    def foreshadow_prune_confirm(state: EditStepSubState) -> dict:
+    def foreshadow_prune_confirm(state) -> dict:
         """展示精简建议，让用户勾选确认。"""
         suggestion = state.foreshadow_prune_suggestion
         foreshadow_data = repair_and_parse(state.current_draft, kind=dict) if isinstance(state.current_draft, str) else state.current_draft
@@ -249,7 +254,7 @@ def make_edit_step_subgraph(
         _logger.info(f"用户确认删除 {len(selected_ids)} 个伏笔")
         return {"foreshadow_prune_selected": selected_ids}
 
-    def foreshadow_prune_apply(state: EditStepSubState) -> dict:
+    def foreshadow_prune_apply(state) -> dict:
         """执行实际的删除操作，更新 current_draft。"""
         selected_ids = state.foreshadow_prune_selected
         if not selected_ids:
@@ -284,12 +289,12 @@ def make_edit_step_subgraph(
 
     # ── routing ────────────────────────────────────────────────────────────────
 
-    def route_after_entry(state: EditStepSubState) -> str:
+    def route_after_entry(state) -> str:
         if not state.step_execute_gate:
             return END
         return "step_direction" if ask_direction else "step_prepare"
 
-    def route_after_human_with_prune(state: EditStepSubState) -> str:
+    def route_after_human_with_prune(state) -> str:
         """人工审核后的路由：如果启用精简且是伏笔类型，则进入精简流程。"""
         # 先复用原逻辑判断是否通过
         base_result = route_after_human(state)
@@ -302,12 +307,12 @@ def make_edit_step_subgraph(
         # 否则直接去 save
         return "step_save"
 
-    def route_after_prune_ask(state: EditStepSubState) -> str:
+    def route_after_prune_ask(state) -> str:
         if state.foreshadow_prune_enabled:
             return "foreshadow_prune_analyze"
         return "step_save"
 
-    def route_after_prune_analyze(state: EditStepSubState) -> str:
+    def route_after_prune_analyze(state) -> str:
         suggestion = state.foreshadow_prune_suggestion
         to_delete = suggestion.get("to_delete", [])
         # 有建议删除的内容，进入确认环节；否则直接保存
