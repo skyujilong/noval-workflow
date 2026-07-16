@@ -8,6 +8,8 @@ import type { EntityCard } from "../../lib/types";
 
 interface Props {
   cards: EntityCard[];
+  /** 提供时，在「次要角色」人物卡上渲染「提升为重要角色」入口（仅「当前状态」视图传，审核草稿视图不传）。 */
+  onPromote?: (card: EntityCard) => void;
 }
 
 // type → 分组展示顺序 + 徽标样式。未知 type 兜底到「其他」组。
@@ -31,11 +33,13 @@ function Row({ label, value }: { label: string; value?: string }) {
   );
 }
 
-function Card({ card }: { card: EntityCard }) {
+function Card({ card, onPromote }: { card: EntityCard; onPromote?: (card: EntityCard) => void }) {
   const isPerson = card.type === "人物";
   const isItem = card.type === "装备" || card.type === "物品";
   const aliases = card.aliases?.length ? `（${card.aliases.join("/")}）` : "";
   const badge = TYPE_BADGE[card.type] ?? "border-gray-200 bg-gray-50 text-gray-600";
+  // 次要角色 + 父层给了 onPromote → 可提升为重要角色
+  const canPromote = isPerson && card.role === "次要角色" && !!onPromote;
   return (
     <div className="space-y-1 rounded-md border border-gray-200 bg-gray-50/70 p-2">
       <div className="flex items-center gap-2">
@@ -47,7 +51,17 @@ function Card({ card }: { card: EntityCard }) {
           </span>
         ) : null}
         <span className="text-[10px] text-gray-400">{aliases}</span>
-        <span className={`ml-auto rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
+        {canPromote ? (
+          <button
+            type="button"
+            onClick={() => onPromote!(card)}
+            className="ml-auto rounded border border-indigo-200 bg-white px-1.5 py-0.5 text-[10px] leading-none text-indigo-600 hover:bg-indigo-50"
+            title="补齐深层设计，提升为重要角色"
+          >
+            提升
+          </button>
+        ) : null}
+        <span className={`${canPromote ? "" : "ml-auto "}rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
           {card.type || "未分类"}
         </span>
       </div>
@@ -84,7 +98,7 @@ function Card({ card }: { card: EntityCard }) {
   );
 }
 
-export function EntityCardsReadonly({ cards }: Props) {
+export function EntityCardsReadonly({ cards, onPromote }: Props) {
   if (!cards || cards.length === 0) {
     return (
       <div className="rounded border border-dashed border-gray-200 py-3 text-center text-[11px] text-gray-400">
@@ -119,7 +133,7 @@ export function EntityCardsReadonly({ cards }: Props) {
             </div>
             <div className="space-y-2">
               {g.items.map((c, i) => (
-                <Card key={`${g.label}-${c.name}-${i}`} card={c} />
+                <Card key={`${g.label}-${c.name}-${i}`} card={c} onPromote={onPromote} />
               ))}
             </div>
           </div>

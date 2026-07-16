@@ -516,6 +516,117 @@ CHARACTER_CARDS_REVIEW_PROMPT = """请审核以下 Phase-1「全套核心人物�
 逐条判定：条件字段（`hidden_persona` / `ability_contract`）按角色定位「该有则查、不该有别硬凑」，不是缺一即死。若全部通过，直接回复「无问题」；否则逐条列出问题并给改法。"""
 
 
+# ── 次要角色「提升为重要角色」（Part 2）───────────────────────────────────────
+#
+# 带外操作：人在卡库里把某个 `次要角色` 提升为重要角色，LLM 聚焦补齐深层设计（草稿），
+# 人工审改后落库。可提升的目标 role = CharacterRole 去掉「主角」（唯一）与「次要角色」（起点）。
+# 用元组保序（前端下拉/后端校验共用同一真源），值取 CharacterRole 枚举 value 保持一致。
+
+PROMOTABLE_ROLES: tuple[str, ...] = (
+    "主要配角",
+    "功能性反派",
+    "根源反派",
+    "感情线角色",
+)
+
+
+def _format_volumes_brief(volumes: list) -> str:
+    """把分卷列表渲染成紧凑的「卷N《卷名》: 主线摘要」块，供提升 prompt 定四卷弧光锚点。
+
+    volumes 空则返回空串（overall_outline 已含四卷结构，分卷块只是额外锚点，缺省不强求）。
+    兼容 Volume 实例与 checkpoint roundtrip 后的 dict。
+    """
+    if not volumes:
+        return ""
+    lines: list[str] = []
+    for v in volumes:
+        get = (lambda k: v.get(k, "")) if isinstance(v, dict) else (lambda k: getattr(v, k, ""))
+        idx = get("index")
+        title = get("title")
+        summary = get("summary")
+        lines.append(f"- 卷{idx}《{title}》: {summary}")
+    return "### 分卷结构\n" + "\n".join(lines) + "\n"
+
+
+# 提升补全 prompt 模板。静态常量，题材无关（深层字段口径与 base.py character_cards_prompt 同源）。
+_PROMOTE_CHARACTER_TEMPLATE = """请为一位「原次要角色」补齐【重要角色】深层设计。该角色随剧情推进戏份变重，现要提升为「{target_role}」，需在**不推翻既有设定**的前提下，补出与 Phase-1 核心卡司同质的深层字段。
+
+## 该角色现状卡（保持连续性，勿改写已定事实）
+
+{card_view}
+
+## 全书 canon（深层设计须与之契合）
+
+### 世界观
+{world_building}
+{power_section}### 核心冲突
+{core_conflicts}
+
+### 整体大纲与结局
+{overall_outline}
+{volumes_section}
+## 目标定位
+
+将 role 提升为「{target_role}」，据此补齐深层设计。
+
+## 需产出的字段（严格 JSON 对象，只输出这 5 个键）
+
+```
+{{"role": "{target_role}", "appearance": "...", "hidden_persona": "...", "arc_trajectory": "...", "ability_contract": "..."}}
+```
+
+## 字段口径（与 Phase-1 卡司一致）
+
+- **role**：固定填「{target_role}」。
+- **appearance**：体貌基线（身形/气质/年龄段/大致长相，供正文外貌一致）+ 可选 1 个识别特征，≤60字；若现状卡 appearance 太薄则加厚，但不与已有描述冲突。
+- **hidden_persona**：深层隐藏人设——暗线秘密/异常/隐藏能力/立场偏差，与表层 `personality` 不冲突、可后期反转（升为重要角色理应写，别与既定性格打架）。
+- **arc_trajectory**：四卷弧光——卷一→卷四心性/立场/羁绊/认知的迭代大势（只写大势不填情节）；若提升为反派向 role，写阶段作用 + 闭环退场。
+- **ability_contract**：{contract_spec}
+
+## 硬约束
+
+- **只深化、不推翻**：现状卡已定的 name/summary/personality/abilities/motivation/relations 保持不变，仅做深层补全。
+- **自洽**：深层设计与全书 canon、该角色现有立场/关系闭环自洽，杜绝为提升而强行拔高、降智。
+- **只输出** 上述 5 键的 JSON 对象，无解释、无 markdown 围栏。"""
+
+
+def promote_character_prompt(state: "NovelState", card, target_role: str) -> str:
+    """组装「次要角色 → 重要角色」的深层设计补全提示词（Part 2 提升功能）。
+
+    聚焦单角色：喂该角色现状卡 + 全书 canon + 目标 role，让 LLM 补出与 Phase-1 核心卡司同质
+    的深层字段（appearance 加厚 / hidden_persona / arc_trajectory / ability_contract）。只产出
+    待补/改的 5 键，其余字段由调用方保留不动。口径与 base.py character_cards_prompt 一致。
+
+    Args:
+        state: NovelState，需含全书 canon 字段（world_building/power_system/core_conflicts/
+            overall_outline/volumes/has_power_system）。
+        card: 目标人物卡（EntityCard 实例或 dict）。
+        target_role: 目标重要角色定位，须为 PROMOTABLE_ROLES 之一（调用方已校验）。
+    """
+    card_view = format_character_profiles_from_cards([card], deep=True) or "（无现状卡内容）"
+    # 力量体系按 has_power_system 条件注入——无体系作品不喂空块，契约口径也随之收窄。
+    power_section = (
+        f"### 力量体系\n{state.power_system}\n\n"
+        if state.has_power_system and state.power_system
+        else ""
+    )
+    contract_spec = (
+        "仅当该角色与战力相关才写完整契约（初始锚点 + 四卷天花板 + 隐藏杀手锏触发/反噬，须落【力量体系】）；纯文戏/非战斗角色留空或据现有 abilities 简述。"
+        if state.has_power_system
+        else "本作无独立力量体系——一般留空，除非该角色确有可成长的关键能力，则据 abilities 简述其成长与底牌。"
+    )
+    return _PROMOTE_CHARACTER_TEMPLATE.format(
+        target_role=target_role,
+        card_view=card_view,
+        world_building=state.world_building or "（未设定）",
+        power_section=power_section,
+        core_conflicts=state.core_conflicts or "（未设定）",
+        overall_outline=state.overall_outline or "（未设定）",
+        volumes_section=_format_volumes_brief(state.volumes),
+        contract_spec=contract_spec,
+    )
+
+
 __all__ = [
     "CHARACTER_CARDS_REVIEW_PROMPT",
     "ENTITY_CARDS_PROMPT",
@@ -523,6 +634,7 @@ __all__ = [
     "ENTITY_DISCOVER_PROMPT",
     "ENTITY_DISCOVER_REVIEW_PROMPT",
     "ENTITY_TYPES",
+    "PROMOTABLE_ROLES",
     "UPDATABLE_FIELDS",
     "entity_cards_prompt",
     "entity_discover_prompt",
@@ -530,5 +642,6 @@ __all__ = [
     "format_character_profiles_from_cards",
     "format_equipment_for_context",
     "normalize_entity_name",
+    "promote_character_prompt",
     "resolve_owner",
 ]

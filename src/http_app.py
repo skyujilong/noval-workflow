@@ -719,6 +719,148 @@ async def get_novels_summary(request: Request) -> JSONResponse:
     return JSONResponse(out)
 
 
+# ── 次要角色「提升为重要角色」（Part 2）────────────────────────────────────────────
+# 带外操作：读 thread 的 entity_cards，对某个「次要角色」跑聚焦 prompt 生成深层设计草稿（draft），
+# 人工审改后 apply 回写卡库。canon 变更走 update_state 全量覆盖 entity_cards（该字段无 reducer，
+# 覆盖语义）。不进主图、不占 interrupt 流，与章节管线正交。
+
+# 提升时只允许覆盖的字段：目标 role + 4 个深层 canon 字段。其余字段（name/summary/personality/
+# abilities/motivation/relations…）保持不变，只做「深化补全」。
+_PROMOTE_FIELDS = ("role", "appearance", "hidden_persona", "arc_trajectory", "ability_contract")
+
+
+def _find_character_card(entity_cards: list, name: str) -> dict | None:
+    """在 values["entity_cards"]（checkpoint 序列化态的 dict 列表）里按 name 精确定位人物卡。"""
+    for c in entity_cards:
+        if isinstance(c, dict) and c.get("type") == "人物" and c.get("name") == name:
+            return c
+    return None
+
+
+async def _load_promotable_card(thread_id: str, name: str) -> tuple[dict | None, dict, JSONResponse | None]:
+    """读 thread state（一次），定位可提升的次要角色卡。
+
+    返回 (目标卡, 全量 values, 错误响应)：成功时错误响应为 None；失败时目标卡为 None、错误响应
+    已就绪（fail-loud：卡不存在→404，非次要角色→400，get_state 失败→502）。values 供调用方
+    取 entity_cards / 全书 canon，避免二次 get_state。
+    """
+    try:
+        st = await _get_lg_client().threads.get_state(thread_id)
+    except Exception as e:
+        return None, {}, JSONResponse({"error": f"get_state failed: {e}"}, status_code=502)
+    values = (st or {}).get("values") or {}
+    card = _find_character_card(values.get("entity_cards") or [], name)
+    if card is None:
+        return None, values, JSONResponse({"error": f"未找到人物卡 name={name!r}"}, status_code=404)
+    if card.get("role") != "次要角色":
+        return None, values, JSONResponse(
+            {"error": f"仅『次要角色』可提升，当前 role={card.get('role')!r}"}, status_code=400
+        )
+    return card, values, None
+
+
+async def post_character_promote_draft(request: Request) -> JSONResponse:
+    """生成「次要角色 → 重要角色」的深层设计草稿（LLM 聚焦生成，供前端人工审改）。
+
+    body: {thread_id, name, target_role}
+    resp: {patch: {role, appearance, hidden_persona, arc_trajectory, ability_contract}, current: 现状卡}
+    fail-loud：缺参/target_role 非法→400，卡不存在→404，非次要角色→400，LLM 无法解析→502。
+    """
+    from types import SimpleNamespace
+
+    from noval_workflow.json_utils import JsonParseError, repair_and_parse
+    from noval_workflow.llm import get_llm
+    from noval_workflow.prompts.entity_cards import PROMOTABLE_ROLES, promote_character_prompt
+
+    body = await _json_body(request)
+    thread_id, name, target_role = body.get("thread_id"), body.get("name"), body.get("target_role")
+    if not thread_id or not name or not target_role:
+        return JSONResponse({"error": "缺 thread_id / name / target_role"}, status_code=400)
+    if target_role not in PROMOTABLE_ROLES:
+        return JSONResponse(
+            {"error": f"target_role={target_role!r} 非法，须为 {'/'.join(PROMOTABLE_ROLES)} 之一"},
+            status_code=400,
+        )
+
+    card, values, err = await _load_promotable_card(thread_id, name)
+    if err is not None:
+        return err
+
+    # 用 values 里的全书 canon 造轻量 state 视图，喂给聚焦 prompt（只读这几个字段）
+    state_view = SimpleNamespace(
+        world_building=values.get("world_building", ""),
+        power_system=values.get("power_system", ""),
+        has_power_system=values.get("has_power_system", False),
+        core_conflicts=values.get("core_conflicts", ""),
+        overall_outline=values.get("overall_outline", ""),
+        volumes=values.get("volumes", []),
+    )
+    prompt = promote_character_prompt(state_view, card, target_role)
+
+    # llm.invoke 是阻塞调用，丢线程池避免堵事件循环
+    llm = get_llm(temperature=0.8, label="promote_character")
+    try:
+        result = await asyncio.to_thread(llm.invoke, prompt)
+        patch = repair_and_parse(result.content, kind=dict)
+    except JsonParseError as e:
+        return JSONResponse({"error": f"LLM 输出无法解析为 JSON：{e}"}, status_code=502)
+    except Exception as e:
+        return JSONResponse({"error": f"LLM 调用失败：{e}"}, status_code=502)
+
+    # 只取允许字段，role 强制为目标值（防 LLM 漂）
+    draft = {k: patch.get(k, "") for k in _PROMOTE_FIELDS}
+    draft["role"] = target_role
+    return JSONResponse({"patch": draft, "current": card})
+
+
+async def post_character_promote_apply(request: Request) -> JSONResponse:
+    """把审改后的深层设计落库（canon 变更）：覆盖目标卡的 role + 4 深层字段，回写全量 entity_cards。
+
+    body: {thread_id, name, patch: {role, appearance, hidden_persona, arc_trajectory, ability_contract}}
+    fail-loud：缺参/role 非法→400，卡不存在→404，非次要角色→400，parse_card 校验失败→400，
+    update_state 失败→502。
+    """
+    from noval_workflow.prompts.entity_cards import PROMOTABLE_ROLES
+    from noval_workflow.state import parse_card
+
+    body = await _json_body(request)
+    thread_id, name, patch = body.get("thread_id"), body.get("name"), body.get("patch")
+    if not thread_id or not name or not isinstance(patch, dict):
+        return JSONResponse({"error": "缺 thread_id / name / patch(object)"}, status_code=400)
+    if patch.get("role") not in PROMOTABLE_ROLES:
+        return JSONResponse(
+            {"error": f"patch.role={patch.get('role')!r} 非法，须为 {'/'.join(PROMOTABLE_ROLES)} 之一"},
+            status_code=400,
+        )
+
+    card, values, err = await _load_promotable_card(thread_id, name)
+    if err is not None:
+        return err
+
+    # 只覆盖允许字段，其余保持不变（深化补全，不推翻既有设定）
+    updated = dict(card)
+    for k in _PROMOTE_FIELDS:
+        if k in patch:
+            updated[k] = patch[k]
+
+    # parse_card 校验合法性（role 枚举 / type / 字段合规）——非法即抛，不写坏数据
+    try:
+        parse_card(updated)
+    except ValueError as e:
+        return JSONResponse({"error": f"卡校验失败：{e}"}, status_code=400)
+
+    # 全量覆盖 entity_cards（无 reducer，last-value 语义）——只换目标卡
+    new_cards = [
+        updated if (isinstance(c, dict) and c.get("type") == "人物" and c.get("name") == name) else c
+        for c in (values.get("entity_cards") or [])
+    ]
+    try:
+        await _get_lg_client().threads.update_state(thread_id, values={"entity_cards": new_cards})
+    except Exception as e:
+        return JSONResponse({"error": f"update_state failed: {e}"}, status_code=502)
+    return JSONResponse({"ok": True, "card": updated})
+
+
 # ── 应用组装 ─────────────────────────────────────────────────────────────────────
 # 前端直连 langgraph dev（跨域），写接口（PUT）会触发预检，故挂 CORS 中间件放行。
 routes = [
@@ -744,6 +886,9 @@ routes = [
     Route("/prompt-library/import", post_prompt_library_import, methods=["POST"]),
     # 小说列表轻量摘要（替代前端对 /threads/search 的全量轮询）
     Route("/novels/summary", get_novels_summary, methods=["GET"]),
+    # 次要角色「提升为重要角色」：LLM 聚焦生成深层设计草稿 → 人工审改 → 落库
+    Route("/character/promote/draft", post_character_promote_draft, methods=["POST"]),
+    Route("/character/promote/apply", post_character_promote_apply, methods=["POST"]),
     # 不挂 html 索引：仅按文件名访问，避免暴露所有小说的文件清单
     Mount("/output", StaticFiles(directory=_output_dir), name="output"),
 ]

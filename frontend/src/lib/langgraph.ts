@@ -7,7 +7,7 @@
 // - interrupt 检测：run 结束后查 threads.getState().tasks[].interrupts，非空即处于中断。
 
 import { Client, type Checkpoint } from "@langchain/langgraph-sdk";
-import type { NovelState } from "./types";
+import type { EntityCard, NovelState } from "./types";
 
 // 平台 API 地址：优先用环境变量，默认直连本地 langgraph dev（端口与 dev-backend.sh 一致）。
 // （直连而非走 vite 代理，避免 SSE 流在代理层出问题；langgraph dev 默认允许 localhost 跨域。）
@@ -239,6 +239,74 @@ export async function savePromptOverrides(
   if (!res.ok) {
     throw new Error(`保存提示词覆盖失败 (${res.status})：${await res.text()}`);
   }
+}
+
+// ── 次要角色「提升为重要角色」（Part 2）──────────────────────────────────────────
+// 走自定义 HTTP 路由（src/http_app.py 的 /character/promote/*），直连 API_URL。
+// draft：LLM 聚焦生成深层设计草稿；apply：审改后覆盖 role + 深层字段落库（canon 变更）。
+
+/** 提升可覆盖的字段补丁——目标 role + 4 个深层 canon 字段（与后端 _PROMOTE_FIELDS 对齐）。 */
+export interface CharacterPromotePatch {
+  role: string;
+  appearance: string;
+  hidden_persona: string;
+  arc_trajectory: string;
+  ability_contract: string;
+}
+
+/** 可提升的目标 role（后端 PROMOTABLE_ROLES 的镜像；主角/次要角色不在内）。 */
+export const PROMOTABLE_ROLES = [
+  "主要配角",
+  "功能性反派",
+  "根源反派",
+  "感情线角色",
+] as const;
+
+export interface PromoteDraftResponse {
+  patch: CharacterPromotePatch; // LLM 生成的深层设计草稿（供人工审改）
+  current: EntityCard; // 现状卡（只读参照，勿被推翻）
+}
+
+/** 把后端 {error} 响应转成可读 Error（非 2xx 时统一走这里）。 */
+async function _promoteError(res: Response, action: string): Promise<Error> {
+  let detail = await res.text();
+  try {
+    const j = JSON.parse(detail);
+    if (j && typeof j.error === "string") detail = j.error;
+  } catch {
+    /* 非 JSON 原样透出 */
+  }
+  return new Error(`${action}失败 (${res.status})：${detail}`);
+}
+
+/** 生成「次要角色 → 重要角色」的深层设计草稿。 */
+export async function promoteCharacterDraft(
+  threadId: string,
+  name: string,
+  targetRole: string
+): Promise<PromoteDraftResponse> {
+  const res = await fetch(`${API_URL}/character/promote/draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, name, target_role: targetRole }),
+  });
+  if (!res.ok) throw await _promoteError(res, "生成提升草稿");
+  return (await res.json()) as PromoteDraftResponse;
+}
+
+/** 把审改后的深层设计落库（覆盖 role + 4 深层字段），返回更新后的卡。 */
+export async function promoteCharacterApply(
+  threadId: string,
+  name: string,
+  patch: CharacterPromotePatch
+): Promise<EntityCard> {
+  const res = await fetch(`${API_URL}/character/promote/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, name, patch }),
+  });
+  if (!res.ok) throw await _promoteError(res, "落库提升");
+  return (await res.json()).card as EntityCard;
 }
 
 // ── 提示词自进化（按小说：提炼/应用/还原）+ 整改库（跨小说：精炼入库/查询/导入）──

@@ -4,9 +4,15 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { reviewTypeLabel, type NovelState } from "../../lib/types";
 import { EntityCardsReadonly } from "../state/EntityCardsReadonly";
+import { PromoteCharacterPanel } from "../state/PromoteCharacterPanel";
+import { usePromoteCharacter } from "../../hooks/usePromoteCharacter";
 
 interface Props {
   state: NovelState;
+  /** 当前小说 thread；提供时「次要角色」卡可提升为重要角色（带外写卡需要 thread 定位）。 */
+  threadId?: string;
+  /** 提升落库成功回调（父层应 refreshValues 刷新卡库）。 */
+  onPromoted?: () => void | Promise<void>;
 }
 
 function Field({ label, value }: { label: string; value?: string }) {
@@ -21,8 +27,11 @@ function Field({ label, value }: { label: string; value?: string }) {
   );
 }
 
-export function NovelDetail({ state }: Props) {
+export function NovelDetail({ state, threadId, onPromoted }: Props) {
   const titles = state.all_chapter_titles ?? [];
+  // 提升会话状态机——hook 需无条件调用；threadId 缺省时不给卡片挂 onPromote（按钮不出现）。
+  const promote = usePromoteCharacter(threadId ?? "", onPromoted ?? (() => {}));
+  const canPromote = !!threadId;
   return (
     <div className="space-y-3 p-3">
       <div className="flex items-center justify-between">
@@ -54,9 +63,16 @@ export function NovelDetail({ state }: Props) {
       {state.entity_cards?.length > 0 && (
         <div>
           <div className="mb-0.5 text-xs font-medium text-gray-500">人物档案 / 实体卡库</div>
-          <EntityCardsReadonly cards={state.entity_cards} />
+          <EntityCardsReadonly
+            cards={state.entity_cards}
+            onPromote={canPromote ? promote.open : undefined}
+          />
         </div>
       )}
+
+      {/* 次要角色提升面板（受 promote.session 控制，null 时不渲染） */}
+      <PromoteCharacterPanel ctl={promote} />
+
 
       <Field label="当前弧线大纲" value={state.current_arc_outline} />
 

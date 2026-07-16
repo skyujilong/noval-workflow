@@ -432,7 +432,7 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                       </button>
                     </div>
                   )}
-                  <NovelDetail state={state} />
+                  <NovelDetail state={state} threadId={threadId} onPromoted={refreshValues} />
                   {!state.novel_name && (
                     <div className="px-4 pb-4">
                       <button
