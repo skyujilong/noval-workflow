@@ -1,8 +1,8 @@
 """回归测试：快照台账（含阶段固化数据）的生成/自审必须注入完整基础设定（世界观）。
 
-背景：4 个快照类型（character_status/relations/foreshadowing/phase_summary）此前在
-generate() 与 llm_self_review() 里刻意丢弃 system_context（唯一承载【世界观设定】），
-导致固化数据的等级/装备/资源等硬性数值无法与世界观力量/等级体系对齐。
+背景：快照类型（foreshadowing/phase_summary）此前在 generate() 与 llm_self_review() 里
+刻意丢弃 system_context（唯一承载【世界观设定】），导致固化数据的等级/资源等硬性数值
+无法与世界观力量/等级体系对齐。（人物动态 status/relations 两条腿已并入 CharacterCard。）
 
 修复：_prepare_* 以 include_identity=False 产出「纯设定块」system_context，节点再拼上
 「数据维护员/审核员」身份 + 完整设定。本测试锁定：
@@ -19,7 +19,7 @@ from noval_workflow import subgraph as sg
 from noval_workflow.context import build_foundation_context
 from noval_workflow.nodes.foundation import prepare_initial_status, save_initial_status
 from noval_workflow.prompts import phase_summary_prompt
-from noval_workflow.state import NovelState, ReviewSubState
+from noval_workflow.state import NovelState, ReviewSubState, parse_card
 
 WORLD = "本世界修炼分九境：炼气、筑基、金丹、元婴……灵石为通用货币，一灵石兑百文。"
 # build_foundation_context 带身份时的稳定前缀标记（与题材无关）
@@ -100,7 +100,11 @@ def test_prepare_initial_status_reuses_phase_summary_snapshot_wiring():
     state = NovelState(
         genre="玄幻",
         world_building=WORLD,
-        character_profiles="主角：叶凡，炼气一层，携带一枚上古铜棺碎片。",
+        # 人物档案真源已迁至 entity_cards：种子一张主角卡，prepare_initial_status 从卡库渲染
+        entity_cards=[parse_card({
+            "name": "叶凡", "type": "人物", "role": "主角",
+            "abilities": "炼气一层", "summary": "携带一枚上古铜棺碎片",
+        })],
     )
     out = prepare_initial_status(state)
 
@@ -108,8 +112,9 @@ def test_prepare_initial_status_reuses_phase_summary_snapshot_wiring():
     assert "人物初始基线" in out["task_prompt"], "task_prompt 应来自 initial_status_prompt"
     sc = out["system_context"]
     assert WORLD in sc and "【人物档案】" in sc, "system_context 须含世界观与人物档案（初始化数据来源）"
+    assert "叶凡" in sc, "人物档案从卡库渲染（deep 视图）"
     assert _IDENTITY_PREAMBLE not in sc, "include_identity=False 不应含创作者身份前缀"
-    # 顶层 foundation 节点须清掉上一步（character_profiles）的审核桥接字段
+    # 顶层 foundation 节点须清掉上一步（character_cards）的审核桥接字段
     assert out["current_draft"] == "" and out["approved"] is False
 
 

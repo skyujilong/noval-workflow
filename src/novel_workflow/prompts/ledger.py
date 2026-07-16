@@ -1,178 +1,16 @@
-"""台账类提示词（character_status / relations / foreshadowing / phase_summary）
-与伏笔台账工具函数。
+"""台账类提示词（foreshadowing / phase_summary）与伏笔台账工具函数。
 
-这些提示词与台账格式强相关、与题材无关，所有题材共享。从原 prompts.py 原样迁移。
+这些提示词与台账格式强相关、与题材无关，所有题材共享。
+人物动态（处境/动机/关系）已并入 CharacterCard，原 character_status / character_relations
+两条散文快照腿已删——本模块只剩伏笔与阶段固化数据两条与实体正交的台账。
 """
 
 from __future__ import annotations
 
-from typing import Union
-
 from noval_workflow.prompts.base import _PromptState
 
 
-def character_status_prompt(state: _PromptState, chapter_context: str = "") -> str:
-    """Build the prompt for updating character dynamic status."""
-    prev = ""
-    if state.character_status:
-        prev = f"\n\n【上次人物状态快照】\n{state.character_status}"
-
-    chapter_section = ""
-    if chapter_context:
-        chapter_section = f"\n\n【近期章节内容（请据此更新状态）】\n{chapter_context}"
-
-    carry_over = "\n- 上次快照中的每位人物都必须出现在本次输出中，状态未变者各字段直接沿用原文" if prev else ""
-    return f"""请根据已完成的章节内容，更新【人物动态状态】。{prev}{chapter_section}
-
-要求：
-- 输出完整的当前人物状态快照，涵盖主角及所有主要配角{carry_over}
-- 本批有变化的字段末尾标注【变化】，说明具体变动
-- 严格按照以下固定格式输出，每个人物一组
-
-**固定输出格式（每位关键角色一组，按角色分块）**
-
-角色：XXX
-【当前位置】（所在场景/地点，≤15字）
-【情绪/状态】（当前心理状态与身体状况，≤15字）
-【当前目标】（本阶段的行动目标，≤20字）
-【关键处境】（本批最重要的处境变化或持续状态，≤30字，无变化写原来的值，不更新）
-
-请直接输出更新后的人物动态状态，不需要额外标题。"""
-
-
-def character_relations_prompt(state: _PromptState, chapter_context: str = "") -> str:
-    """Build the prompt for updating character relations and faction dynamics."""
-    prev = ""
-    if state.character_relations:
-        prev = f"\n\n【上次关系/势力快照】\n{state.character_relations}"
-
-    chapter_section = ""
-    if chapter_context:
-        chapter_section = f"\n\n【近期章节内容（请据此更新关系）】\n{chapter_context}"
-
-    carry_over = "\n- 完整列出上次快照中所有的人物关系与势力格局，状态未变者直接沿用原文" if prev else ""
-    return f"""请根据已完成的章节内容，更新【人物关系/势力格局】。{prev}{chapter_section}
-
-要求：{carry_over}
-- 本批有变化的条目末尾标注【变化】，说明转变原因
-- 严格按照以下固定格式分两块输出
-
-**固定输出格式**
-
-【人物关系】
-角色A → 角色B：当前关系描述（≤20字）
-（有变化时在行末加【变化】，下一行写变化原因，≤20字）
-
-【势力格局】
-势力名：当前状态与力量描述（≤30字）
-（有变化时在行末加【变化】，下一行写变化原因，≤20字）
-
-请直接输出更新后的人物关系/势力格局，不需要额外标题。"""
-
-
-_FORESHADOW_PRUNE_DISTANCE = 5  # 已收超过此章数后从上次台账中物理删除
-
-
-def _migrate_legacy_foreshadowing(ledger: Union[str, dict]) -> dict:
-    """将老旧字符串格式的伏笔台账迁移为新的结构化 JSON 格式。
-
-    返回的结构：
-    {
-        "pending": [  # 悬置伏笔
-            {
-                "id": "F00",
-                "name": "伏笔名称",
-                "planted_batch": 1,
-                "current_appearance": "当前潜伏表现",
-                "core_purpose": "核心作用",
-                "planned_recovery_range": "预定回收区间",
-                "freedom": "高/中/低"
-            }
-        ],
-        "collected": [  # 已收伏笔
-            {
-                "id": "F00",
-                "name": "伏笔名称",
-                "planted_batch": 1,
-                "current_appearance": "当前潜伏表现",
-                "core_purpose": "核心作用",
-                "planned_recovery_range": "预定回收区间",
-                "freedom": "高/中/低",
-                "recovered_at_chapter": 5
-            }
-        ]
-    }
-    """
-    # 如果已经是 dict（新格式），直接返回
-    if isinstance(ledger, dict):
-        return ledger
-
-    # 空字符串返回空结构
-    if not ledger or not ledger.strip():
-        return {"pending": [], "collected": []}
-
-    import re
-
-    separator = "-------------------------------------"
-    blocks = [b.strip() for b in ledger.split(separator) if b.strip()]
-
-    pending = []
-    collected = []
-
-    for block in blocks:
-        # 提取各字段
-        def extract_field(name: str) -> str:
-            m = re.search(rf"【{name}】(.*?)(?=\n【|$)", block, re.DOTALL)
-            return m.group(1).strip() if m else ""
-
-        entry_id = extract_field("伏笔编号")
-        if not entry_id:
-            continue  # 无效条目，跳过
-
-        entry = {
-            "id": entry_id,
-            "name": extract_field("伏笔名称"),
-            "planted_batch": 0,  # 默认值，后面尝试解析
-            "current_appearance": extract_field("当前潜伏表现"),
-            "core_purpose": extract_field("核心作用"),
-            "planned_recovery_range": extract_field("预定回收区间"),
-            "freedom": extract_field("自由度") or "中",
-        }
-
-        # 解析埋点批次（纯数字）
-        planted_batch_str = extract_field("埋点批次")
-        try:
-            m = re.search(r"(\d+)", planted_batch_str)
-            if m:
-                entry["planted_batch"] = int(m.group(1))
-        except (ValueError, TypeError):
-            pass
-
-        # 判断是否已回收
-        is_collected = "是" in extract_field("是否已回收")
-        if is_collected:
-            recovered_at_str = extract_field("回收章节")
-            try:
-                m = re.search(r"第?(\d+)章?", recovered_at_str)
-                if m:
-                    entry["recovered_at_chapter"] = int(m.group(1))
-            except (ValueError, TypeError):
-                entry["recovered_at_chapter"] = 0
-            collected.append(entry)
-        else:
-            pending.append(entry)
-
-    return {"pending": pending, "collected": collected}
-
-
-def _prune_collected_foreshadowing(ledger: Union[str, dict], current_chapter: int) -> dict:
-    """【已弃用，仅迁移不删除】将老旧字符串格式迁移为结构化格式。
-
-    注意：不再物理删除旧的已收伏笔，数据层面永久保留全部历史。
-    只在上下文显示层面过滤近5章的已收伏笔，参见 _format_foreshadowing_for_context。
-    """
-    # 仅做迁移，不再过滤删除
-    return _migrate_legacy_foreshadowing(ledger)
+_FORESHADOW_PRUNE_DISTANCE = 5  # 已收超过此章数后仅从上下文显示层过滤（数据层永久保留）
 
 
 def _format_foreshadowing_for_context(ledger: dict, current_chapter: int = 0) -> str:
@@ -239,10 +77,8 @@ def foreshadowing_prompt(state: _PromptState, chapter_context: str = "") -> str:
 
     prev = ""
     if state.foreshadowing:
-        # 迁移格式（不再物理删除旧伏笔）
-        structured = _prune_collected_foreshadowing(state.foreshadowing, current_chapter)
-        # 仅显示层面过滤近5章已收伏笔，数据保留完整
-        formatted = _format_foreshadowing_for_context(structured, current_chapter)
+        # state.foreshadowing 恒为结构化 dict（无 compat）；仅显示层过滤近5章已收伏笔，数据保留完整
+        formatted = _format_foreshadowing_for_context(state.foreshadowing, current_chapter)
         if formatted:
             prev = f"\n\n【上次伏笔台账】\n{formatted}"
 

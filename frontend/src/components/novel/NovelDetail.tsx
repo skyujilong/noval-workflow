@@ -3,6 +3,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { reviewTypeLabel, type NovelState } from "../../lib/types";
+import { EntityCardsReadonly } from "../state/EntityCardsReadonly";
 
 interface Props {
   state: NovelState;
@@ -47,7 +48,16 @@ export function NovelDetail({ state }: Props) {
       <Field label="力量体系" value={state.power_system} />
       <Field label="核心冲突" value={state.core_conflicts} />
       <Field label="整体大纲" value={state.overall_outline} />
-      <Field label="人物档案" value={state.character_profiles} />
+
+      {/* 人物档案真源已并入 entity_cards（CharacterCard）——复用只读卡库视图整体展示，
+          按 type 分组含人物/装备/物品/势力/地点，比原散文字段信息更完整。 */}
+      {state.entity_cards?.length > 0 && (
+        <div>
+          <div className="mb-0.5 text-xs font-medium text-gray-500">人物档案 / 实体卡库</div>
+          <EntityCardsReadonly cards={state.entity_cards} />
+        </div>
+      )}
+
       <Field label="当前弧线大纲" value={state.current_arc_outline} />
 
       {/* 「当前草稿」只在草稿仍待审时展示（approved=false）。通过后 current_draft 会残留到下一个

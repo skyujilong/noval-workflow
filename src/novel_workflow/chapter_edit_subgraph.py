@@ -1,8 +1,11 @@
-"""Chapter-edit subgraph: 5-step serial chain after chapter generation.
+"""Chapter-edit subgraph: 4-step serial chain after chapter generation.
 
 Topology (zero conditional branches at this level):
-  arc_step → status_step → relations_step → foreshadow_step → phase_step
+  arc_step → foreshadow_step → phase_step → entity_discover_step
   → chapter_edit_done → END
+
+人物动态（处境/动机/关系）已并入 CharacterCard，由 entity_discover_step 单腿覆盖更新——
+原 status_step / relations_step 两条散文快照腿已删。
 
 Each *_step is a pre-compiled subgraph that internally asks the user
 "是否执行？" before doing anything. The user can skip any step by answering
@@ -11,6 +14,7 @@ Each *_step is a pre-compiled subgraph that internally asks the user
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
@@ -22,12 +26,7 @@ from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
 from noval_workflow.nodes.entity_cards import _prepare_entity_discover, _save_entity_discover
-import logging
-
 from noval_workflow.prompts import (
-    _migrate_legacy_foreshadowing,
-    character_relations_prompt,
-    character_status_prompt,
     foreshadowing_prompt,
     phase_summary_prompt,
 )
@@ -58,12 +57,11 @@ class ChapterEditSubState:
     core_theme: str = ""
     world_building: str = ""
     # 力量体系为作品级 state，_ContextState Protocol 要求子图必须镜像它——否则
-    # _prepare_status/relations/foreshadowing/phase 里的 build_foundation_context 会 AttributeError。
+    # _prepare_foreshadowing/phase 里的 build_foundation_context 会 AttributeError。
     has_power_system: bool = False
     power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
-    character_profiles: str = ""
 
     # ── Phase 2 章节追踪（只读）─────────────────────────────────────────────────
     current_batch_titles: list[str] = field(default_factory=list)
@@ -76,9 +74,8 @@ class ChapterEditSubState:
     current_arc_outline: str = ""
 
     # ── Phase 2.5 动态状态库（读入最新值 + 覆盖写回）─────────────────────────
-    character_status: str = ""
-    character_relations: str = ""
-    foreshadowing: str = ""
+    # 人物动态（处境/动机/关系）已并入 entity_cards，原 character_status/relations 桥接字段已删。
+    foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
     # 统一实体卡库：章末 entity_discover_step 读入 + 写回（补新卡 / 更新动态字段）。
     entity_cards: list = field(default_factory=list)
@@ -105,31 +102,7 @@ class ChapterEditSubState:
     titles_needs_regen: bool = False
 
 
-# ── prepare / save closures for the 4 tracking steps ─────────────────────────
-
-def _prepare_status(state) -> dict:
-    return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
-        "task_prompt": character_status_prompt(state, build_chapter_context(state)),
-        "review_type": "character_status",
-    }
-
-
-def _save_status(state) -> dict:
-    return {"character_status": state.current_draft} if state.current_draft else {}
-
-
-def _prepare_relations(state) -> dict:
-    return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
-        "task_prompt": character_relations_prompt(state, build_chapter_context(state)),
-        "review_type": "character_relations",
-    }
-
-
-def _save_relations(state) -> dict:
-    return {"character_relations": state.current_draft} if state.current_draft else {}
-
+# ── prepare / save closures for the tracking steps ───────────────────────────
 
 def _prepare_foreshadowing(state) -> dict:
     return {
@@ -140,27 +113,16 @@ def _prepare_foreshadowing(state) -> dict:
 
 
 def _save_foreshadowing(state) -> dict:
-    """保存 LLM 输出的伏笔台账，支持 JSON 格式和老旧字符串格式。"""
+    """保存 LLM 输出的伏笔台账（结构化 JSON）。无 compat——解析失败即 fail-loud 触发重生成。"""
     if not state.current_draft:
         return {}
 
-    draft = state.current_draft.strip()
-
-    # 尝试解析 JSON（先修复：LLM 生成的台账常带围栏 / 尾逗号 / 截断等脏输出）
+    # 先修复再解析：LLM 生成的台账常带围栏 / 尾逗号 / 截断等脏输出；仍失败即抛，交审核循环重生成
     try:
-        foreshadowing = repair_and_parse(draft, kind=dict)
-        _logger.info("伏笔台账 JSON 解析成功")
-        return {"foreshadowing": foreshadowing}
-    except JsonParseError as e:
-        _logger.warning(f"伏笔台账 JSON 解析失败，尝试迁移旧格式: {e}")
-        # fallback: 尝试用迁移函数解析老旧字符串格式
-        migrated = _migrate_legacy_foreshadowing(draft)
-        if migrated.get("pending") or migrated.get("collected"):
-            _logger.info("伏笔台账旧格式迁移成功")
-            return {"foreshadowing": migrated}
-        # 迁移也失败，原样返回（字符串），留待后续处理
-        _logger.error("伏笔台账迁移失败，保留原始字符串格式")
-        return {"foreshadowing": state.current_draft}
+        foreshadowing = repair_and_parse(state.current_draft.strip(), kind=dict)
+    except JsonParseError as exc:
+        raise ValueError(f"伏笔台账 JSON 解析失败: {exc}") from exc
+    return {"foreshadowing": foreshadowing}
 
 
 def _prepare_phase(state) -> dict:
@@ -181,26 +143,6 @@ _ENTRY_HINT = "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输�
 
 _ARC_STEP = make_arc_edit_subgraph(
     entry_prompt="是否调整弧线大纲？",
-)
-
-_STATUS_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新人物动态状态？" + _ENTRY_HINT,
-    prepare_fn=_prepare_status,
-    save_fn=_save_status,
-    entry_gate_type=InterruptType.STATUS_ENTRY_GATE,
-    direction_type=InterruptType.STATUS_DIRECTION_INPUT,
-    enable_llm_review=True,
-    llm_review_max=3,
-)
-
-_RELATIONS_STEP = make_edit_step_subgraph(
-    entry_prompt="是否更新人物关系/势力格局？" + _ENTRY_HINT,
-    prepare_fn=_prepare_relations,
-    save_fn=_save_relations,
-    entry_gate_type=InterruptType.RELATIONS_ENTRY_GATE,
-    direction_type=InterruptType.RELATIONS_DIRECTION_INPUT,
-    enable_llm_review=True,
-    llm_review_max=3,
 )
 
 _FORESHADOW_STEP = make_edit_step_subgraph(
@@ -237,13 +179,11 @@ _ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
 )
 
 
-# ── Top-level chapter_edit_subgraph: 7 nodes, 0 conditional branches ──────────
+# ── Top-level chapter_edit_subgraph: 5 nodes, 0 conditional branches ──────────
 
 _builder = StateGraph(ChapterEditSubState)
 
 _builder.add_node("arc_step", _ARC_STEP)
-_builder.add_node("status_step", _STATUS_STEP)
-_builder.add_node("relations_step", _RELATIONS_STEP)
 _builder.add_node("foreshadow_step", _FORESHADOW_STEP)
 _builder.add_node("phase_step", _PHASE_STEP)
 _builder.add_node("entity_discover_step", _ENTITY_DISCOVER_STEP)
@@ -251,9 +191,7 @@ _builder.add_node("chapter_edit_done", chapter_edit_done)
 
 _builder.set_entry_point("arc_step")
 
-_builder.add_edge("arc_step", "status_step")
-_builder.add_edge("status_step", "relations_step")
-_builder.add_edge("relations_step", "foreshadow_step")
+_builder.add_edge("arc_step", "foreshadow_step")
 _builder.add_edge("foreshadow_step", "phase_step")
 _builder.add_edge("phase_step", "entity_discover_step")
 _builder.add_edge("entity_discover_step", "chapter_edit_done")

@@ -9,9 +9,8 @@ export interface ReviewHistoryEntry {
 
 /**
  * 伏笔台账（state.py `foreshadowing: dict`）。运行时是结构化 dict
- * （形如 `{"pending": [...], "collected": [...]}`），历史遗留数据可能是字符串。
- * 之前前端误标为 string——实际平台返回的是对象；这里按真实形态标注，
- * 兼容老旧字符串格式（后端 _migrate_legacy_foreshadowing 会在读取时迁移）。
+ * （形如 `{"pending": [...], "collected": [...]}`）。string 分支仅为兜底历史遗留的
+ * 纯文本台账（编辑器走 legacy textarea），新流程一律产出结构化 dict。
  */
 export type ForeshadowingLedger = Record<string, unknown> | string;
 
@@ -45,25 +44,34 @@ export interface Volume {
   status: "planning" | "in_progress" | "closed";
 }
 
-/** 统一实体卡(镜像 state.py::EntityCard)。type 条件字段不适用时为空串。 */
+/** 统一实体卡(镜像 state.py 的 EntityCard 判别联合)。
+ * 前端用「扁平并集接口」镜像后端 CharacterCard/ItemCard/SimpleEntityCard——type 不适用的字段为
+ * undefined，渲染时按 type 分支取字段。 */
 export interface EntityCard {
   name: string;
   type: string; // 人物 / 物品 / 装备 / 势力 / 地点
   aliases?: string[];
   summary?: string;
   first_appear_chapter?: number;
-  // 人物段
+  // 人物段(CharacterCard)
+  role?: string; // 角色定位：主角/主要配角/功能性反派/根源反派/感情线角色/次要角色
   appearance?: string;
   speech_style?: string;
   personality?: string;
-  motivation?: string;
-  relations?: string;
   abilities?: string;
-  // 物品/装备段
+  hidden_persona?: string; // 深层隐藏人设(canon·深层视图)
+  arc_trajectory?: string; // 四卷成长弧光(canon·深层视图)
+  ability_contract?: string; // 能力底牌契约(canon·深层视图)
+  motivation?: string; // 动态
+  current_state?: string; // 当前处境(动态，吸收原 character_status)
+  relations?: string; // 动态
+  // 物品/装备段(ItemCard)
   owner?: string;
   effect?: string;
   status?: string;
   rank?: string;
+  // 势力/地点段(SimpleEntityCard)
+  standing?: string; // 势力强弱/格局(动态，吸收原 character_relations 势力部分)
 }
 
 /** NovelState（state.py）— 平台 thread state 的 values 结构 */
@@ -102,7 +110,7 @@ export interface NovelState {
   power_system: string;
   core_conflicts: string;
   overall_outline: string;
-  character_profiles: string;
+  // 人物档案真源已并入 entity_cards（CharacterCard），不再有独立的 character_profiles 散文字段
 
   // Phase 2：章节写作追踪
   current_batch_titles: string[];
@@ -113,9 +121,8 @@ export interface NovelState {
   continue_writing: boolean;
 
   // Phase 2.5：弧线与动态状态库
+  // 人物动态状态/关系已并入 entity_cards（CharacterCard.current_state/relations、势力 standing）
   current_arc_outline: string;
-  character_status: string;
-  character_relations: string;
   foreshadowing: ForeshadowingLedger;
   phase_summary: string;
 
@@ -164,7 +171,6 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   power_system: "",
   core_conflicts: "",
   overall_outline: "",
-  character_profiles: "",
   current_batch_titles: [],
   all_chapter_titles: [],
   all_chapter_summaries: [],
@@ -172,8 +178,6 @@ export const EMPTY_NOVEL_STATE: NovelState = {
   total_chapters_written: 0,
   continue_writing: true,
   current_arc_outline: "",
-  character_status: "",
-  character_relations: "",
   foreshadowing: {},
   phase_summary: "",
   chapter_plan: [],
@@ -190,18 +194,15 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   power_system: "力量体系",
   core_conflicts: "核心冲突",
   overall_outline: "整体大纲",
-  character_profiles: "人物档案",
+  character_cards: "人物档案（结构化卡司）",
   titles: "章节标题",
   chapter: "章节正文",
   arc_outline: "弧线大纲",
   chapter_plan: "章节规划(远端锚点)",
   volumes: "分卷规划",
-  character_status: "人物动态状态",
-  character_relations: "人物关系/势力格局",
   foreshadowing: "伏笔台账",
   phase_summary: "阶段固化数据",
   scene_beats: "章节 scene beats",
-  character_profiles_discover: "角色档案发现",
   entity_cards: "登场实体卡",
   entity_discover: "实体发现/更新",
 };

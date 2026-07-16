@@ -3,10 +3,13 @@
 
 import type { GraphEdge, GraphNode } from "../../lib/langgraph";
 
-export type PhaseKey = "p0" | "p1" | "p25" | "p2" | "review" | "other";
+export type PhaseKey = "pm1" | "p0" | "p1" | "p25" | "p2" | "review" | "other";
 
 /** 根据节点名归类到 Phase */
 export function phaseOf(name: string): PhaseKey {
+  // Phase -1 灵感脑爆：独占一列，避免和 review_* 同列堆叠导致高亮串位
+  // （brainstorm_* 原本落到 "other"，而 "other" 曾与 "review" 共用同一 x）
+  if (name.startsWith("brainstorm")) return "pm1";
   if (name === "__start__" || name === "collect_user_inputs") return "p0";
   // 弧线相关
   if (
@@ -38,8 +41,9 @@ export function phaseOf(name: string): PhaseKey {
   return "other";
 }
 
-const PHASE_ORDER: PhaseKey[] = ["p0", "p1", "p25", "p2", "review", "other"];
+const PHASE_ORDER: PhaseKey[] = ["pm1", "p0", "p1", "p25", "p2", "review", "other"];
 const PHASE_LABEL: Record<PhaseKey, string> = {
+  pm1: "Phase -1 · 灵感脑爆",
   p0: "Phase 0 · 用户输入",
   p1: "Phase 1 · 基础设定",
   p25: "Phase 2.5 · 弧线规划",
@@ -48,13 +52,16 @@ const PHASE_LABEL: Record<PhaseKey, string> = {
   other: "其他",
 };
 
+// 每个 phase 独占一列 x（保持 260 间距）。关键：review 与 other 不再同 x，
+// 否则脑爆/一致性等 other 节点会与 review_* 视觉重叠，高亮串到别的节点上。
 const PHASE_X: Record<PhaseKey, number> = {
-  p0: 0,
-  p1: 260,
-  p25: 520,
-  p2: 780,
-  review: 1040,
-  other: 1040,
+  pm1: 0,
+  p0: 260,
+  p1: 520,
+  p25: 780,
+  p2: 1040,
+  review: 1300,
+  other: 1560,
 };
 
 export interface LayoutedNode {
@@ -77,6 +84,7 @@ export function layoutGraph(
   schemaEdges: GraphEdge[]
 ): LayoutResult {
   const buckets: Record<PhaseKey, GraphNode[]> = {
+    pm1: [],
     p0: [],
     p1: [],
     p25: [],

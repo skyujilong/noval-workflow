@@ -49,9 +49,10 @@ _FOUNDATION_FIELDS: list[tuple[str, str]] = [
     ("power_system", "力量体系"),
     ("core_conflicts", "核心冲突"),
     ("overall_outline", "整体大纲与结局"),
-    ("character_profiles", "人物档案"),
     ("phase_summary", "阶段固化数据（第0章基线）"),
 ]
+# 人物档案真源已迁至 entity_cards（CharacterCard），是 list 不是可修订 str 字段——故不进
+# 上面的字段表/_REVISABLE_FIELDS 白名单，只在 _collect_foundation 里从卡库渲染进只读审计材料。
 # 允许被 AI 修订应用回写的字段白名单（key → 标签）：拦掉任何越界写入。
 _REVISABLE_FIELDS: dict[str, str] = dict(_FOUNDATION_FIELDS)
 
@@ -71,14 +72,22 @@ def _collect_foundation(state: NovelState) -> str:
     为空，此段为空不产生噪音；未来若冻结前已有卡则能被交叉核对）。卡库是 list、不是可修订
     的 str 字段，故只进只读审计材料，不进 _REVISABLE_FIELDS 白名单。
     """
-    from noval_workflow.prompts import format_equipment_for_context
+    from noval_workflow.prompts import (
+        format_character_profiles_from_cards,
+        format_equipment_for_context,
+    )
 
     parts = []
     for key, name in _FOUNDATION_FIELDS:
         val = (getattr(state, key, "") or "").strip()
         if val:
             parts.append(f"## 【{name}】\n{val}")
-    equipment = format_equipment_for_context(getattr(state, "entity_cards", []) or [])
+    cards = getattr(state, "entity_cards", []) or []
+    # 人物档案：从卡库渲染深层视图（含四卷弧光/底牌契约），供交叉核对人物能力是否越出体系
+    profiles = format_character_profiles_from_cards(cards, deep=True)
+    if profiles:
+        parts.append(f"## 【人物档案（卡库真源）】\n{profiles}")
+    equipment = format_equipment_for_context(cards)
     if equipment:
         parts.append(f"## 【实体卡·装备/物品（真源）】\n{equipment}")
     return "\n\n".join(parts)

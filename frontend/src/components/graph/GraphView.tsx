@@ -41,6 +41,7 @@ interface Props {
 }
 
 const PHASE_COLOR: Record<string, string> = {
+  pm1: "#d946ef",
   p0: "#a855f7",
   p1: "#3b82f6",
   p25: "#22c55e",

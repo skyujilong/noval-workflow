@@ -38,7 +38,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import invoke_json, repair_and_parse
 from noval_workflow.llm import get_llm
-from noval_workflow.prompts import FORESHADOW_PRUNE_ANALYSIS_PROMPT
+from noval_workflow.prompts import (
+    FORESHADOW_PRUNE_ANALYSIS_PROMPT,
+    format_character_profiles_from_cards,
+)
 from noval_workflow.state import ReviewSubState, reset_review_fields
 from noval_workflow.subgraph import (
     generate,
@@ -76,15 +79,12 @@ class EditStepSubState(ReviewSubState):
     power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
-    character_profiles: str = ""
     current_batch_titles: list[str] = field(default_factory=list)
     current_chapter_index: int = 0
     total_chapters_written: int = 0
     all_chapter_titles: list[str] = field(default_factory=list)
     all_chapter_summaries: list[str] = field(default_factory=list)
     current_arc_outline: str = ""
-    character_status: str = ""
-    character_relations: str = ""
     foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
     # 统一实体卡库——桥接父图 NovelState.entity_cards：章末 entity_discover 读入 + 写回，
@@ -198,7 +198,7 @@ def make_edit_step_subgraph(
                 all_titles_count=len(state.all_chapter_titles),
                 all_titles=all_titles_str or "（暂无章节标题）",
                 world_building=state.world_building or "（暂无世界观设定）",
-                character_profiles=state.character_profiles or "（暂无人物档案）",
+                character_profiles=format_character_profiles_from_cards(state.entity_cards) or "（暂无人物档案）",
                 foreshadowing_json=json.dumps(foreshadow_data, ensure_ascii=False, indent=2),
             )
 

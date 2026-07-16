@@ -44,15 +44,8 @@ class InterruptType(str, Enum):
     ARC_CONFIRM = "arc_confirm"  # 弧线 AI 生成结果确认
     ARC_CONFIRM_ERROR = "arc_confirm_error"  # 弧线生成失败，手动输入
 
-    # 人物动态状态快照
-    STATUS_ENTRY_GATE = "status_entry_gate"  # 人物状态更新入门
-    STATUS_DIRECTION_INPUT = "status_direction_input"  # 状态调整方向输入
-    STATUS_REVIEW = "status_review"  # 人物动态状态审核
-
-    # 人物关系/势力格局快照
-    RELATIONS_ENTRY_GATE = "relations_entry_gate"  # 关系格局更新入门
-    RELATIONS_DIRECTION_INPUT = "relations_direction_input"  # 关系调整方向输入
-    RELATIONS_REVIEW = "relations_review"  # 人物关系审核
+    # 人物动态（处境/动机/关系）已并入 CharacterCard，由 entity_discover 单腿更新——
+    # 原 STATUS_* / RELATIONS_* 两组快照 gate 已删。
 
     # 伏笔台账快照
     FORESHADOWING_ENTRY_GATE = "foreshadowing_entry_gate"  # 伏笔更新入门
@@ -68,11 +61,6 @@ class InterruptType(str, Enum):
     SCENE_BEATS_ENTRY_GATE = "scene_beats_entry_gate"  # 是否为本章生成 scene beats
     SCENE_BEATS_DIRECTION_INPUT = "scene_beats_direction_input"  # scene beats 调整方向输入（预留）
     SCENE_BEATS_REVIEW = "scene_beats_review"  # scene beats 审核
-
-    # 章级角色档案发现（每章正文完成后自动，可跳步骤；插在 generate_summary 之后、chapter_edit_subgraph 之前）
-    CHARACTER_PROFILES_DISCOVER_ENTRY_GATE = "character_profiles_discover_entry_gate"  # 是否本章发现新角色 / 补充档案
-    CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT = "character_profiles_discover_direction_input"  # 调整方向输入（预留，ask_direction=False 不触发）
-    CHARACTER_PROFILES_DISCOVER_REVIEW = "character_profiles_discover_review"  # 合流后完整档案审核
 
     # 章前登场实体卡（EntityCard：人物/物品/装备/势力/地点，可跳步骤；插在 scene_beats 之后、prepare_chapter 之前）
     ENTITY_CARDS_ENTRY_GATE = "entity_cards_entry_gate"  # 是否为本章登场实体建卡
@@ -124,14 +112,10 @@ class InterruptType(str, Enum):
 # human_review 据此反查精确的 InterruptType，写入 payload 的 type 字段，
 # 让前端无需猜测即可定位表单与业务上下文。
 _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
-    "character_status": InterruptType.STATUS_REVIEW,
-    "character_relations": InterruptType.RELATIONS_REVIEW,
     "foreshadowing": InterruptType.FORESHADOWING_REVIEW,
     "phase_summary": InterruptType.PHASE_SUMMARY_REVIEW,
     "chapter": InterruptType.REVIEW_CHAPTER,
     "scene_beats": InterruptType.SCENE_BEATS_REVIEW,
-    # 章级角色档案发现走专属 InterruptType（对应 human_review 表单，但需与 Phase 1 的 character_profiles 区分开）
-    "character_profiles_discover": InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW,
     # 章前登场实体卡走专属 InterruptType
     "entity_cards": InterruptType.ENTITY_CARDS_REVIEW,
     # 章末实体发现/更新走专属 InterruptType
@@ -140,7 +124,7 @@ _REVIEW_TYPE_TO_INTERRUPT_TYPE: dict[str, InterruptType] = {
     "volumes": InterruptType.REVIEW_GENERIC,
     # 以下 review_type 共用通用审核表单，归入 REVIEW_GENERIC：
     #   foundation / core_theme / world_building / core_conflicts /
-    #   overall_outline / character_profiles / titles / arc_outline
+    #   overall_outline / character_cards（Phase-1 结构化卡司）/ titles / arc_outline
 }
 
 

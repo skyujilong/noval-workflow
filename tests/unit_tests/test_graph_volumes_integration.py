@@ -2,7 +2,7 @@
 
 验证：
 1. Step 06 装配后新增节点 (prepare_volumes/review_volumes/save_volumes/volume_boundary_gate) 在图上
-2. save_overall_outline → prepare_volumes → review → save → prepare_character_profiles 链路
+2. save_overall_outline → prepare_volumes → review → save → prepare_character_cards 链路
 3. save_config / ask_continue 分支路由到 volume_boundary_gate → prepare_chapter_plan
 4. 三处 prompt (chapter_plan / arc_outline / chapter) 在 volumes 非空时含【当前卷位置】，
    volumes 为空时不含（向后兼容）。
@@ -29,15 +29,15 @@ def test_graph_has_volume_nodes():
 
 
 def test_graph_wires_volumes_chain_after_overall_outline():
-    """save_overall_outline 之后的下一站是 prepare_volumes（不是 prepare_character_profiles）。"""
+    """save_overall_outline 之后的下一站是 prepare_volumes（不是 prepare_character_cards）。"""
     edges = graph.get_graph().edges
     downstream = {(e.source, e.target) for e in edges}
     assert ("save_overall_outline", "prepare_volumes") in downstream
     assert ("prepare_volumes", "review_volumes") in downstream
     assert ("review_volumes", "save_volumes") in downstream
-    assert ("save_volumes", "prepare_character_profiles") in downstream
+    assert ("save_volumes", "prepare_character_cards") in downstream
     # 原直连边应已断
-    assert ("save_overall_outline", "prepare_character_profiles") not in downstream
+    assert ("save_overall_outline", "prepare_character_cards") not in downstream
 
 
 def test_graph_gate_before_chapter_plan():

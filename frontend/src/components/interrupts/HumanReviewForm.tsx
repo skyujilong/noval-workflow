@@ -16,7 +16,11 @@ import { SceneBeatsCards } from "./SceneBeatsCards";
 import { ChapterPlanCards } from "./ChapterPlanCards";
 import { VolumesReviewCards } from "./VolumesReviewCards";
 import { VolumesReviewForm } from "./VolumesReviewForm";
+import { EntityCardsReviewCards } from "./EntityCardsReviewCards";
 import { ThinkingSwitch } from "./ThinkingSwitch";
+
+// 实体卡类审核（草稿是 {"new_cards":[...]} 之类的 JSON 对象），走结构化卡片视图而非散文渲染
+const ENTITY_CARD_REVIEW_TYPES = new Set(["character_cards", "entity_cards", "entity_discover"]);
 
 interface Props {
   payload: HumanReviewPayload;
@@ -164,6 +168,11 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState, threa
             // setup_for_next 分卡展示，卷标题条突出 chapter_start + target range + status。
             // 前端只读——想改仍走「提出修改意见」文本打回重跑。
             <VolumesReviewCards draft={draft} />
+          ) : ENTITY_CARD_REVIEW_TYPES.has(reviewType) ? (
+            // character_cards / entity_cards / entity_discover 草稿都是 {"new_cards":[...]} 之类的
+            // JSON 对象，走结构化卡片视图（复用 EntityCardsReadonly），比散文渲染可扫得多。
+            // 解析失败自动降级到纯文本。
+            <EntityCardsReviewCards draft={draft} />
           ) : draft ? (
             <ArticleParagraphs text={draft} />
           ) : (

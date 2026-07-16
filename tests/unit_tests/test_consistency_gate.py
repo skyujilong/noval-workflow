@@ -17,7 +17,7 @@ from dataclasses import replace
 import pytest
 
 from noval_workflow.nodes import consistency as C
-from noval_workflow.state import NovelState
+from noval_workflow.state import NovelState, parse_card
 
 
 def _state(**kw) -> NovelState:
@@ -26,7 +26,11 @@ def _state(**kw) -> NovelState:
         world_building="灵气复苏的现代都市，修行者隐于市。",
         core_conflicts="主角与隐秘组织的多层对抗。",
         overall_outline="四卷起承转合……",
-        character_profiles="主角：初始锚点弱、四卷成长天花板明确。",
+        # 人物档案真源已迁至 entity_cards：审计材料从卡库渲染（deep 视图）
+        entity_cards=[parse_card({
+            "name": "主角", "type": "人物", "role": "主角",
+            "ability_contract": "初始锚点弱、四卷成长天花板明确。",
+        })],
     )
     return replace(base, **kw)
 

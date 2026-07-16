@@ -19,10 +19,6 @@ from noval_workflow.prompts.base import (
 )
 from noval_workflow.prompts.ledger import (
     _format_foreshadowing_for_context,
-    _migrate_legacy_foreshadowing,
-    _prune_collected_foreshadowing,
-    character_relations_prompt,
-    character_status_prompt,
     foreshadowing_prompt,
     initial_status_prompt,
     phase_summary_prompt,
@@ -56,12 +52,8 @@ from noval_workflow.prompts.scene_beats import (
     scene_beats_prompt,
     validate_beats,
 )
-from noval_workflow.prompts.character_profiles_discover import (
-    CHARACTER_PROFILES_DISCOVER_PROMPT,
-    CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
-    character_profiles_discover_prompt,
-)
 from noval_workflow.prompts.entity_cards import (
+    CHARACTER_CARDS_REVIEW_PROMPT,
     ENTITY_CARDS_PROMPT,
     ENTITY_CARDS_REVIEW_PROMPT,
     ENTITY_DISCOVER_PROMPT,
@@ -71,16 +63,15 @@ from noval_workflow.prompts.entity_cards import (
     entity_cards_prompt,
     entity_discover_prompt,
     format_cards_for_chapter_prompt,
+    format_character_profiles_from_cards,
     format_equipment_for_context,
     normalize_entity_name,
+    resolve_owner,
 )
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_PLAN_REVIEW_PROMPT,
     CHAPTER_REVIEW_PROMPT,
-    CHARACTER_PROFILES_REVIEW_PROMPT,
-    CHARACTER_RELATIONS_REVIEW_PROMPT,
-    CHARACTER_STATUS_REVIEW_PROMPT,
     CONSISTENCY_AUDIT_PROMPT,
     CONSISTENCY_AUDIT_SYSTEM_PROMPT,
     CONSISTENCY_REVISE_PROMPT,
@@ -133,13 +124,11 @@ __all__ = [
     "CORE_CONFLICTS_REVIEW_PROMPT",
     "OVERALL_OUTLINE_REVIEW_PROMPT",
     "VOLUMES_REVIEW_PROMPT",
-    "CHARACTER_PROFILES_REVIEW_PROMPT",
+    "CHARACTER_CARDS_REVIEW_PROMPT",
     "TITLES_REVIEW_PROMPT",
     "CHAPTER_REVIEW_PROMPT",
     "ARC_OUTLINE_REVIEW_PROMPT",
     "CHAPTER_PLAN_REVIEW_PROMPT",
-    "CHARACTER_STATUS_REVIEW_PROMPT",
-    "CHARACTER_RELATIONS_REVIEW_PROMPT",
     "FORESHADOWING_REVIEW_PROMPT",
     "PHASE_SUMMARY_REVIEW_PROMPT",
     "FORESHADOW_PRUNE_ANALYSIS_PROMPT",
@@ -154,11 +143,9 @@ __all__ = [
     "scene_beats_prompt",
     "format_beats_for_chapter_prompt",
     "validate_beats",
-    # 章级角色档案发现（每章正文完成后自动，可跳步骤）
-    "CHARACTER_PROFILES_DISCOVER_PROMPT",
-    "CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT",
-    "character_profiles_discover_prompt",
     # 章前登场实体卡（EntityCard：人物/物品/装备/势力/地点）+ 章末实体发现/更新
+    # + Phase-1 结构化卡司审核 + 人物档案/装备/owner 渲染
+    "CHARACTER_CARDS_REVIEW_PROMPT",
     "ENTITY_CARDS_PROMPT",
     "ENTITY_CARDS_REVIEW_PROMPT",
     "ENTITY_DISCOVER_PROMPT",
@@ -168,16 +155,14 @@ __all__ = [
     "entity_cards_prompt",
     "entity_discover_prompt",
     "format_cards_for_chapter_prompt",
+    "format_character_profiles_from_cards",
     "format_equipment_for_context",
     "normalize_entity_name",
+    "resolve_owner",
     # 台账类提示词函数
-    "character_status_prompt",
-    "character_relations_prompt",
     "foreshadowing_prompt",
     "initial_status_prompt",
     "phase_summary_prompt",
     # 伏笔工具函数
     "_format_foreshadowing_for_context",
-    "_migrate_legacy_foreshadowing",
-    "_prune_collected_foreshadowing",
 ]

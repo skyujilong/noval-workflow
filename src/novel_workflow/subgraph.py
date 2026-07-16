@@ -11,10 +11,7 @@ from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
     CHAPTER_PLAN_REVIEW_PROMPT,
-    CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
-    CHARACTER_PROFILES_REVIEW_PROMPT,
-    CHARACTER_RELATIONS_REVIEW_PROMPT,
-    CHARACTER_STATUS_REVIEW_PROMPT,
+    CHARACTER_CARDS_REVIEW_PROMPT,
     CHAPTER_REVIEW_PROMPT,
     CORE_CONFLICTS_REVIEW_PROMPT,
     CORE_THEME_REVIEW_PROMPT,
@@ -48,18 +45,15 @@ _HISTORY_MAX_ROUNDS: dict[str, int] = {
     "power_system": 5,
     "core_conflicts": 5,
     "overall_outline": 5,
-    "character_profiles": 5,
+    "character_cards": 5,
     "titles": 5,
     "chapter": 3,
     "arc_outline": 5,
-    "character_status": 3,
-    "character_relations": 3,
     "foreshadowing": 3,
     "phase_summary": 3,
     "scene_beats": 3,
     # chapter_plan JSON 数组条目多(30-50 * 4 字段),3 轮压 token。
     "chapter_plan": 3,
-    "character_profiles_discover": 3,
     "entity_cards": 3,
     "entity_discover": 3,
 }
@@ -153,15 +147,6 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  - 输出散文/markdown 列表(第 12 章:主角...)——chapter_plan **不是**大纲文本,是结构化条目\n\n"
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),
-    # character_profiles_discover 的重跑规范:默认散文提示("从正文第一句话开始输出")会把
-    # LLM 引向"再写一遍章节正文",而 discover 需要的是**合流后的完整人物档案 markdown**。
-    # 这里显式声明"人物档案 markdown / 不是章节正文"并强调**保留原有条目原样**（生成 prompt
-    # 已强调,但打回情境下"最后一条 human"会覆盖首轮任务书,故重写指令里必须再钉一次）。
-    "character_profiles_discover": (
-        "直接输出修改后的完整【人物档案 markdown】——**不是章节正文**,"
-        "不得描述你做了哪些修改、不得使用「修改」「替换」「调整」等元叙述语言。"
-        "必须保留输入档案中所有原有角色条目原样,只允许追加新角色或在原条目末尾追加「【本章新增】…」补充段。"
-    ),
     # entity_cards 与 scene_beats 同类:严格 JSON **对象**契约({cast, new_cards}),打回轮的散文
     # 指令最容易稀释成「加围栏 / 前置解释 / 输出数组而非对象 / 重复建卡」,故显式给结构+反例。
     "entity_cards": (
@@ -171,12 +156,13 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  cast(list[str],本章登场的所有实体名,含已有+新增) /\n"
         "  new_cards(list[dict],只放【新】实体的完整卡,已有实体禁止放这里)。\n"
         "每张 new_card 含:name(str) / type(人物|物品|装备|势力|地点) / aliases(list[str]) /\n"
-        "  summary(str≤30) / first_appear_chapter(int) / 人物段(appearance/speech_style/\n"
-        "  personality/motivation/relations/abilities) / 物品段(owner/effect/status/rank),\n"
-        "  不适用的段留空字符串,字段一个都不能少。\n\n"
+        "  summary(str≤30) / first_appear_chapter(int) / 人物段(role必填/appearance/speech_style/\n"
+        "  personality/abilities/motivation/current_state/relations) / 物品段(owner/effect/status/rank) /\n"
+        "  势力段(standing),不适用的段留空字符串,字段一个都不能少。\n\n"
         "【❌ 严禁的错误形态】\n"
         "  - 顶层输出数组 [ ... ] 而非对象 { \"cast\":..., \"new_cards\":... }\n"
         "  - 把【已有实体】（名字/别称已在清单里）也塞进 new_cards（重复建卡,不合格）\n"
+        "  - 人物卡缺 role 或 role 非六枚举之一（主角/主要配角/功能性反派/根源反派/感情线角色/次要角色）\n"
         "  - 包 ```json 围栏 / 输出前后有解释文字\n"
         "  - type 非枚举:{\"type\":\"角色\"}（只能是 人物/物品/装备/势力/地点）\n"
         "  - 缺字段:new_card 缺 speech_style / status 等（不适用也要留空串,不能省键）\n\n"
@@ -187,9 +173,10 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "**严格输出 JSON 对象,不要包裹在 ```json 里,不要有任何解释文字**。"
         "从第一个 `{` 开始输出,到最后一个 `}` 结束。\n\n"
         "【结构】顶层 dict 含两键:new_cards(list[dict],新实体完整卡,无则[]) /\n"
-        "  updates(list[dict],已有卡动态变更,每条含 name + status/owner/motivation 之一或多个,无则[])。\n\n"
-        "【❌ 严禁】顶层输出数组 / 包围栏 / 前后解释 / updates 里改 name·type·外貌·口吻·能力上限\n"
-        "(那些是 canon,只能改 status/owner/motivation)。本章无发现无变化 → {\"new_cards\":[],\"updates\":[]}。"
+        "  updates(list[dict],已有卡动态变更,每条含 name + 按 type 白名单字段,无则[])。\n"
+        "  白名单:人物→current_state/motivation/relations;装备/物品→owner/status;势力→standing。\n\n"
+        "【❌ 严禁】顶层输出数组 / 包围栏 / 前后解释 / updates 里改 canon(name·type·role·外貌·口吻·人设·能力·深层设计·effect·rank)\n"
+        "(只能改上述白名单动态字段)。本章无发现无变化 → {\"new_cards\":[],\"updates\":[]}。"
     ),
 }
 
@@ -201,17 +188,14 @@ _REVIEW_PROMPTS = {
     "core_conflicts": CORE_CONFLICTS_REVIEW_PROMPT,
     "overall_outline": OVERALL_OUTLINE_REVIEW_PROMPT,
     "volumes": VOLUMES_REVIEW_PROMPT,
-    "character_profiles": CHARACTER_PROFILES_REVIEW_PROMPT,
+    "character_cards": CHARACTER_CARDS_REVIEW_PROMPT,
     "titles": TITLES_REVIEW_PROMPT,
     "chapter": CHAPTER_REVIEW_PROMPT,
     "arc_outline": ARC_OUTLINE_REVIEW_PROMPT,
     "chapter_plan": CHAPTER_PLAN_REVIEW_PROMPT,
-    "character_status": CHARACTER_STATUS_REVIEW_PROMPT,
-    "character_relations": CHARACTER_RELATIONS_REVIEW_PROMPT,
     "foreshadowing": FORESHADOWING_REVIEW_PROMPT,
     "phase_summary": PHASE_SUMMARY_REVIEW_PROMPT,
     "scene_beats": SCENE_BEATS_REVIEW_PROMPT,
-    "character_profiles_discover": CHARACTER_PROFILES_DISCOVER_REVIEW_PROMPT,
     "entity_cards": ENTITY_CARDS_REVIEW_PROMPT,
     "entity_discover": ENTITY_DISCOVER_REVIEW_PROMPT,
 }
@@ -236,7 +220,7 @@ def _is_pass(feedback: str) -> bool:
 
 def generate(state: ReviewSubState) -> dict:
     """Generate or regenerate content based on task_prompt and any feedback."""
-    # 快照台账类（character_status/relations/foreshadowing/phase_summary）是结构化数据维护，
+    # 快照台账类（foreshadowing/phase_summary）是结构化数据维护，
     # 非创作正文：关闭深度思考以加速、降本；创作类（正文/设定/大纲等）保留思考以保证质量。
     # ⚠️ 若发现台账一致性变差，这里是第一个该回退（去掉 thinking）的地方。
     is_snapshot = state.review_type in _SNAPSHOT_REVIEW_TYPES
@@ -314,7 +298,7 @@ def generate(state: ReviewSubState) -> dict:
     }
 
 
-_SNAPSHOT_REVIEW_TYPES = {"character_status", "character_relations", "foreshadowing", "phase_summary"}
+_SNAPSHOT_REVIEW_TYPES = {"foreshadowing", "phase_summary"}
 
 
 def llm_self_review(state: ReviewSubState) -> dict:

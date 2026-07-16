@@ -13,10 +13,9 @@ import type { EntityCard, ForeshadowingLedger, NovelState, Volume } from "./type
 
 // ── 字段定义 ─────────────────────────────────────────────────────────────────
 
-/** 纯文本类可编辑字段（textarea 直接编辑） */
+/** 纯文本类可编辑字段（textarea 直接编辑）。
+ *  人物档案不再是可整段编辑的散文字段——已并入结构化卡库 entity_cards，改动走 EntityCardsEditor。 */
 export type EditableTextKey =
-  | "character_status"
-  | "character_relations"
   | "phase_summary"
   | "current_arc_outline"
   | "core_theme"
@@ -24,7 +23,6 @@ export type EditableTextKey =
   | "power_system"
   | "core_conflicts"
   | "overall_outline"
-  | "character_profiles"
   | "current_draft";
 
 /** 结构化 JSON 类可编辑字段（源码编辑 + 解析校验，非白名单文本）。 */
@@ -52,8 +50,6 @@ export const EDITABLE_GROUP_LABELS: Record<EditableGroup, string> = {
 export const EDITABLE_GROUP_ORDER: EditableGroup[] = ["snapshot", "foundation", "draft"];
 
 export const EDITABLE_FIELDS: EditableFieldDef[] = [
-  { key: "character_status", label: "人物动态状态", group: "snapshot", kind: "text" },
-  { key: "character_relations", label: "人物关系 / 势力格局", group: "snapshot", kind: "text" },
   { key: "foreshadowing", label: "伏笔台账", group: "snapshot", kind: "ledger" },
   { key: "phase_summary", label: "阶段固化数据", group: "snapshot", kind: "text" },
   { key: "current_arc_outline", label: "当前弧线大纲", group: "snapshot", kind: "text" },
@@ -62,7 +58,7 @@ export const EDITABLE_FIELDS: EditableFieldDef[] = [
   { key: "power_system", label: "力量体系", group: "foundation", kind: "text" },
   { key: "core_conflicts", label: "核心冲突", group: "foundation", kind: "text" },
   { key: "overall_outline", label: "整体大纲", group: "foundation", kind: "text" },
-  { key: "character_profiles", label: "人物档案", group: "foundation", kind: "text" },
+  // 人物档案不在此列——它现在是结构化卡库，走 entity_cards（EntityCardsEditor）编辑
   { key: "current_draft", label: "当前草稿", group: "draft", kind: "text" },
 ];
 
@@ -198,19 +194,28 @@ export function ledgerDraftEqual(a: LedgerDraft, b: LedgerDraft): boolean {
 /** 合法 type 枚举，与 prompts/entity_cards.py::ENTITY_TYPES / state.EntityCard.type 同步。 */
 const ENTITY_CARD_TYPES = ["人物", "物品", "装备", "势力", "地点"];
 
-/** EntityCard 里的字符串型可选字段（校验时逐一核对类型）。 */
+/** EntityCard 里的字符串型可选字段（校验时逐一核对类型）。与后端判别联合字段并集对齐。 */
 const ENTITY_CARD_STRING_FIELDS = [
   "summary",
+  // 人物段
+  "role",
   "appearance",
   "speech_style",
   "personality",
-  "motivation",
-  "relations",
   "abilities",
+  "hidden_persona",
+  "arc_trajectory",
+  "ability_contract",
+  "motivation",
+  "current_state",
+  "relations",
+  // 物品/装备段
   "owner",
   "effect",
   "status",
   "rank",
+  // 势力/地点段
+  "standing",
 ];
 
 /** 把卡库序列化成缩进 JSON 源码（编辑器初值）。 */

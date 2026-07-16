@@ -69,7 +69,7 @@ def test_human_feedback_reaches_self_review(monkeypatch):
     graph = _build_graph()
     config = {"configurable": {"thread_id": "t-char"}}
     init = ReviewSubState(
-        review_type="character_profiles",
+        review_type="character_cards",
         system_context="SYSTEM_CONTEXT_角色",
         task_prompt="请生成主要人物档案。",
     )
@@ -111,7 +111,7 @@ def test_first_generation_has_no_human_feedback_prefix(monkeypatch):
         sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm"), recorder)
     )
     state = ReviewSubState(
-        review_type="character_profiles",
+        review_type="character_cards",
         system_context="SYS",
         current_draft="一段草稿正文。",
         human_feedback="",
@@ -135,7 +135,7 @@ def test_machine_review_coexists_with_human_feedback(monkeypatch):
         lambda *a, **k: _FakeLLM(k.get("label", "llm"), recorder, self_review_reply=AI_ISSUE),
     )
     state = ReviewSubState(
-        review_type="character_profiles",
+        review_type="character_cards",
         system_context="SYS",
         current_draft="一段人物档案草稿。",
         human_feedback="请补充主角的一个关键弱点。",
@@ -150,7 +150,7 @@ def test_machine_review_coexists_with_human_feedback(monkeypatch):
     prompt = _texts(recorder[-1][1])
     assert "最高优先级：人工审核意见" in prompt          # 人工意见强调块在
     assert "请补充主角的一个关键弱点。" in prompt         # 人工意见原文在
-    assert "主角塑造" in prompt                          # 标准机器审核清单也在（CHARACTER_PROFILES_REVIEW_PROMPT）
+    assert "卡司配额" in prompt                          # 标准机器审核清单也在（CHARACTER_CARDS_REVIEW_PROMPT）
 
 
 def test_generate_consumes_machine_feedback_and_keeps_human_feedback(monkeypatch):
@@ -161,7 +161,7 @@ def test_generate_consumes_machine_feedback_and_keeps_human_feedback(monkeypatch
     )
     ai_fb = "[AI审稿意见]\n主角动机不清晰。"
     state = ReviewSubState(
-        review_type="character_profiles",
+        review_type="character_cards",
         system_context="SYS",
         review_feedback=ai_fb,                       # 机器意见：待本轮 generate 消费
         human_feedback="请补充主角弱点。",             # 人工意见：应持久保留

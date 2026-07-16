@@ -1,5 +1,6 @@
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+from enum import Enum
 from typing import Annotated
 
 
@@ -55,40 +56,129 @@ class Volume:
     status: str = "planning"       # planning | in_progress | closed
 
 
-@dataclass
+class EntityType(str, Enum):
+    """实体类型判别标签——继承 str，序列化后与字符串值可直接比较（`card.type == "人物"`），
+    跨 checkpoint roundtrip 安全（JSON 落成 value 字符串，回来仍等值）。判别联合按它分派变体。"""
+    CHARACTER = "人物"
+    ITEM = "物品"
+    EQUIPMENT = "装备"
+    FACTION = "势力"
+    LOCATION = "地点"
+
+
+class CharacterRole(str, Enum):
+    """角色定位——一个字段同时回答「是否主角」与「正反派分层」，触发式注入时随卡带出防反派写扁。
+    建卡时定、canon 基本不变。同 EntityType 用 str 枚举保 roundtrip 安全。"""
+    PROTAGONIST = "主角"
+    MAIN_SUPPORTING = "主要配角"
+    FUNCTIONAL_VILLAIN = "功能性反派"
+    ROOT_VILLAIN = "根源反派"
+    ROMANCE = "感情线角色"
+    MINOR = "次要角色"
+
+
+# 判别联合：基类 + 变体 + parse_card 工厂。变体间字段差异真实存在（人物 vs 物品），势力/地点
+# 无专属字段故共用 SimpleEntityCard。用 kw_only=True 绕开 dataclass 继承的「非默认字段不能跟在
+# 默认字段后」排序限制，让变体能声明必填字段（如 CharacterCard.role）。
+@dataclass(kw_only=True)
 class EntityCard:
-    """统一实体卡——人物/物品/装备/势力/地点的结构化「触发式档案卡」。
+    """实体卡判别联合的**基类**——所有实体共有字段。不直接实例化，一律用 parse_card 造具体变体。
 
-    与 character_profiles（叙事全档案 markdown）的分工：EntityCard 是写正文时按
-    「本章登场名单」注入 chapter_prompt 的**紧凑防飘锚点**（外貌/口吻/装备状态等固定字段），
-    character_profiles 是背景铺陈全档案。二者字段/用途不同，非双源。
+    唯一真源定位：EntityCard 卡库是人物/物品/装备/势力/地点的唯一结构化真源，一卡兼容
+    canon（建卡锁定的深层设计）+ current（章末 entity_discover_step 覆盖的动态状态）。
+    装备/物品真源亦在此（phase_summary 不再存装备）。
 
-    装备/物品的真源：本卡是装备/物品的唯一真源（phase_summary 不再存装备），status/owner
-    随章由章末 entity_discover_step 更新。
-
-    序列化/容错约定照抄 ChapterPlanItem：LangGraph checkpoint 序列化时 dataclass 自动转 dict；
-    LLM 出的 JSON 由 _save_entity_cards 逐条 `EntityCard(**c)` 造实例，字段缺失/类型错时抛
-    TypeError 触发审核循环重生成。type 条件字段（人物段/物品段）不适用时留空默认值，
-    老 state 快照反序列化缺字段走默认值不炸。
+    序列化/容错：LangGraph checkpoint 把 dataclass 转 dict，回来是 dict——不自动重建实例，
+    故 nodes 层读卡前一律 _coerce_card→parse_card 归一，按 type 重新分派到正确变体。
+    渲染函数则同时兼容 dict 与实例（getattr/get 双分支），不依赖已归一。
     """
 
     name: str                          # 实体名（主键，name+aliases 归一化后查重去重）
-    type: str                          # 人物 / 物品 / 装备 / 势力 / 地点
+    type: EntityType                   # 判别标签，parse_card 权威写入
     aliases: list[str] = field(default_factory=list)  # 别称（参与归一化查重，防同一实体重复建卡）
     summary: str = ""                  # 一句话定位（≤30 字）
     first_appear_chapter: int = 0      # 首次登场章号（1-based）
-    # ── 人物专属（type=人物 时填；appearance/speech_style 是防写飘关键字段）──
-    appearance: str = ""               # 外貌锚点（≤40 字）
-    speech_style: str = ""             # 说话风格/口吻/口头禅（≤30 字）
-    personality: str = ""              # 性格
-    motivation: str = ""               # 当前动机/目标（动态字段，章末可更新）
-    relations: str = ""                # 与主角/他人关系
-    abilities: str = ""                # 能力底牌（须落【力量体系】框架）
-    # ── 物品/装备专属（type=物品/装备 时填）──
-    owner: str = ""                    # 归属人（动态字段，章末可更新）
-    effect: str = ""                   # 效果/能力
-    status: str = ""                   # 当前状态：完好/损坏/消耗/遗失（动态字段，章末可更新）
-    rank: str = ""                     # 品阶/等级（落力量体系）
+
+
+@dataclass(kw_only=True)
+class CharacterCard(EntityCard):
+    """人物卡——canon 深层设计（吸收自原 character_profiles bible）+ current 动态状态。"""
+    role: CharacterRole                # canon·必填：角色定位（主角/反派分层），parse_card 强校验
+    appearance: str = ""               # canon：外貌锚点（防写飘，操作视图）
+    speech_style: str = ""             # canon：说话风格/口吻/口头禅（操作视图）
+    personality: str = ""              # canon：表层公开人设/性格底色（操作视图）
+    abilities: str = ""                # canon：能力底牌一句话摘要（须落【力量体系】，操作视图）
+    hidden_persona: str = ""           # canon·深层视图：暗线预埋、可后期反转的隐藏人设
+    arc_trajectory: str = ""           # canon·深层视图：四卷成长弧光；反派写阶段作用+闭环退场
+    ability_contract: str = ""         # canon·深层视图：初始锚点+四卷天花板+隐藏杀手锏（战力校验红线）
+    motivation: str = ""               # 动态·覆盖：当前动机/目标
+    current_state: str = ""            # 动态·覆盖：当前处境（位置/情绪/状态），吸收原 character_status
+    relations: str = ""                # 动态·覆盖：与主角/他人关系，立场翻转（叛变）由此承载
+
+
+@dataclass(kw_only=True)
+class ItemCard(EntityCard):
+    """物品/装备卡（type=物品 或 装备）。owner 章末解析绑定到规范实体。"""
+    effect: str = ""                   # canon：效果/能力
+    rank: str = ""                     # canon：品阶/等级（落力量体系）
+    owner: str = ""                    # 动态·覆盖·解析绑定：归属人（save 端匹配到规范实体卡）
+    status: str = ""                   # 动态·覆盖：完好/损坏/消耗/遗失
+
+
+@dataclass(kw_only=True)
+class SimpleEntityCard(EntityCard):
+    """势力/地点卡——只有基类字段 + 可选 standing。地点暂无动态字段。"""
+    standing: str = ""                 # 动态·覆盖：势力强弱/格局（吸收原 character_relations 势力部分；地点留空）
+
+
+# type → 变体类 分派表（物品/装备共用 ItemCard，势力/地点共用 SimpleEntityCard）
+_CARD_CLASSES: dict[EntityType, type[EntityCard]] = {
+    EntityType.CHARACTER: CharacterCard,
+    EntityType.ITEM: ItemCard,
+    EntityType.EQUIPMENT: ItemCard,
+    EntityType.FACTION: SimpleEntityCard,
+    EntityType.LOCATION: SimpleEntityCard,
+}
+
+
+def parse_card(raw: dict) -> EntityCard:
+    """判别工厂：按 type 分派构造具体卡变体。无 compat——非法/缺失 type 直接 fail-loud。
+
+    - 字符串 type → EntityType 枚举（非法值抛 ValueError）。
+    - 按 type 选变体类，过滤掉不属于该变体的键（跨类脏键/老 schema 残留键不炸构造）。
+    - 人物卡 role 字符串 → CharacterRole 枚举（缺失/非法抛 ValueError，落实「人物必填 role」）。
+    - checkpoint 反序列化的 dict 同经此路重新分派到正确变体（type 是 str 枚举，roundtrip 安全）。
+    """
+    if not isinstance(raw, dict):
+        raise ValueError(f"实体卡必须是对象(dict)，实际类型={type(raw).__name__}")
+    raw_type = raw.get("type")
+    if raw_type in (None, ""):
+        raise ValueError(f"实体卡缺 type 字段：{raw!r}")
+    try:
+        etype = EntityType(raw_type)
+    except ValueError as exc:
+        valid = "/".join(e.value for e in EntityType)
+        raise ValueError(f"实体卡 type={raw_type!r} 非法，须为 {valid} 之一") from exc
+
+    cls = _CARD_CLASSES[etype]
+    valid_keys = {f.name for f in fields(cls)}
+    kwargs = {k: v for k, v in raw.items() if k in valid_keys}
+    kwargs["type"] = etype  # 权威覆盖：存枚举，消除原始字符串歧义
+
+    if cls is CharacterCard:
+        role = kwargs.get("role")
+        if role in (None, ""):
+            raise ValueError(f"人物卡 {raw.get('name')!r} 缺 role（必填，六枚举之一）")
+        try:
+            kwargs["role"] = CharacterRole(role)
+        except ValueError as exc:
+            valid = "/".join(r.value for r in CharacterRole)
+            raise ValueError(f"人物卡 {raw.get('name')!r} role={role!r} 非法，须为 {valid} 之一") from exc
+
+    try:
+        return cls(**kwargs)
+    except TypeError as exc:
+        raise ValueError(f"实体卡字段不符: {exc}; 原始={raw!r}") from exc
 
 
 @dataclass
@@ -176,7 +266,8 @@ class NovelState:
     power_system: str = ""          # 力量体系（修炼境界/科技/异能/社会竞争等，视题材而定；依赖世界观、喂给冲突/大纲/人物）
     core_conflicts: str = ""        # 核心冲突设计
     overall_outline: str = ""       # 整体大纲与结局
-    character_profiles: str = ""    # 人物档案（主角 + 主要配角 + 反派）
+    # 人物档案的唯一真源是 entity_cards 里的 CharacterCard（Phase-1 一次直出结构化卡司）——
+    # 原 character_profiles 散文 bible 已删，深层设计并入 CharacterCard 的 canon 字段。
 
     # ── Phase 1.5：分卷规划（Volumes，横向大结构中间层）─────────────────────────
     # 位于 overall_outline 之下、chapter_plan 之上。由 prepare_volumes 从 overall_outline
@@ -255,17 +346,14 @@ class NovelState:
     cast_chapter_index: int = -1
 
     # ── Phase 2.5：动态状态库（每次覆盖写入最新快照）────────────────────────────
-    character_status: str = ""
-    # 人物动态状态（主角 + 主要配角的当前位置/情绪/目标/处境）
-
-    character_relations: str = ""
-    # 人物关系/势力格局（各方关系变化 + 势力强弱对比）
-
+    # 人物动态（处境/动机/关系）已并入 CharacterCard 的动态字段，由章末 entity_discover_step
+    # 单腿覆盖更新——原 character_status / character_relations 两条散文快照腿已删。
     foreshadowing: dict = field(default_factory=dict)
     # 伏笔台账（结构化 JSON：{"pending": [...], "collected": [...]}）
 
     phase_summary: str = ""
-    # 阶段固化数据（主角等级/装备/技能/资源等硬性数值，后续创作必须遵守）
+    # 阶段固化数据（主角等级/技能/资源等硬性数值，后续创作必须遵守）。
+    # 装备不在此登记——装备/物品真源是 entity_cards 里的 ItemCard。
 
 
 

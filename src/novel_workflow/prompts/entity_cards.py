@@ -15,17 +15,28 @@ repair_and_parse(kind=dict) 解析 → _save_entity_cards 逐条造 EntityCard�
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from noval_workflow.prompts.base import _extract_arc_chapter_block
 from noval_workflow.prompts.scene_beats import format_beats_for_chapter_prompt
+from noval_workflow.state import EntityType
 
 if TYPE_CHECKING:
     from noval_workflow.state import EntityCard, NovelState
 
 
-# 合法 type 枚举——save/review 拿它做校验，与 state.EntityCard.type 注释同步。
-ENTITY_TYPES = ("人物", "物品", "装备", "势力", "地点")
+# 合法 type 值集合——渲染/审核文案里用字符串枚举值即可（EntityType 是 str 枚举，等值）。
+ENTITY_TYPES = tuple(e.value for e in EntityType)
+
+
+def _text(v) -> str:
+    """取值的字符串形态——str 枚举成员 f-string 插值会漏出 'EntityType.CHARACTER'，故取其 value。
+
+    卡库条目 type/role 在新建（parse_card）后是枚举、checkpoint roundtrip 后是字符串，
+    渲染函数插值 type/role 前一律经此归一，两种形态都安全。
+    """
+    return v.value if isinstance(v, Enum) else ("" if v is None else v)
 
 
 # ── 共享 spec 块（生成/审核唯一真源）─────────────────────────────────────────
@@ -51,16 +62,19 @@ _CARD_SPEC = """## 输出结构（严格 JSON 对象，顶层两个键）
   "aliases": ["别称/绰号/尊称，无则空数组——务必收全，防后续误判为新实体"],
   "summary": "一句话定位（≤30字）",
   "first_appear_chapter": <本章章号，整数>,
-  "appearance": "【人物】外貌锚点（≤40字，非人物留空）",
-  "speech_style": "【人物】说话风格/口吻/口头禅（≤30字，非人物留空）",
+  "role": "【人物·必填】角色定位,只能填:主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（非人物留空）",
+  "appearance": "【人物】体貌基线:身形/气质/年龄段/大致长相,供正文外貌一致性+可选1个识别特征（≤60字，非人物留空）",
+  "speech_style": "【人物】说话风格/口吻/口头禅/温度:健谈/毒舌/寡言/温和…（≤30字，非人物留空）",
   "personality": "【人物】性格（非人物留空）",
-  "motivation": "【人物】当前动机/目标（非人物留空）",
-  "relations": "【人物】与主角/他人关系（非人物留空）",
   "abilities": "【人物】能力底牌，须落【力量体系】框架（非人物留空）",
-  "owner": "【物品/装备】归属人（非物品留空）",
+  "motivation": "【人物·动态】当前动机/目标（非人物留空）",
+  "current_state": "【人物·动态】当前处境:位置/情绪/状态（≤30字，非人物留空）",
+  "relations": "【人物·动态】与主角/他人关系（非人物留空）",
+  "owner": "【物品/装备·动态】归属人（非物品留空）",
   "effect": "【物品/装备】效果/能力（非物品留空）",
-  "status": "【物品/装备】当前状态:完好/损坏/消耗/遗失（非物品留空）",
-  "rank": "【物品/装备】品阶/等级,须落力量体系（非物品留空）"
+  "status": "【物品/装备·动态】当前状态:完好/损坏/消耗/遗失（非物品留空）",
+  "rank": "【物品/装备】品阶/等级,须落力量体系（非物品留空）",
+  "standing": "【势力·动态】当前强弱/格局（非势力留空）"
 }}
 ```
 
@@ -75,7 +89,9 @@ _CARD_SPEC = """## 输出结构（严格 JSON 对象，顶层两个键）
 5. **type 合法**：type 只能是 人物/物品/装备/势力/地点 之一。
 6. **别称收全**：`aliases` 尽量收全已知别称/绰号/尊称——这是后续判定「新/旧」不误判的关键。
 7. **能力落体系**：人物 abilities、物品 rank 涉及能力/境界/品阶时，必须落入系统提示【力量体系】
-   框架，禁止自造新体系。"""
+   框架，禁止自造新体系。
+8. **人物必填 role**：人物卡必须给 `role`，取值限主角/主要配角/功能性反派/根源反派/感情线角色/
+   次要角色六者之一，禁止自造或留空（用于反派分层 + 触发式注入防写扁）。"""
 
 
 # ── 生成提示词 ────────────────────────────────────────────────────────────────
@@ -108,7 +124,7 @@ __CARD_SPEC__
 直接输出如下结构，不要包裹在 ```json 里，不要有解释文字：
 
 ```
-{{"cast": ["张三", "灵剑"], "new_cards": [{{"name": "张三", "type": "人物", "aliases": ["三哥"], "summary": "...", "first_appear_chapter": {chapter_num}, "appearance": "...", "speech_style": "...", "personality": "...", "motivation": "...", "relations": "...", "abilities": "...", "owner": "", "effect": "", "status": "", "rank": ""}}]}}
+{{"cast": ["张三", "灵剑"], "new_cards": [{{"name": "张三", "type": "人物", "aliases": ["三哥"], "summary": "...", "first_appear_chapter": {chapter_num}, "role": "主角", "appearance": "...", "speech_style": "...", "personality": "...", "abilities": "...", "motivation": "...", "current_state": "...", "relations": "...", "owner": "", "effect": "", "status": "", "rank": "", "standing": ""}}]}}
 ```
 
 请直接输出 JSON 对象。"""
@@ -174,7 +190,7 @@ def _format_existing_roster(cards: list["EntityCard"]) -> str:
     lines: list[str] = []
     for card in cards:
         name = card.get("name", "") if isinstance(card, dict) else getattr(card, "name", "")
-        etype = card.get("type", "") if isinstance(card, dict) else getattr(card, "type", "")
+        etype = _text(card.get("type", "") if isinstance(card, dict) else getattr(card, "type", ""))
         aliases = card.get("aliases", []) if isinstance(card, dict) else getattr(card, "aliases", [])
         alias_str = f"（别名:{'/'.join(aliases)}）" if aliases else ""
         lines.append(f"- {name}〔{etype}〕{alias_str}")
@@ -260,7 +276,7 @@ def format_cards_for_chapter_prompt(cards: list, cast: list) -> str:
             )
         else:  # 势力/地点等
             detail = f"  - 定位:{get('summary')}"
-        lines.append(f"- **{name}〔{etype}〕{alias_str}**\n{detail}")
+        lines.append(f"- **{name}〔{_text(etype)}〕{alias_str}**\n{detail}")
     return "\n".join(lines)
 
 
@@ -280,34 +296,72 @@ _RETIRED_STATUS = frozenset({"遗失", "已遗失", "消耗", "已消耗", "损�
 
 
 def format_equipment_for_context(cards: list) -> str:
-    """把卡库里 type∈{装备,物品} 且未退场的卡渲染成 markdown，作为装备/物品全局真源注入。
+    """把卡库里未退场的 type∈{装备,物品} 渲染成**按归属人归组**的 markdown，作为装备/物品真源注入。
 
-    phase_summary 已移除【装备/道具】字段，装备真源改由本函数从 EntityCard 渲染——所有下游
-    （写正文/一致性审计）看到的是同一份卡库真源，消除双源。已遗失/已消耗的物品不再注入。
+    phase_summary 已移除装备段，装备真源改由本函数从 ItemCard 渲染——所有下游（写正文/一致性
+    审计）看到同一份卡库真源，消除双源。按 owner 归组（"张三 携带:灵剑(完好·上品)、护身符(损坏)"），
+    让 LLM 从人物侧直接看到谁持有什么，比平铺列表更贴写作视角。已遗失/已消耗的物品不再注入。
     """
     if not cards:
         return ""
-    lines: list[str] = []
+    groups: dict[str, list[str]] = {}
+    order: list[str] = []  # 保持首次出现顺序，输出稳定（不依赖 dict 插入序的隐含约定）
     for card in cards:
         get = (lambda k: card.get(k, "")) if isinstance(card, dict) else (lambda k: getattr(card, k, ""))
         if get("type") not in ("装备", "物品"):
             continue
         if (get("status") or "").strip() in _RETIRED_STATUS:
             continue
-        owner = f" ｜ 归属:{get('owner')}" if get("owner") else ""
-        status = f" ｜ 状态:{get('status')}" if get("status") else ""
-        rank = f" ｜ 品阶:{get('rank')}" if get("rank") else ""
-        lines.append(f"- **{get('name')}**：{get('effect') or get('summary')}{owner}{status}{rank}")
+        bucket = (get("owner") or "").strip() or "无归属"
+        if bucket not in groups:
+            groups[bucket] = []
+            order.append(bucket)
+        tags = [t for t in (get("status"), get("rank")) if t]
+        tag_str = f"（{'·'.join(tags)}）" if tags else ""
+        desc = get("effect") or get("summary")
+        groups[bucket].append(f"{get('name')}{tag_str}" + (f":{desc}" if desc else ""))
+    if not order:
+        return ""
+    lines: list[str] = []
+    for bucket in order:
+        label = f"{bucket} 携带" if bucket != "无归属" else "无归属"
+        lines.append(f"- **{label}**：" + "、".join(groups[bucket]))
     return "\n".join(lines)
+
+
+def resolve_owner(owner_name: str, cards: list) -> str | None:
+    """把 owner 名字解析绑定到卡库里规范实体的 name——引用完整性 + 链接不随别名漂移断掉。
+
+    复用 normalize_entity_name 的「名/别名→规范 name」索引匹配 owner：
+    - 空 owner → 返回 ""（无归属是合法状态，不告警）。
+    - 命中 → 返回规范 name（存规范名，别名改动不影响链接）。
+    - 未命中 → 返回 None（调用方 fail-loud 告警，揪出编造/错名的 owner，不静默兜底）。
+    """
+    owner_name = (owner_name or "").strip()
+    if not owner_name:
+        return ""
+    key = normalize_entity_name(owner_name)
+    for card in cards:
+        get = (lambda k: card.get(k, "")) if isinstance(card, dict) else (lambda k: getattr(card, k, ""))
+        names = {normalize_entity_name(get("name"))} | {normalize_entity_name(a) for a in (get("aliases") or [])}
+        if key in names:
+            return get("name")
+    return None
 
 
 # ── 章末「实体发现 + 动态更新」提示词（读已写正文，补新卡 + 更新已有卡动态字段）──────
 
-# 章末 update 只允许改这几个「动态字段」——核心设定（name/type/appearance/speech_style/
-# abilities 上限）canon 锁定禁止改，save 端也只 apply 这几个键（代码层兜底）。
-UPDATABLE_FIELDS = ("status", "owner", "motivation")
+# 章末 update 按实体 type 分派可改字段白名单——canon（name/type/role/外貌/口吻/人设/能力/
+# 深层设计/effect/rank）代码层锁定禁改，save 端只 apply 对应 type 白名单里的键（不依赖 LLM 听话）。
+UPDATABLE_FIELDS: dict[EntityType, tuple[str, ...]] = {
+    EntityType.CHARACTER: ("motivation", "current_state", "relations"),
+    EntityType.ITEM: ("owner", "status"),
+    EntityType.EQUIPMENT: ("owner", "status"),
+    EntityType.FACTION: ("standing",),
+    EntityType.LOCATION: (),
+}
 
-_ENTITY_DISCOVER_TEMPLATE = """请根据**本章已写正文**，对实体卡库做两件事：① 发现正文里新冒出、卡库还没有的实体并建卡；② 更新已有卡的**动态字段**（装备状态/归属、人物动机）。
+_ENTITY_DISCOVER_TEMPLATE = """请根据**本章已写正文**，对实体卡库做两件事：① 发现正文里新冒出、卡库还没有的实体并建卡；② 用当下真相**覆盖更新**已有卡的**动态字段**（人物处境/动机/关系、装备归属/状态、势力格局）。
 
 【本章号】第 {chapter_num} 章
 
@@ -321,8 +375,11 @@ _ENTITY_DISCOVER_TEMPLATE = """请根据**本章已写正文**，对实体卡库
 
 ## 任务
 
-1. **发现新实体**：正文里出现、【已有实体卡库】里没有的有名有戏份的人物/物品/装备/势力 → 建完整卡（字段规范同下）。
-2. **更新已有卡动态字段**：正文里已有实体发生的**动态变化**——装备易主(`owner`)/损坏消耗(`status`)、人物动机转变(`motivation`)。
+1. **发现新实体**：正文里出现、【已有实体卡库】里没有的有名有戏份的人物/物品/装备/势力/地点 → 建完整卡（字段规范同下）。
+2. **覆盖更新已有卡动态字段**（按实体 type 各有白名单）：
+   - 人物：`current_state`(处境:位置/情绪/状态) / `motivation`(动机) / `relations`(关系，**含立场翻转/叛变**)
+   - 装备/物品：`owner`(易主) / `status`(损坏/消耗/遗失)
+   - 势力：`standing`(强弱/格局变化)
 
 __CARD_SPEC_DISCOVER__
 
@@ -332,8 +389,12 @@ __CARD_SPEC_DISCOVER__
 {{"new_cards": [ /* 新实体完整卡，无则空数组 */ ], "updates": [ /* 已有卡动态变更，无则空数组 */ {{"name": "灵剑", "owner": "李四", "status": "损坏"}} ]}}
 ```
 
-- `updates` 每条必须含 `name`（定位已有卡），其余只能是 status/owner/motivation 之一或多个。
-- **禁止改**已有卡的核心设定（name/type/外貌/口吻/能力上限）——那些是 canon，只能改动态字段。
+- `updates` 每条必须含 `name`（定位已有卡），其余键**按该实体 type 的白名单**：
+  人物只能含 `current_state`/`motivation`/`relations`；装备/物品只能含 `owner`/`status`；势力只能含 `standing`。
+- **覆盖语义（关键）**：动态字段是「现在」的快照，直接用当下真相**覆盖**旧值；禁止把「原为X、现为Y」
+  两句并列堆叠——那会让后续章节的 LLM 分不清哪个才是当下有效状态。
+- **禁止改** canon（`name`/`type`/`role`/`appearance`/`speech_style`/`personality`/`abilities`/
+  `hidden_persona`/`arc_trajectory`/`ability_contract`/`effect`/`rank`）——建卡时锁定的设定，只能改动态字段。
 - **反幻觉**：只登记正文显式描写的实体与变化，禁止推测演绎。
 - 本章无新实体、无动态变化（如纯过场章）→ 输出 `{{"new_cards": [], "updates": []}}`。
 
@@ -357,14 +418,16 @@ ENTITY_DISCOVER_REVIEW_PROMPT = """请审核以下「章末实体发现 + 动态
 
 ## 审核范围（只查以下几点）
 
-1. **JSON 合法性**：顶层 dict、含 `new_cards`(list) + `updates`(list)？每张 new_card 字段齐全、type 合法（人物/物品/装备/势力/地点）？每条 update 含 name 且只改 status/owner/motivation？
-2. **反幻觉**：new_cards / updates 是否都来自本章正文的显式描写，而非推测演绎？
-3. **canon 保护**：updates 是否试图改已有卡的核心设定（外貌/口吻/能力上限/name/type）？若有必须打回——只能改动态字段。
-4. **克制**：是否把一句话带过的路人/杂物写成卡？次要实体允许留白。
+1. **JSON 合法性**：顶层 dict、含 `new_cards`(list) + `updates`(list)？每张 new_card 字段齐全、type 合法（人物/物品/装备/势力/地点）、人物 new_card 是否给了合法 `role`？每条 update 是否含 name？
+2. **按 type 白名单**：每条 update 的字段是否落在该实体 type 的白名单内——人物只能改 current_state/motivation/relations，装备/物品只能改 owner/status，势力只能改 standing？越权即打回。
+3. **覆盖语义**：动态字段是否用当下真相直接覆盖，而非「原为X现为Y」并列堆叠（堆叠会误导后续 LLM）？
+4. **反幻觉**：new_cards / updates 是否都来自本章正文的显式描写，而非推测演绎？
+5. **canon 保护**：updates 是否试图改 canon（name/type/role/外貌/口吻/人设/能力/深层设计/effect/rank）？若有必须打回——只能改动态字段。
+6. **克制**：是否把一句话带过的路人/杂物写成卡？次要实体允许留白。
 
 若本章无新实体无变化（空数组）→ 只要反幻觉无失即放行。
 
-三点全通过 → 回复「无问题」；否则逐条列出问题 + 改法。"""
+各项全通过 → 回复「无问题」；否则逐条列出问题 + 改法。"""
 
 
 def entity_discover_prompt(state, chapter_context: str = "") -> str:
@@ -385,7 +448,75 @@ def entity_discover_prompt(state, chapter_context: str = "") -> str:
     )
 
 
+# ── Phase-1 结构化卡司 → 人物档案 markdown（取代原 character_profiles 散文注入）─────
+
+def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> str:
+    """把卡库里的人物卡（type=人物）渲染成【人物档案】markdown，取代原 character_profiles 散文。
+
+    两档视图治上下文膨胀（原 bible 每次全量灌，这里默认有界）：
+    - deep=False（默认，写正文/常规 context）：操作视图——role/外貌/口吻/性格/能力/动机/处境/关系。
+    - deep=True（outline/arc/consistency 规划）：追加深层视图——隐藏人设/四卷弧光/底牌契约
+      （这些按 role 条件触发，次要/非战斗角色可留空，空值不渲染标签行）。
+    非人物卡忽略（装备/物品走 format_equipment_for_context）。
+    """
+    if not cards:
+        return ""
+    blocks: list[str] = []
+    for card in cards:
+        get = (lambda k: card.get(k, "")) if isinstance(card, dict) else (lambda k: getattr(card, k, ""))
+        if _text(get("type")) != "人物":
+            continue
+        aliases = get("aliases") or []
+        alias_str = f"（{'/'.join(aliases)}）" if aliases else ""
+        lines = [
+            f"- **{get('name')}〔{_text(get('role'))}〕{alias_str}**",
+            f"  - 定位:{get('summary')} ｜ 外貌:{get('appearance')} ｜ 口吻:{get('speech_style')}",
+            f"  - 性格:{get('personality')} ｜ 能力:{get('abilities')}",
+            f"  - 动机:{get('motivation')} ｜ 处境:{get('current_state')} ｜ 关系:{get('relations')}",
+        ]
+        if deep:
+            # 深层字段现按 role 条件触发（次要/非战斗角色可留空）——空值跳过，
+            # 不渲染「隐藏人设:」这类空标签行污染 outline/consistency 上下文。
+            if _text(get("hidden_persona")):
+                lines.append(f"  - 隐藏人设:{get('hidden_persona')}")
+            if _text(get("arc_trajectory")):
+                lines.append(f"  - 四卷弧光:{get('arc_trajectory')}")
+            if _text(get("ability_contract")):
+                lines.append(f"  - 底牌契约:{get('ability_contract')}")
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
+
+
+# Phase-1 结构化卡司审核 prompt（取代原 bible 的 CHARACTER_PROFILES_REVIEW_PROMPT）。
+# 静态常量，不含题材 flavor——卡司配额/双层人设/落体系/深层设计的合规检查与题材无关。
+CHARACTER_CARDS_REVIEW_PROMPT = """请审核以下 Phase-1「全套核心人物卡（结构化 JSON）」草稿。这是全书卡司的一次性建卡，标准从严。
+
+【草稿】
+{draft}
+
+---
+
+## 逐项检查（发现任何一项不合格都要指出，并给出改法）
+
+1. **JSON 合法性**：能否解析为顶层 dict、含 `new_cards`(list)？每张卡字段齐全（name/type/aliases/summary/first_appear_chapter + 人物段）？
+2. **卡司配额**：是否覆盖主角 1 / 核心配角 3-5 / 功能性反派 2-3 / 根源反派 1 / 感情线 1-2？主角是否唯一？有无工具人凑数？
+3. **role 合法**：每张人物卡是否给了 `role`，且是主角/主要配角/功能性反派/根源反派/感情线角色/次要角色之一？
+4. **双层人设（按需）**：该写 `hidden_persona` 的角色（主角/根源反派/关键反转角色）是否写了、其余角色是否**没硬凑**？避免「全员藏秘密/藏铁证」式套路化雷同；写了的两层不冲突、可后期反转。
+5. **能力落体系**：`abilities` / `ability_contract` 是否归属【力量体系】的层级/流派，初始锚点与四卷天花板都落在境界阶梯上，未越界自造？
+6. **四卷弧光 + 底牌契约（按需）**：`arc_trajectory`（四卷心性/立场/认知迭代大势，反派含阶段作用+闭环退场）核心角色是否完整？`ability_contract` 只对**战力相关的关键角色**查完整（初始锚点+四卷天花板+隐藏杀手锏触发/反噬）；非战斗/次要/纯功能角色**不应**硬塞契约。
+7. **关系闭环**：`relations` 是否围绕主角构建、无游离孤点？
+8. **反派分层**：功能性反派与根源反派是否区分，动机根源/阶段作用/闭环退场是否清晰？
+9. **外貌基线**：`appearance` 是否给了体貌基线（身形/气质/年龄段/大致长相，供正文外貌一致），而非只有单个配饰/印记？
+10. **说话风格差异**：全卡司 `speech_style` 是否拉开差异、有足够健谈/外放角色带动对话？主角是否未被写成寡言话少？是否避免全员冷/沉默？
+11. **命名**：是否避开烂大街网文姓（叶/萧/林/楚/苏/慕容）与生僻拗口字？配角彼此区分得开、语域贴世界观？（血缘同姓属正常，不算撞名）
+
+---
+
+逐条判定：条件字段（`hidden_persona` / `ability_contract`）按角色定位「该有则查、不该有别硬凑」，不是缺一即死。若全部通过，直接回复「无问题」；否则逐条列出问题并给改法。"""
+
+
 __all__ = [
+    "CHARACTER_CARDS_REVIEW_PROMPT",
     "ENTITY_CARDS_PROMPT",
     "ENTITY_CARDS_REVIEW_PROMPT",
     "ENTITY_DISCOVER_PROMPT",
@@ -395,6 +526,8 @@ __all__ = [
     "entity_cards_prompt",
     "entity_discover_prompt",
     "format_cards_for_chapter_prompt",
+    "format_character_profiles_from_cards",
     "format_equipment_for_context",
     "normalize_entity_name",
+    "resolve_owner",
 ]

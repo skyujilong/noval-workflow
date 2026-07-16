@@ -54,17 +54,17 @@ class ArcEditSubState:
     power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
-    character_profiles: str = ""
     current_batch_titles: list[str] = field(default_factory=list)
     current_chapter_index: int = 0
     total_chapters_written: int = 0
     all_chapter_titles: list[str] = field(default_factory=list)
     all_chapter_summaries: list[str] = field(default_factory=list)
     current_arc_outline: str = ""
-    character_status: str = ""
-    character_relations: str = ""
     foreshadowing: dict = field(default_factory=dict)
     phase_summary: str = ""
+    # 统一实体卡库——桥接父图 NovelState.entity_cards：人物档案已并入卡库，arc 规划经
+    # build_foundation_context 从卡库渲染人物/装备真源（取代原 character_profiles 桥接字段）。
+    entity_cards: list = field(default_factory=list)
 
     # Review bridge (needed by system_context used in arc_rewrite)
     system_context: str = ""

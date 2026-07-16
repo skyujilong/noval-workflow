@@ -28,14 +28,8 @@ export const InterruptType = {
   ARC_CONFIRM: "arc_confirm",
   ARC_CONFIRM_ERROR: "arc_confirm_error",
   ARC_TITLES_CONFIRM: "arc_titles_confirm",
-  // 人物动态状态快照（edit_step_subgraph 实例：status）
-  STATUS_ENTRY_GATE: "status_entry_gate",
-  STATUS_DIRECTION_INPUT: "status_direction_input",
-  STATUS_REVIEW: "status_review",
-  // 人物关系/势力格局快照（relations）
-  RELATIONS_ENTRY_GATE: "relations_entry_gate",
-  RELATIONS_DIRECTION_INPUT: "relations_direction_input",
-  RELATIONS_REVIEW: "relations_review",
+  // 人物动态状态/关系已并入 CharacterCard（current_state/relations/standing），
+  // 原 status/relations 两条独立快照腿已删；动态更新走章末 entity_discover。
   // 伏笔台账快照（foreshadowing）
   FORESHADOWING_ENTRY_GATE: "foreshadowing_entry_gate",
   FORESHADOWING_DIRECTION_INPUT: "foreshadowing_direction_input",
@@ -48,10 +42,8 @@ export const InterruptType = {
   SCENE_BEATS_ENTRY_GATE: "scene_beats_entry_gate",
   SCENE_BEATS_DIRECTION_INPUT: "scene_beats_direction_input",
   SCENE_BEATS_REVIEW: "scene_beats_review",
-  // 章级角色档案发现（每章正文完成后自动，可跳步骤；插在 generate_summary 之后、chapter_edit_subgraph 之前）
-  CHARACTER_PROFILES_DISCOVER_ENTRY_GATE: "character_profiles_discover_entry_gate",
-  CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT: "character_profiles_discover_direction_input",
-  CHARACTER_PROFILES_DISCOVER_REVIEW: "character_profiles_discover_review",
+  // 章级角色档案发现已废弃——人物档案并入 entity_cards，发现/更新统一走章前 entity_cards
+  // + 章末 entity_discover，不再有独立的 character_profiles_discover 腿。
   // 章前登场实体卡（EntityCard；插在 scene_beats 之后、prepare_chapter 之前）
   ENTITY_CARDS_ENTRY_GATE: "entity_cards_entry_gate",
   ENTITY_CARDS_DIRECTION_INPUT: "entity_cards_direction_input",
@@ -291,32 +283,23 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.USER_INPUTS_ERROR]: "user_inputs",
 
   [InterruptType.ARC_ENTRY_GATE]: "entry_gate",
-  [InterruptType.STATUS_ENTRY_GATE]: "entry_gate",
-  [InterruptType.RELATIONS_ENTRY_GATE]: "entry_gate",
   [InterruptType.FORESHADOWING_ENTRY_GATE]: "entry_gate",
   [InterruptType.PHASE_SUMMARY_ENTRY_GATE]: "entry_gate",
   [InterruptType.SCENE_BEATS_ENTRY_GATE]: "entry_gate",
-  [InterruptType.CHARACTER_PROFILES_DISCOVER_ENTRY_GATE]: "entry_gate",
   [InterruptType.ENTITY_CARDS_ENTRY_GATE]: "entry_gate",
   [InterruptType.ENTITY_DISCOVER_ENTRY_GATE]: "entry_gate",
 
   // 弧线方向单独识别（标题为"弧线大纲调整方向"），其余 step 方向归入 direction
   [InterruptType.ARC_DIRECTION_INPUT]: "arc_direction",
-  [InterruptType.STATUS_DIRECTION_INPUT]: "direction",
-  [InterruptType.RELATIONS_DIRECTION_INPUT]: "direction",
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "direction",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "direction",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "direction",
-  [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "direction",
   [InterruptType.ENTITY_CARDS_DIRECTION_INPUT]: "direction",
   [InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT]: "direction",
 
-  [InterruptType.STATUS_REVIEW]: "human_review",
-  [InterruptType.RELATIONS_REVIEW]: "human_review",
   [InterruptType.FORESHADOWING_REVIEW]: "foreshadowing_review", // 伏笔专用表单
   [InterruptType.PHASE_SUMMARY_REVIEW]: "human_review",
   [InterruptType.SCENE_BEATS_REVIEW]: "human_review",
-  [InterruptType.CHARACTER_PROFILES_DISCOVER_REVIEW]: "human_review",
   [InterruptType.ENTITY_CARDS_REVIEW]: "human_review",
   [InterruptType.ENTITY_DISCOVER_REVIEW]: "human_review",
   [InterruptType.REVIEW_GENERIC]: "human_review",
@@ -359,12 +342,9 @@ export function formKindOfPayload(payload: unknown): FormKind {
  */
 const DIRECTION_TITLE: Record<string, string> = {
   [InterruptType.ARC_DIRECTION_INPUT]: "弧线大纲调整方向",
-  [InterruptType.STATUS_DIRECTION_INPUT]: "人物动态状态调整方向",
-  [InterruptType.RELATIONS_DIRECTION_INPUT]: "人物关系调整方向",
   [InterruptType.FORESHADOWING_DIRECTION_INPUT]: "伏笔台账调整方向",
   [InterruptType.PHASE_SUMMARY_DIRECTION_INPUT]: "阶段固化数据调整方向",
   [InterruptType.SCENE_BEATS_DIRECTION_INPUT]: "Scene beats 调整方向",
-  [InterruptType.CHARACTER_PROFILES_DISCOVER_DIRECTION_INPUT]: "角色档案发现调整方向",
   [InterruptType.ENTITY_CARDS_DIRECTION_INPUT]: "登场实体卡调整方向",
   [InterruptType.ENTITY_DISCOVER_DIRECTION_INPUT]: "实体发现/更新调整方向",
 };

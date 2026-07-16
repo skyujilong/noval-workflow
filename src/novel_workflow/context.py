@@ -6,11 +6,12 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Protocol, Union
+from typing import Protocol
 
 from noval_workflow.config import FULL_COUNT, SUMMARY_COUNT
 from noval_workflow.prompts import (
     _format_foreshadowing_for_context,
+    format_character_profiles_from_cards,
     format_equipment_for_context,
     get_prompt_pack,
 )
@@ -36,14 +37,13 @@ class _ContextState(Protocol):
     power_system: str
     core_conflicts: str
     overall_outline: str
-    character_profiles: str
     # Phase 2.5 — dynamic tracking
+    # 人物动态（处境/动机/关系）已并入 entity_cards 的 CharacterCard，原 character_profiles/
+    # character_status/character_relations 三字段已删。
     current_arc_outline: str
-    character_status: str
-    character_relations: str
-    foreshadowing: Union[str, dict]  # 支持旧格式（str）和新结构化格式（dict）
+    foreshadowing: dict  # 结构化台账 {"pending": [...], "collected": [...]}
     phase_summary: str
-    entity_cards: list  # 统一实体卡库（装备/物品真源；人物/势力/地点）
+    entity_cards: list  # 统一实体卡库：人物档案 + 装备/物品真源（势力/地点）
     # Phase 2 — chapter progress
     total_chapters_written: int
     all_chapter_titles: list[str]
@@ -84,23 +84,26 @@ def build_foundation_context(
     *,
     exclude_snapshots: bool = False,
     include_identity: bool = True,
+    deep_character_view: bool = False,
 ) -> str:
     """Serialize approved foundation fields into a structured system prompt string.
 
     Only includes non-empty fields, so the context grows as Phase 1 progresses.
 
     Args:
-        exclude_snapshots: When True, omit the four dynamic snapshot fields
-            (character_status/relations/foreshadowing/phase_summary). Use this
-            for the tracking-update prepare steps where the previous snapshot is
-            already injected into task_prompt via {prev}, so including it here
-            would only dilute the reviewer's attention.
+        exclude_snapshots: When True, omit the dynamic snapshot fields
+            (foreshadowing/phase_summary). Use this for the tracking-update prepare
+            steps where the previous snapshot is already injected into task_prompt
+            via {prev}, so including it here would only dilute the reviewer's attention.
         include_identity: When True (default), prepend the genre-specific creative
             writer identity ("你是一位资深…作家") before the settings block. Snapshot
-            台账 steps (character_status/relations/foreshadowing/phase_summary) pass
-            False so they get a bare settings block, then splice on their own
-            "数据维护员/审核员" identity in generate()/llm_self_review() — keeping the
-            strict data-maintenance framing while still injecting full settings.
+            台账 steps (foreshadowing/phase_summary) pass False so they get a bare
+            settings block, then splice on their own "数据维护员/审核员" identity in
+            generate()/llm_self_review() — keeping the strict data-maintenance framing
+            while still injecting full settings.
+        deep_character_view: 人物档案渲染深度。False（默认，写正文/常规 context）注入操作
+            视图（role/外貌/口吻/性格/能力/动机/处境/关系）；True（outline/arc/consistency
+            规划）追加深层视图（隐藏人设/四卷弧光/底牌契约），供战力基线/长线设计校验。
     """
     parts: list[str] = []
 
@@ -162,18 +165,19 @@ def build_foundation_context(
         parts.append(f"\n【核心冲突】\n{state.core_conflicts}")
     if state.overall_outline:
         parts.append(f"\n【整体大纲与结局】\n{state.overall_outline}")
-    if state.character_profiles:
-        parts.append(f"\n【人物档案】\n{state.character_profiles}")
+    # 人物档案：从卡库渲染（真源是 entity_cards 的 CharacterCard，取代原 character_profiles 散文）。
+    # deep_character_view 控制操作视图 vs 深层视图；getattr 兜底老 state / 缺字段子图。
+    profiles = format_character_profiles_from_cards(
+        getattr(state, "entity_cards", []) or [], deep=deep_character_view
+    )
+    if profiles:
+        parts.append(f"\n【人物档案】\n{profiles}")
 
     # Dynamic tracking fields — omitted when the caller already injects prev snapshot
     # into task_prompt (tracking-update steps), to avoid diluting reviewer attention.
     if state.current_arc_outline:
         parts.append(f"\n【本批章节弧线大纲】\n{state.current_arc_outline}")
     if not exclude_snapshots:
-        if state.character_status:
-            parts.append(f"\n【人物动态状态（最新）】\n{state.character_status}")
-        if state.character_relations:
-            parts.append(f"\n【人物关系/势力动态（最新）】\n{state.character_relations}")
         if state.foreshadowing:
             # 数据层面保留全部已收伏笔，上下文显示层面只过滤近5章
             formatted = _format_foreshadowing_for_context(state.foreshadowing, state.total_chapters_written)

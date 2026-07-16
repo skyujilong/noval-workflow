@@ -40,6 +40,12 @@ function Card({ card }: { card: EntityCard }) {
     <div className="space-y-1 rounded-md border border-gray-200 bg-gray-50/70 p-2">
       <div className="flex items-center gap-2">
         <span className="font-medium text-xs text-gray-800">{card.name}</span>
+        {/* role（主角/反派分层）做成 name 旁徽标，一眼看出卡司定位 */}
+        {isPerson && card.role ? (
+          <span className="rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-[10px] leading-none text-indigo-700">
+            {card.role}
+          </span>
+        ) : null}
         <span className="text-[10px] text-gray-400">{aliases}</span>
         <span className={`ml-auto rounded border px-1.5 py-0.5 text-[10px] leading-none ${badge}`}>
           {card.type || "未分类"}
@@ -51,9 +57,14 @@ function Card({ card }: { card: EntityCard }) {
           <Row label="外貌" value={card.appearance} />
           <Row label="口吻" value={card.speech_style} />
           <Row label="性格" value={card.personality} />
-          <Row label="动机" value={card.motivation} />
-          <Row label="关系" value={card.relations} />
           <Row label="能力" value={card.abilities} />
+          <Row label="动机" value={card.motivation} />
+          <Row label="处境" value={card.current_state} />
+          <Row label="关系" value={card.relations} />
+          {/* 深层 canon（隐藏人设/弧光/底牌）——deep 视图才落库的长字段 */}
+          <Row label="隐藏人设" value={card.hidden_persona} />
+          <Row label="四卷弧光" value={card.arc_trajectory} />
+          <Row label="底牌契约" value={card.ability_contract} />
         </>
       )}
       {isItem && (
@@ -64,6 +75,8 @@ function Card({ card }: { card: EntityCard }) {
           <Row label="品阶" value={card.rank} />
         </>
       )}
+      {/* 势力/地点段：新增 standing（势力强弱/格局，动态） */}
+      {card.type === "势力" ? <Row label="格局" value={card.standing} /> : null}
       {card.first_appear_chapter ? (
         <div className="text-[10px] text-gray-400">首登 · 第 {card.first_appear_chapter} 章</div>
       ) : null}

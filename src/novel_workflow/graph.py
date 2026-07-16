@@ -28,7 +28,7 @@ from noval_workflow.nodes.volumes import (
 )
 from noval_workflow.nodes.volume_gate import volume_boundary_gate
 from noval_workflow.nodes.foundation import (
-    prepare_character_profiles,
+    prepare_character_cards,
     prepare_core_conflicts,
     prepare_core_theme,
     prepare_initial_status,
@@ -36,7 +36,7 @@ from noval_workflow.nodes.foundation import (
     prepare_power_system,
     prepare_world_building,
     route_after_world_building,
-    save_character_profiles,
+    save_character_cards,
     save_config,
     save_core_conflicts,
     save_core_theme,
@@ -73,7 +73,6 @@ from noval_workflow.subgraph import review_subgraph
 from noval_workflow.chapter_edit_subgraph import chapter_edit_subgraph
 from noval_workflow.scene_beats_subgraph import scene_beats_step
 from noval_workflow.entity_cards_subgraph import entity_cards_step
-from noval_workflow.character_profiles_discover_subgraph import character_profiles_discover_step
 
 builder = StateGraph(NovelState)
 
@@ -97,7 +96,7 @@ builder.add_node("prepare_world_building", prepare_world_building)
 builder.add_node("prepare_power_system", prepare_power_system)
 builder.add_node("prepare_core_conflicts", prepare_core_conflicts)
 builder.add_node("prepare_overall_outline", prepare_overall_outline)
-builder.add_node("prepare_character_profiles", prepare_character_profiles)
+builder.add_node("prepare_character_cards", prepare_character_cards)
 builder.add_node("prepare_initial_status", prepare_initial_status)
 
 # Phase 1 — review subgraphs (same compiled subgraph, different node names)
@@ -106,7 +105,7 @@ builder.add_node("review_world_building", review_subgraph)
 builder.add_node("review_power_system", review_subgraph)
 builder.add_node("review_core_conflicts", review_subgraph)
 builder.add_node("review_overall_outline", review_subgraph)
-builder.add_node("review_character_profiles", review_subgraph)
+builder.add_node("review_character_cards", review_subgraph)
 builder.add_node("review_initial_status", review_subgraph)
 
 # Phase 1 — save nodes
@@ -115,12 +114,12 @@ builder.add_node("save_world_building", save_world_building)
 builder.add_node("save_power_system", save_power_system)
 builder.add_node("save_core_conflicts", save_core_conflicts)
 builder.add_node("save_overall_outline", save_overall_outline)
-builder.add_node("save_character_profiles", save_character_profiles)
+builder.add_node("save_character_cards", save_character_cards)
 builder.add_node("save_initial_status", save_initial_status)
 builder.add_node("save_config", save_config)
 
 # Phase 1.5 — 分卷规划（Volumes，横向大结构中间层）
-# 插在 save_overall_outline 之后、prepare_character_profiles 之前：LLM 从整书大纲抽卷
+# 插在 save_overall_outline 之后、prepare_character_cards 之前：LLM 从整书大纲抽卷
 # → 用户 review 编辑（含 target_min/target_max）→ 落库到 state.volumes。
 builder.add_node("prepare_volumes", prepare_volumes)
 builder.add_node("review_volumes", review_subgraph)
@@ -162,9 +161,6 @@ builder.add_node("scene_beats_step", scene_beats_step)
 
 # Phase 2.7 — 登场实体卡（章前，可跳步骤：scene_beats 之后、prepare_chapter 之前）
 builder.add_node("entity_cards_step", entity_cards_step)
-
-# Phase 2.8 — 角色档案发现（每章正文完成后自动，可跳步骤：generate_summary 之后、chapter_edit_subgraph 之前）
-builder.add_node("character_profiles_discover_step", character_profiles_discover_step)
 
 # Phase 2 — chapter edit subgraph
 builder.add_node("chapter_edit_subgraph", chapter_edit_subgraph)
@@ -244,13 +240,13 @@ builder.add_edge("review_overall_outline", "save_overall_outline")
 builder.add_edge("save_overall_outline", "prepare_volumes")
 builder.add_edge("prepare_volumes", "review_volumes")
 builder.add_edge("review_volumes", "save_volumes")
-builder.add_edge("save_volumes", "prepare_character_profiles")
+builder.add_edge("save_volumes", "prepare_character_cards")
 
-builder.add_edge("prepare_character_profiles", "review_character_profiles")
-builder.add_edge("review_character_profiles", "save_character_profiles")
+builder.add_edge("prepare_character_cards", "review_character_cards")
+builder.add_edge("review_character_cards", "save_character_cards")
 
-# 人物初始基线（第0章）：从已定稿人物档案 + 世界观固化基线，写入 phase_summary
-builder.add_edge("save_character_profiles", "prepare_initial_status")
+# 人物初始基线（第0章）：从已定稿人物卡 + 世界观固化基线，写入 phase_summary
+builder.add_edge("save_character_cards", "prepare_initial_status")
 builder.add_edge("prepare_initial_status", "review_initial_status")
 builder.add_edge("review_initial_status", "save_initial_status")
 
@@ -326,8 +322,7 @@ builder.add_edge("entity_cards_step", "prepare_chapter")
 builder.add_edge("prepare_chapter", "review_chapter")
 builder.add_edge("review_chapter", "save_chapter")
 builder.add_edge("save_chapter", "generate_summary")
-builder.add_edge("generate_summary", "character_profiles_discover_step")
-builder.add_edge("character_profiles_discover_step", "chapter_edit_subgraph")
+builder.add_edge("generate_summary", "chapter_edit_subgraph")
 
 # chapter_edit_subgraph → chapter or batch end
 builder.add_conditional_edges(
