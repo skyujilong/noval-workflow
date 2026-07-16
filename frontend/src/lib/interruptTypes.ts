@@ -221,6 +221,13 @@ export interface ChapterPlanEditItem {
   ending_hook: string;
   intensity?: string;
 }
+/** 章末长线章节规划调整 · 是否执行闸门 payload（cp_entry）：展示未写窗口锚点 + 跳过/执行。 */
+export interface ChapterPlanEditEntryGatePayload {
+  type: InterruptTypeValue;
+  message: string;
+  chapter_plan_window: ChapterPlanEditItem[];
+  range: [number, number];
+}
 /** 章末长线章节规划调整 · 方向输入 payload（cp_direction）：展示未写窗口锚点 + 输入调整方向。 */
 export interface ChapterPlanEditDirectionPayload {
   type: InterruptTypeValue;

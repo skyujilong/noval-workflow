@@ -2,9 +2,10 @@
 // 的 TYPE_TO_FORM 契约表）。表单提交时调用 onSubmit(resumeValue)，由上层 useRun.resume() 恢复 run。
 
 import { useRef } from "react";
-import { entryGateTitleOf, formKindOfPayload } from "../../lib/interruptTypes";
+import { entryGateTitleOf, formKindOfPayload, InterruptType } from "../../lib/interruptTypes";
 import type { NovelState } from "../../lib/types";
 import { ArcConfirmForm } from "./ArcConfirmForm";
+import { ChapterPlanEditEntryGateForm } from "./ChapterPlanEditEntryGateForm";
 import { BrainstormConfirmForm } from "./BrainstormConfirmForm";
 import { BrainstormExtractReview } from "./BrainstormExtractReview";
 import { BrainstormGateForm } from "./BrainstormGateForm";
@@ -110,6 +111,19 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
       );
 
     case "entry_gate":
+      // 章节规划调整闸门特事特办：带结构化未写窗口锚点，用 ChapterPlanCards 展示（不再是裸文本块）
+      if ((payload as { type?: unknown }).type === InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE) {
+        return (
+          <ChapterPlanEditEntryGateForm
+            key={formKey}
+            payload={payload as Parameters<typeof ChapterPlanEditEntryGateForm>[0]["payload"]}
+            onSubmit={onSubmit}
+            disabled={disabled}
+            title={entryGateTitleOf((payload as { type?: unknown }).type)}
+            novelState={novelState}
+          />
+        );
+      }
       return (
         <EntryGateForm
           key={formKey}

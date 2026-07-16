@@ -267,18 +267,18 @@ def _cp_entry(entry_prompt: str):
 
         start, end = _plan_edit_range(state)
         window_slice = _extract_chapter_plan_range(state.chapter_plan, start, end)
-        window_block = _format_chapter_plan_block(window_slice)
-        window_section = (
-            f"\n\n【当前未写章节规划（第 {start}-{end} 章，本次可调整）】\n{window_block}"
-            if window_block else ""
-        )
 
+        # 未写窗口锚点改走结构化字段（前端 ChapterPlanCards 渲染），message 不再塞大段文本块
         message = (
             entry_prompt
-            + window_section
             + "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
         )
-        answer = interrupt({"type": InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE.value, "message": message})
+        answer = interrupt({
+            "type": InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE.value,
+            "message": message,
+            "chapter_plan_window": _plan_cards_payload(window_slice),
+            "range": [start, end],
+        })
         if not answer:
             execute = False
         else:
