@@ -62,6 +62,7 @@ def foreshadow_prune_ask(state) -> dict:
     # 空字符串 / 否 / no / n → 不精简；是 / yes / y → 精简
     answer_str = str(answer or "").strip().lower()
     do_prune = answer_str not in _SKIP_WORDS and answer_str != ""
+    _logger.info("伏笔精简·询问：用户答=%r → %s", answer_str, "执行精简" if do_prune else "跳过（不精简）")
     return {"foreshadow_prune_enabled": do_prune}
 
 
@@ -71,6 +72,10 @@ def foreshadow_prune_analyze(state) -> dict:
         # 解析当前草稿中的伏笔数据（LLM 生成的 JSON 台账，先修复再解析）
         draft = state.current_draft
         foreshadow_data = repair_and_parse(draft, kind=dict) if isinstance(draft, str) else draft
+        pending_n = len(foreshadow_data.get("pending", []) or [])
+        collected_n = len(foreshadow_data.get("collected", []) or [])
+        _logger.info("伏笔精简·分析开始：pending=%d collected=%d 人物卡=%d",
+                     pending_n, collected_n, len(state.entity_cards or []))
 
         # 准备上下文
         recent_summaries = "\n".join(
@@ -98,12 +103,18 @@ def foreshadow_prune_analyze(state) -> dict:
         ]
         # invoke_json：先修复脏 JSON，失败则回喂报错重试一次；仍失败抛错 → 下方 except 兜底空建议。
         suggestion = invoke_json(llm, messages, kind=dict, label="foreshadow_prune")
-        _logger.info(f"伏笔精简分析完成，建议删除 {len(suggestion.get('to_delete', []))} 个")
+        to_delete = suggestion.get("to_delete", []) or []
+        # 关键日志：区分「LLM 真判定无可删（to_delete=0）」与下方 except 的「报错被吞」——
+        # 二者都会让路由跳过确认 UI，靠这行日志判断是哪种。
+        _logger.info("伏笔精简·分析完成：S级=%s A级=%s 建议删除=%d 条｜建议语：%s",
+                     suggestion.get("s_level_count"), suggestion.get("a_level_count"),
+                     len(to_delete), suggestion.get("suggestion", ""))
         return {"foreshadow_prune_suggestion": suggestion}
 
     except Exception as e:
-        _logger.error(f"伏笔精简分析失败: {e}")
-        # 失败时返回空建议，不中断流程
+        # 失败时返回空建议不中断流程——但这会让路由按「无待删」跳过确认 UI（表现为「界面没弹」）。
+        # 故此处 error 级 + 完整 traceback 落盘，便于回答「到底是 LLM 返回空还是报错」。
+        _logger.error("伏笔精简·分析失败（将跳过精简、不弹确认 UI）: %s", e, exc_info=True)
         return {"foreshadow_prune_suggestion": {"s_level_count": 0, "a_level_count": 0, "to_delete": [], "suggestion": "分析失败，跳过精简"}}
 
 
@@ -185,9 +196,11 @@ def route_after_prune_ask(state) -> str:
 def route_after_prune_analyze(state) -> str:
     suggestion = state.foreshadow_prune_suggestion
     to_delete = suggestion.get("to_delete", [])
-    # 有建议删除的内容，进入确认环节；否则直接结束（回工厂去 save）
+    # 有建议删除的内容，进入确认环节；否则直接结束（回工厂去 save）——这里正是「弹不弹 UI」的分叉点
     if to_delete:
+        _logger.info("伏笔精简·路由：待删 %d 条 → 弹确认 UI", len(to_delete))
         return "foreshadow_prune_confirm"
+    _logger.info("伏笔精简·路由：无待删项 → 跳过确认 UI，直接保存")
     return END
 
 
