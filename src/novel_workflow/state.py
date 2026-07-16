@@ -1,7 +1,10 @@
+import logging
 import operator
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Annotated
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -77,6 +80,48 @@ class CharacterRole(str, Enum):
     MINOR = "次要角色"
 
 
+# 多重定位收敛优先级（高→低）——role 是单值字段，但 LLM 常吐「主要配角、感情线角色」这类
+# 跨轴多重定位（重要度层级 × 感情线 × 反派分层本就不同轴）。收敛到单值时按此序取最高，
+# 铁律：反派分层/主角身份绝不被正面定位挤掉——否则「感情线角色、功能性反派」会丢掉反派信息，
+# 违背 role 字段「防反派写扁」的初衷。
+_ROLE_COERCE_PRIORITY: tuple[CharacterRole, ...] = (
+    CharacterRole.PROTAGONIST,
+    CharacterRole.ROOT_VILLAIN,
+    CharacterRole.FUNCTIONAL_VILLAIN,
+    CharacterRole.ROMANCE,
+    CharacterRole.MAIN_SUPPORTING,
+    CharacterRole.MINOR,
+)
+
+
+def coerce_character_role(raw) -> CharacterRole:
+    """把 LLM 给的 role 收敛成单个 CharacterRole；无任何合法定位时 fail-loud。
+
+    - 已是枚举成员 / 精确命中枚举值（含前后空格）→ 直接返回。
+    - 多重定位串（如「主要配角、感情线角色」，任意分隔符甚至无分隔符）→ 扫出串里出现的所有
+      合法枚举，按 _ROLE_COERCE_PRIORITY 取最高，collapse 多值时告警（不静默丢信息）。
+    - 一个合法定位都扫不到（自造/纯错别字）→ 抛 ValueError（fail-loud，触发审核重生成）。
+    """
+    try:
+        return CharacterRole(raw)  # 精确命中 or 已是成员直通
+    except ValueError:
+        pass
+    text = str(raw).strip()
+    try:
+        return CharacterRole(text)  # strip 掉前后空格再试
+    except ValueError:
+        pass
+    matched = [r for r in _ROLE_COERCE_PRIORITY if r.value in text]
+    if not matched:
+        valid = "/".join(r.value for r in CharacterRole)
+        raise ValueError(f"role={raw!r} 非法，须为 {valid} 之一（多重定位请只填最主要的一个）")
+    primary = matched[0]  # _ROLE_COERCE_PRIORITY 已排序，取最高优先级
+    if len(matched) > 1:
+        dropped = "、".join(r.value for r in matched[1:])
+        _logger.warning("人物 role=%r 含多重定位，收敛为 %s（略去：%s）", raw, primary.value, dropped)
+    return primary
+
+
 # 判别联合：基类 + 变体 + parse_card 工厂。变体间字段差异真实存在（人物 vs 物品），势力/地点
 # 无专属字段故共用 SimpleEntityCard。用 kw_only=True 绕开 dataclass 继承的「非默认字段不能跟在
 # 默认字段后」排序限制，让变体能声明必填字段（如 CharacterCard.role）。
@@ -146,7 +191,8 @@ def parse_card(raw: dict) -> EntityCard:
 
     - 字符串 type → EntityType 枚举（非法值抛 ValueError）。
     - 按 type 选变体类，过滤掉不属于该变体的键（跨类脏键/老 schema 残留键不炸构造）。
-    - 人物卡 role 字符串 → CharacterRole 枚举（缺失/非法抛 ValueError，落实「人物必填 role」）。
+    - 人物卡 role 字符串 → CharacterRole 枚举（缺失抛 ValueError；多重定位收敛到单值，
+      经 coerce_character_role，全非法才抛 ValueError，落实「人物必填 role」）。
     - checkpoint 反序列化的 dict 同经此路重新分派到正确变体（type 是 str 枚举，roundtrip 安全）。
     """
     if not isinstance(raw, dict):
@@ -170,10 +216,9 @@ def parse_card(raw: dict) -> EntityCard:
         if role in (None, ""):
             raise ValueError(f"人物卡 {raw.get('name')!r} 缺 role（必填，六枚举之一）")
         try:
-            kwargs["role"] = CharacterRole(role)
+            kwargs["role"] = coerce_character_role(role)  # 多重定位收敛到单值，全非法才 fail-loud
         except ValueError as exc:
-            valid = "/".join(r.value for r in CharacterRole)
-            raise ValueError(f"人物卡 {raw.get('name')!r} role={role!r} 非法，须为 {valid} 之一") from exc
+            raise ValueError(f"人物卡 {raw.get('name')!r} {exc}") from exc
 
     try:
         return cls(**kwargs)

@@ -20,7 +20,15 @@ from noval_workflow.prompts import (
     format_equipment_for_context,
     normalize_entity_name,
 )
-from noval_workflow.state import CharacterCard, EntityCard, ItemCard, NovelState, parse_card
+from noval_workflow.state import (
+    CharacterCard,
+    CharacterRole,
+    EntityCard,
+    ItemCard,
+    NovelState,
+    coerce_character_role,
+    parse_card,
+)
 
 
 def _card(name: str, type_: str = "人物", aliases: list[str] | None = None, **kw) -> EntityCard:
@@ -62,6 +70,44 @@ def test_parse_card_filters_cross_type_keys():
     """物品卡里混入人物字段（role）→ 被过滤，不炸构造。"""
     item = parse_card({"name": "灵剑", "type": "装备", "role": "乱填", "owner": "张三"})
     assert isinstance(item, ItemCard) and not hasattr(item, "role")
+
+
+# ── coerce_character_role：多重定位收敛（复现线上崩溃「主要配角、感情线角色」）────────
+
+def test_coerce_role_exact_and_whitespace():
+    assert coerce_character_role("主角") is CharacterRole.PROTAGONIST
+    assert coerce_character_role(" 主角 ") is CharacterRole.PROTAGONIST  # 前后空格
+    assert coerce_character_role(CharacterRole.MINOR) is CharacterRole.MINOR  # 已是成员直通
+
+
+def test_coerce_role_multi_collapses_to_primary():
+    """LLM 吐「主要配角、感情线角色」（原崩溃输入）→ 收敛为感情线角色（比泛化的主要配角更可注入）。"""
+    assert coerce_character_role("主要配角、感情线角色") is CharacterRole.ROMANCE
+
+
+def test_coerce_role_multi_never_drops_villain_layer():
+    """铁律：反派分层不被正面定位挤掉——「感情线角色、功能性反派」必须留住反派信息。"""
+    assert coerce_character_role("感情线角色、功能性反派") is CharacterRole.FUNCTIONAL_VILLAIN
+    assert coerce_character_role("主要配角/根源反派") is CharacterRole.ROOT_VILLAIN  # 任意分隔符
+
+
+def test_coerce_role_wholly_invalid_fails_loud():
+    """一个合法定位都扫不到（自造词）→ fail-loud，不静默兜底。"""
+    with pytest.raises(ValueError):
+        coerce_character_role("反派头目")
+
+
+def test_parse_card_coerces_multi_role_no_crash():
+    """端到端：parse_card 吃下多重定位串不再抛，收敛为单枚举写进卡。"""
+    card = _card("沈清颜", role="主要配角、感情线角色")
+    assert isinstance(card, CharacterCard)
+    assert card.role is CharacterRole.ROMANCE
+
+
+def test_parse_card_rejects_wholly_invalid_role():
+    """自造 role（无任何合法定位）仍 fail-loud，错误信息带人物名。"""
+    with pytest.raises(ValueError, match="沈清颜"):
+        parse_card({"name": "沈清颜", "type": "人物", "role": "大反派头目"})
 
 
 # ── _merge_cards：去重代码层兜底 ──────────────────────────────────────────────
