@@ -11,6 +11,8 @@ interface Params {
   interrupt: CurrentInterrupt | null;
   /** 自动模式开关是否打开 */
   enabled: boolean;
+  /** 「长线规划自动化」子开关：false（默认）时长线章节规划点不自动、停回人工 */
+  autoLongPlan: boolean;
   /** 并发闸：running || summaryBusy 时不得自动触发 */
   inputDisabled: boolean;
   /** 自动 resume 的落地回调（与手动共用一条路径） */
@@ -35,6 +37,7 @@ interface Result {
 export function useLazyAutoResume({
   interrupt,
   enabled,
+  autoLongPlan,
   inputDisabled,
   onAutoResume,
   seconds = 5,
@@ -48,8 +51,11 @@ export function useLazyAutoResume({
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const plan = useMemo(
-    () => (enabled && interrupt ? getLazyResume(interrupt.payload) : null),
-    [enabled, interrupt]
+    () =>
+      enabled && interrupt
+        ? getLazyResume(interrupt.payload, { autoLongPlan })
+        : null,
+    [enabled, autoLongPlan, interrupt]
   );
 
   // 进入新环节（interrupt 引用变化）：复位守卫与秒数

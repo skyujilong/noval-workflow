@@ -16,7 +16,7 @@ import {
 } from "react";
 import { GraphView } from "./graph/GraphView";
 import { InterruptHandler } from "./interrupts/InterruptHandler";
-import { LazyModeSwitch } from "./interrupts/LazyModeSwitch";
+import { LazyModeSwitch, LongPlanAutoSwitch } from "./interrupts/LazyModeSwitch";
 import { BrainstormChat } from "./interrupts/BrainstormChat";
 import { ChapterReader } from "./novel/ChapterReader";
 import { NovelDetail } from "./novel/NovelDetail";
@@ -25,6 +25,7 @@ import { StateEditPanel } from "./state/StateEditPanel";
 import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
 import { useRun } from "../hooks/useRun";
 import { useLazyAutoResume } from "../hooks/useLazyAutoResume";
+import { isPreWritingInterrupt } from "../lib/lazyMode";
 import { updateThreadMeta, updateThreadState } from "../lib/langgraph";
 import type { GraphEdge, GraphNode, ThreadMeta } from "../lib/langgraph";
 import {
@@ -90,6 +91,10 @@ interface Props {
   lazyMode: boolean;
   /** 切换自动模式 */
   onLazyModeChange: (next: boolean) => void;
+  /** 「长线规划自动化」子开关（默认关=遇长线规划停回人工，防剧情偏移） */
+  autoLongPlan: boolean;
+  /** 切换长线规划自动化 */
+  onAutoLongPlanChange: (next: boolean) => void;
 }
 
 export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
@@ -109,6 +114,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
       onStatusChange,
       lazyMode,
       onLazyModeChange,
+      autoLongPlan,
+      onAutoLongPlanChange,
     },
     ref
   ) {
@@ -212,9 +219,14 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const lazy = useLazyAutoResume({
       interrupt,
       enabled: lazyMode,
+      autoLongPlan,
       inputDisabled,
       onAutoResume: handleInterruptSubmit,
     });
+
+    // 是否已进入章节写作阶段：开写前（脑爆/初始参数/一致性冻结/设定 review）禁用自动模式开关。
+    // 无 interrupt 时（running/detail 态）本行不参与渲染——开关只在 interrupt 分支下展示。
+    const inWritingStage = !!interrupt && !isPreWritingInterrupt(interrupt.payload);
 
     // 暴露 replay / continueRun 给 App（左侧「历史」面板「从此点重跑」、小说列表「▶」）
     useImperativeHandle(
@@ -364,7 +376,20 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                   手动纠正 state 后再「通过 / 提交意见」继续）。进化按钮不受 inputDisabled
                   约束——它只读写 overrides/台账，不 resume 本 thread。 */}
               <div className="mb-3 flex items-center justify-between gap-2">
-                <LazyModeSwitch checked={lazyMode} onChange={onLazyModeChange} />
+                <div className="flex items-center gap-4">
+                  <LazyModeSwitch
+                    checked={lazyMode}
+                    onChange={onLazyModeChange}
+                    disabled={!inWritingStage}
+                  />
+                  {/* 长线规划子开关：仅自动模式开启且已进入写作阶段时展示 */}
+                  {lazyMode && inWritingStage && (
+                    <LongPlanAutoSwitch
+                      checked={autoLongPlan}
+                      onChange={onAutoLongPlanChange}
+                    />
+                  )}
+                </div>
                 {state.novel_name && (
                   <div className="flex gap-2">
                     {EVOLVABLE_REVIEW_TYPES.has(state.review_type) && (

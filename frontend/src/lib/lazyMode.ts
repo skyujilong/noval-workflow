@@ -24,6 +24,12 @@ export interface LazyResume {
   actionLabel: string; // 倒计时 banner 显示的动作名
 }
 
+/** getLazyResume 的可选项：由前端子开关注入，决定「长线规划」是否也自动化。 */
+export interface LazyOptions {
+  /** 「长线规划自动化」子开关：false（默认）= 遇长线章节规划点停下交回人工，防剧情偏移。 */
+  autoLongPlan?: boolean;
+}
+
 /**
  * 强制手动的 type 黑名单（冗余护栏）：即便将来 FormKind 映射改动也不会被自动化。
  * 语义——初始参数采集、Phase1 设定一致性冻结（破坏性、不在章节循环）、脑爆阶段。
@@ -54,16 +60,94 @@ export const DESTRUCTIVE_TYPES = new Set<string>([
 ]);
 
 /**
- * 计算某个 interrupt payload 在自动模式下的自动 resume 处置。
- * @returns LazyResume（auto=true 才自动）；黑名单/未覆盖类型返回 null（维持手动）。
+ * 「开始写文章之前」的设定/筹备类 review_type（review_generic 共用型，靠 review_type 区分）。
+ * 这些是开写前的基础设定固化，自动模式一律不介入——连开关都禁用（见 isPreWritingInterrupt）。
+ * 注：写作循环内的 review_type（titles/chapter/arc_outline/chapter_plan/scene_beats/…）不在此列，
+ * 仍可自动应答。chapter_plan 另受「长线规划」子开关约束（见 isLongPlanInterrupt）。
  */
-export function getLazyResume(payload: unknown): LazyResume | null {
+const PRE_WRITING_REVIEW_TYPES = new Set<string>([
+  "foundation",
+  "core_theme",
+  "world_building",
+  "power_system",
+  "core_conflicts",
+  "overall_outline",
+  "character_cards",
+  "volumes",
+]);
+
+/**
+ * 「长线章节规划」相关 type：这些点决定后续远端锚点（章节规划），弧线大纲由其派生。
+ * 自动模式盲目采纳 AI 会累积剧情偏移，故默认停在这里交回人工（除非打开「长线规划自动化」子开关）。
+ * 覆盖章末长线调整子图的各 interrupt；初次远端锚点生成（review_generic + review_type=chapter_plan）
+ * 由 isLongPlanInterrupt 里对 review_type 的判断兜住。
+ */
+const LONG_PLAN_TYPES = new Set<string>([
+  InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE,
+  InterruptType.CHAPTER_PLAN_EDIT_DIRECTION,
+  InterruptType.CHAPTER_PLAN_EDIT_CONFIRM,
+  InterruptType.CHAPTER_PLAN_EDIT_CONFIRM_ERROR,
+]);
+
+/** 从 payload 安全取出 type 字符串（非法结构返回 null）。 */
+function payloadType(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const type = (payload as { type?: unknown }).type;
+  return typeof type === "string" ? type : null;
+}
+
+/**
+ * 是否处于「开始写文章之前」的阶段（脑爆 / 初始参数 / 一致性冻结 / 设定类 review）。
+ * 用途：① 禁用「自动模式」总开关；② 阻断自动应答（设定 review 不像 LAZY_DENY 那样天然落 null）。
+ * 复用 LAZY_DENY（脑爆/初始参数/一致性那一组正是开写前的非 review 环节），再叠加设定类 review_type。
+ */
+export function isPreWritingInterrupt(payload: unknown): boolean {
+  const type = payloadType(payload);
+  if (!type) return false;
+  if (LAZY_DENY.has(type)) return true;
+  if (type === InterruptType.REVIEW_GENERIC) {
+    const rt = (payload as { review_type?: unknown }).review_type;
+    return typeof rt === "string" && PRE_WRITING_REVIEW_TYPES.has(rt);
+  }
+  return false;
+}
+
+/**
+ * 是否为「长线章节规划」点（受「长线规划自动化」子开关控制）。
+ * = 章末长线调整子图的 interrupt，或初次远端锚点生成（review_generic + review_type=chapter_plan）。
+ */
+export function isLongPlanInterrupt(payload: unknown): boolean {
+  const type = payloadType(payload);
+  if (!type) return false;
+  if (LONG_PLAN_TYPES.has(type)) return true;
+  if (type === InterruptType.REVIEW_GENERIC) {
+    const rt = (payload as { review_type?: unknown }).review_type;
+    return rt === "chapter_plan";
+  }
+  return false;
+}
+
+/**
+ * 计算某个 interrupt payload 在自动模式下的自动 resume 处置。
+ * @param opts 子开关注入（autoLongPlan：长线规划是否也自动化）。
+ * @returns LazyResume（auto=true 才自动）；黑名单/开写前/长线规划（子开关关）/未覆盖类型返回 null（维持手动）。
+ */
+export function getLazyResume(
+  payload: unknown,
+  opts?: LazyOptions
+): LazyResume | null {
   if (!payload || typeof payload !== "object") return null;
   const type = (payload as { type?: unknown }).type;
   if (typeof type !== "string") return null;
 
   // 黑名单短路：破坏性冻结 / 初始参数 / 脑爆一律手动
   if (LAZY_DENY.has(type)) return null;
+
+  // 开写前的设定/筹备阶段（整体大纲/分卷/人物档案等 review）：自动模式不介入
+  if (isPreWritingInterrupt(payload)) return null;
+
+  // 长线章节规划点：「长线规划自动化」子开关关（默认）→ 停下交回人工，防剧情偏移
+  if (isLongPlanInterrupt(payload) && !opts?.autoLongPlan) return null;
 
   const kind = formKindFromType(type);
   switch (kind) {

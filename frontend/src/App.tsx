@@ -30,6 +30,10 @@ export default function App() {
   const [lazyMode, setLazyMode] = useState<boolean>(
     () => localStorage.getItem("lazyModeOn") === "1"
   );
+  // 「长线规划自动化」子开关（全局偏好）：默认关=遇长线章节规划点停回人工，防剧情偏移
+  const [autoLongPlan, setAutoLongPlan] = useState<boolean>(
+    () => localStorage.getItem("lazyLongPlanOn") === "1"
+  );
   // 当从列表点「▶」进入 pending 卡住的 thread 时置为 true，workspace 挂载后自动触发一次 continueRun。
   // 与 autoStart 语义并行：autoStart 面向「新建自动 start」；autoContinue 面向「pending 一键继续」。
   const [autoContinue, setAutoContinue] = useState(false);
@@ -134,6 +138,11 @@ export default function App() {
     localStorage.setItem("lazyModeOn", lazyMode ? "1" : "0");
   }, [lazyMode]);
 
+  // 持久化长线规划自动化子开关
+  useEffect(() => {
+    localStorage.setItem("lazyLongPlanOn", autoLongPlan ? "1" : "0");
+  }, [autoLongPlan]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
@@ -225,6 +234,8 @@ export default function App() {
             onStatusChange={handleStatusChange}
             lazyMode={lazyMode}
             onLazyModeChange={setLazyMode}
+            autoLongPlan={autoLongPlan}
+            onAutoLongPlanChange={setAutoLongPlan}
           />
         ) : (
           <>
