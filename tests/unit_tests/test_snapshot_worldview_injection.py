@@ -1,4 +1,4 @@
-"""回归测试：快照台账（含阶段固化数据）的生成/自审必须注入完整基础设定（世界观）。
+"""回归测试：快照台账（含阶段固化数据）的生成必须注入完整基础设定（世界观）。
 
 背景：快照类型（foreshadowing/phase_summary）此前在 generate() 与 llm_self_review() 里
 刻意丢弃 system_context（唯一承载【世界观设定】），导致固化数据的等级/资源等硬性数值
@@ -8,7 +8,8 @@
 「数据维护员/审核员」身份 + 完整设定。本测试锁定：
   1) build_foundation_context(include_identity=False) 输出无创作者身份前缀、但含世界观；
   2) 快照 generate 的系统消息含「数据维护员」身份 + 世界观；
-  3) 快照 llm_self_review 的系统消息含「数据审核员」身份 + 世界观，且仍前置上次快照基线。
+  3) 快照 llm_self_review 现已关闭（结构化数据无需创作级自审，见 _SELF_REVIEW_DISABLED_TYPES）：
+     phase_summary/foreshadowing 直接跳过自审、不调 LLM。故快照自审的 worldview 注入路径已休眠。
 """
 
 from __future__ import annotations
@@ -70,7 +71,11 @@ def test_snapshot_generate_injects_worldview(monkeypatch):
     assert WORLD in sys_text, "快照生成的系统提示必须注入世界观"
 
 
-def test_snapshot_self_review_injects_worldview_and_keeps_baseline(monkeypatch):
+def test_snapshot_self_review_is_disabled_no_llm_call(monkeypatch):
+    """快照类型（phase_summary/foreshadowing）自审已关闭：不调 LLM，直接判过。
+
+    结构化数据维护无需创作级自审（省调用 + 省连锁重写）。返回空 feedback → 下游走 human_review。
+    """
     recorder: list = []
     monkeypatch.setattr(sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm"), recorder))
 
@@ -80,16 +85,14 @@ def test_snapshot_self_review_injects_worldview_and_keeps_baseline(monkeypatch):
         system_context=ctx,
         task_prompt="【上次阶段固化数据】\n主角：炼气三层。",
         current_draft="角色：主角\n【当前状态/定位】炼气五层【变化】",
+        llm_review_count=0,
     )
-    sg.llm_self_review(state)
+    out = sg.llm_self_review(state)
 
     sr = [msgs for lbl, msgs in recorder if lbl.startswith("self_review:")]
-    assert sr, "应触发一次自审调用"
-    sys_text = str(sr[0][0].content)    # SystemMessage
-    human_text = str(sr[0][1].content)  # HumanMessage
-    assert "数据审核员" in sys_text, "应保留严谨的数据审核员身份"
-    assert WORLD in sys_text, "快照自审的系统提示必须注入世界观"
-    assert "上次阶段固化数据" in human_text, "仍须前置上次快照做基线（不得漏条目）"
+    assert not sr, "快照自审已关闭，不应触发任何自审 LLM 调用"
+    assert out["review_feedback"] == "", "跳过自审须判过（空 feedback）"
+    assert out["llm_review_count"] == 1, "轮数仍 +1，保持与旧路由一致"
 
 
 # ── 人物初始基线节点（Phase 1 收尾，复用 phase_summary 字段 / review_type）────────────
