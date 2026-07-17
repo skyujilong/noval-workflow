@@ -23,6 +23,7 @@ import { NovelDetail } from "./novel/NovelDetail";
 import { VolumeRibbon } from "./novel/VolumeRibbon";
 import { StateEditPanel } from "./state/StateEditPanel";
 import { PromptEvolutionModal } from "./novel/PromptEvolutionModal";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./ui/sheet";
 import { useRun } from "../hooks/useRun";
 import { useLazyAutoResume } from "../hooks/useLazyAutoResume";
 import { isPreWritingInterrupt } from "../lib/lazyMode";
@@ -141,6 +142,8 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
     const [editorOpen, setEditorOpen] = useState(false);
     // 提示词进化抽屉开关（把人工打回意见提炼进本书提示词 / 整改库复用）
     const [evolveOpen, setEvolveOpen] = useState(false);
+    // 章节阅读抽屉开关（右上角常驻按钮触发，任意阶段可随时回看已生成正文）
+    const [readerOpen, setReaderOpen] = useState(false);
     // back_to_chat 转换桥接：用户点击「返回脑爆」后，在 setRunning(false) 与
     // setInterrupt(BRAINSTORM_CHAT) 之间的渲染间隙保持 inBrainstorm=true，避免闪烁旧抽屉。
     const transitioningToChatRef = useRef(false);
@@ -338,9 +341,24 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
 
         {/* 右侧：中断表单 / 流式 / 小说详情（顺序刻意保留：resume 期保留旧中断表单） */}
         <aside className="relative flex-1 overflow-y-auto border-l bg-white">
-          {/* 顶部分卷横条：横向大结构一眼可见（volumes 为空自动不渲染，老小说无干扰）。
-              跨所有右侧态显示——不管当前在 interrupt/running/detail,横向大结构始终可见。 */}
-          <VolumeRibbon state={state} />
+          {/* 顶部横条：左＝分卷大结构（横向滚动，volumes 空则左侧留空），右＝常驻「阅读章节」入口。
+              sticky 吸顶、跨 interrupt/running/detail 所有态可见/可点——分卷一眼可见，正文随时回看。
+              novel_name 空（脑爆前期）时整条不渲染（此时 volumes 也必空，等价旧 VolumeRibbon 的 null）。 */}
+          {state.novel_name && (
+            <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-gray-200 bg-gray-50/95 px-3 py-1.5 backdrop-blur">
+              <div className="min-w-0 flex-1">
+                <VolumeRibbon state={state} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setReaderOpen(true)}
+                title="阅读已生成的章节正文（任意阶段可随时查看）"
+                className="shrink-0 rounded border border-gray-200 bg-white px-2 py-1 text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600"
+              >
+                📖 阅读章节
+              </button>
+            </div>
+          )}
           {inBrainstorm ? (
             <BrainstormChat
               summary={state.brainstorm_summary ?? ""}
@@ -561,11 +579,28 @@ export const NovelWorkspace = forwardRef<NovelWorkspaceHandle, Props>(
                   </div>
                 </>
               ) : (
-                <ChapterReader state={state} />
+                // 详情 tab 里在可滚动面板中，给一层固定高度承载 ChapterReader 的 h-full
+                <div className="h-[70vh]">
+                  <ChapterReader state={state} />
+                </div>
               )}
             </>
           )}
         </aside>
+
+        {/* 章节阅读抽屉：右上角常驻按钮触发，复用 ChapterReader（左列表右正文）。
+            与右侧详情 tab 同一组件，但以抽屉呈现，故任意阶段（含中断/生成中）都能打开回看。 */}
+        <Sheet open={readerOpen} onOpenChange={setReaderOpen}>
+          {/* flex-col：header 固定高、ChapterReader 占满剩余（min-h-0 让内部两列能各自滚动） */}
+          <SheetContent side="right" className="flex flex-col gap-0 p-0">
+            <SheetHeader className="border-b px-4 py-3 text-left">
+              <SheetTitle>📖 阅读章节</SheetTitle>
+            </SheetHeader>
+            <div className="min-h-0 flex-1">
+              <ChapterReader state={state} />
+            </div>
+          </SheetContent>
+        </Sheet>
 
         {/* 就地编辑 state 抽屉：暂停点手动纠偏。保存后只刷新 values（refreshValues），
             不动 interrupt——update_state 会清空中断源，跑常规 refresh 会让中断表单消失。 */}

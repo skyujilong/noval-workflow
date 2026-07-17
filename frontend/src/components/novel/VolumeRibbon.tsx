@@ -142,8 +142,9 @@ export function VolumeRibbon({ state }: Props) {
 
   return (
     <>
-      {/* 单行横向滚动的紧凑横条：表头内联在同一行，chip 不换行不撑满，节省右侧面板高度 */}
-      <div className="flex items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-1.5">
+      {/* 单行横向滚动的紧凑内容块：表头内联 + chip 横向滚动。外框（border/bg/padding/sticky）
+          由父容器统一提供——分卷横条与「阅读章节」按钮合并成同一行，见 NovelWorkspace。 */}
+      <div className="flex min-w-0 items-center gap-2">
         <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
           分卷 · {volumes.length}
         </span>

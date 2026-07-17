@@ -51,7 +51,9 @@ export function ChapterReader({ state }: Props) {
   }
 
   return (
-    <div className="flex" style={{ height: "70vh" }}>
+    // 自适应父容器高度：由使用方决定尺寸（抽屉里 flex-1 撑满、详情 tab 里包一层固定高度）。
+    // 两列各自 overflow-y-auto 依赖父有确定高度，故 min-h-0 防 flex 子项撑破。
+    <div className="flex h-full min-h-0">
       {/* 章节列表 */}
       <div className="w-40 overflow-y-auto border-r">
         {titles.map((t, i) => (
