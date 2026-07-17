@@ -8,7 +8,7 @@
 「数据维护员/审核员」身份 + 完整设定。本测试锁定：
   1) build_foundation_context(include_identity=False) 输出无创作者身份前缀、但含世界观；
   2) 快照 generate 的系统消息含「数据维护员」身份 + 世界观；
-  3) 快照 llm_self_review 现已关闭（结构化数据无需创作级自审，见 _SELF_REVIEW_DISABLED_TYPES）：
+  3) 快照 llm_self_review 现已关闭（结构化数据无需创作级自审，见 config.SELF_REVIEW_DISABLED_TYPES）：
      phase_summary/foreshadowing 直接跳过自审、不调 LLM。故快照自审的 worldview 注入路径已休眠。
 """
 

@@ -29,6 +29,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from noval_workflow.config import PRUNE_STRIDE, should_prune_at_chapter
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import invoke_json
@@ -58,6 +59,8 @@ class EntityCardsPruneSubState:
     all_chapter_summaries: list = field(default_factory=list)
     all_chapter_titles: list = field(default_factory=list)
     world_building: str = ""
+    # 刚写完的章号，供 ask 节点做精简节流（每 PRUNE_STRIDE 章执行一次）；只读桥接。
+    total_chapters_written: int = 0
 
     # ── 本子图私有流转 ──────────────────────────────────────────────────────────
     entity_cards_prune_enabled: bool = False
@@ -82,7 +85,14 @@ def _card_text(card, key) -> str:
 # 写基类就丢掉子类字段。不写注解 → 回退到编译时的图 schema（EntityCardsPruneSubState）。
 
 def entity_cards_prune_ask(state) -> dict:
-    """询问用户是否需要精简实体卡库。"""
+    """询问用户是否需要精简实体卡库（先过节流：非精简章直接跳过，不弹中断、不调 LLM）。"""
+    # 章末精简节流：仅每 PRUNE_STRIDE 章执行一次。非节流章判「不精简」→ route_after_prune_ask
+    # 走 END。与伏笔精简共用同一步长（后端全局生效，不感知前端自动模式）。
+    chapter_no = state.total_chapters_written
+    if not should_prune_at_chapter(chapter_no):
+        _logger.info("卡库精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE)
+        return {"entity_cards_prune_enabled": False}
+
     answer = interrupt({
         "type": InterruptType.ENTITY_CARDS_PRUNE_ASK.value,
         "message": "是否对实体卡库进行精简？\n\n提示：精简将由AI分析并建议删除一次性碎屑、彻底离场且无复现价值的卡，抑制人物档案/装备清单持续膨胀。",

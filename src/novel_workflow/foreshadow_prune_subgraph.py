@@ -23,6 +23,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from noval_workflow.config import PRUNE_STRIDE, should_prune_at_chapter
 from noval_workflow.edit_step_subgraph import EditStepSubState, _SKIP_WORDS
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import invoke_json, repair_and_parse
@@ -54,7 +55,14 @@ class ForeshadowSubState(EditStepSubState):
 # 写基类就丢掉子类字段。不写注解 → 回退到编译时的图 schema（ForeshadowSubState）。
 
 def foreshadow_prune_ask(state) -> dict:
-    """询问用户是否需要精简伏笔台账。"""
+    """询问用户是否需要精简伏笔台账（先过节流：非精简章直接跳过，不弹中断、不调 LLM）。"""
+    # 章末精简节流：仅每 PRUNE_STRIDE 章执行一次。非节流章判「不精简」→ route_after_prune_ask
+    # 走 END。后端不感知前端自动模式，故手动/自动模式在此一致生效。
+    chapter_no = state.total_chapters_written
+    if not should_prune_at_chapter(chapter_no):
+        _logger.info("伏笔精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE)
+        return {"foreshadow_prune_enabled": False}
+
     answer = interrupt({
         "type": InterruptType.FORESHADOW_PRUNE_ASK.value,
         "message": "是否对伏笔台账进行精简？\n\n提示：精简将由AI分析并建议删除老旧、次要的伏笔，避免上下文膨胀。",

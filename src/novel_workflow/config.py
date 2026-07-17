@@ -52,6 +52,17 @@ def _read_positive_int(env_name: str, default: int) -> int:
     return value
 
 
+def _read_str_set(env_name: str, default: set[str]) -> set[str]:
+    """读环境变量为逗号分隔的字符串集合;未设置/全空时落回 default。空白项与首尾空格自动剔除。
+
+    覆盖语义(非追加):一旦设置该 env,即完全替换 default——需列全想保留的项。
+    """
+    raw = os.environ.get(env_name)
+    if raw is None or raw.strip() == "":
+        return set(default)
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def _read_bool(env_name: str, default: bool) -> bool:
     """读环境变量为布尔;接受 true/false/1/0/yes/no(大小写不敏感),其他值 warning + 落回默认。"""
     raw = os.environ.get(env_name)
@@ -85,4 +96,50 @@ if _raw_stride > CHAPTER_PLAN_WINDOW:
     )
     _raw_stride = CHAPTER_PLAN_WINDOW
 CHAPTER_PLAN_STRIDE: int = _raw_stride
+
+
+# ── 章末精简(伏笔台账 + 实体卡库)节流步长 ─────────────────────────────────────
+#
+# 精简 = LLM 分析整库 + 人工/自动勾选删库。默认每章都触发,代价高(每章一次 LLM 调用
+# + 破坏性删库);自动模式下更是每章无脑跑。此步长把它节流为「每 N 章执行一次」:仅当
+# 刚写完的章号(total_chapters_written)是 N 的整数倍时才进入精简,否则 ask 节点直接跳过
+# ——不弹中断、不调 LLM。伏笔台账与实体卡库共用此步长(用户拍板:一个步长同管两者)。
+#   N=3(默认)→ 第 3/6/9… 章末各精简一次
+#   N=1      → 每章都精简(等价旧行为)
+# 节流在后端 ask 节点统一生效:后端不感知前端自动模式,故手动/自动模式行为一致。
+PRUNE_STRIDE: int = _read_positive_int("NOVEL_PRUNE_STRIDE", 3)
+
+
+def should_prune_at_chapter(chapter_number: int) -> bool:
+    """判断刚写完第 chapter_number 章后,是否到达精简节流点。
+
+    chapter_number 传 state.total_chapters_written(精简 ask 运行时已是刚写完的章号)。
+    <=0(尚未写任何章)一律不精简;否则按 PRUNE_STRIDE 整除判定。
+    """
+    if chapter_number <= 0:
+        return False
+    return chapter_number % PRUNE_STRIDE == 0
+
+
+# ── 关闭 LLM 自审的 review_type 集合 ─────────────────────────────────────────
+#
+# 写作循环里的「结构化数据维护」类不需要创作级自审,直接跳过——省下自审调用本身,以及
+# 自审挑刺触发的连锁重写(如 entity_cards 常跑 2-3 轮)。保留自审的是创作/骨架类:
+# chapter 正文、chapter_plan 长线大纲、arc_outline 弧线大纲,以及开写前的设定固化类。
+# 逻辑在 subgraph.llm_self_review 唯一开关点消费本集合。
+#
+# 经 env 逗号分隔覆盖(覆盖语义,非追加):
+#   NOVEL_SELF_REVIEW_DISABLED_TYPES=titles,scene_beats  → 只关这两类
+#   留空/未设 → 用下方默认集合。
+_DEFAULT_SELF_REVIEW_DISABLED_TYPES: set[str] = {
+    "titles",
+    "scene_beats",
+    "entity_cards",
+    "foreshadowing",
+    "phase_summary",
+    "entity_discover",
+}
+SELF_REVIEW_DISABLED_TYPES: frozenset[str] = frozenset(
+    _read_str_set("NOVEL_SELF_REVIEW_DISABLED_TYPES", _DEFAULT_SELF_REVIEW_DISABLED_TYPES)
+)
 

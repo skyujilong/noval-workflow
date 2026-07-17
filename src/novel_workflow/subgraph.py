@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
+from noval_workflow.config import SELF_REVIEW_DISABLED_TYPES
 from noval_workflow.interrupt_types import review_type_to_interrupt_type
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
@@ -300,25 +301,13 @@ def generate(state: ReviewSubState) -> dict:
 
 _SNAPSHOT_REVIEW_TYPES = {"foreshadowing", "phase_summary"}
 
-# 关闭 LLM 自审的 review_type：写文章循环里的「结构化数据维护」类不需要创作级自审，
-# 直接跳过——省下自审调用本身，以及自审挑刺触发的连锁重写（如 entity_cards 常跑 2-3 轮）。
-# 保留自审的是创作/骨架类：chapter 正文、chapter_plan 长线大纲、arc_outline 弧线大纲，
-# 以及开写前的设定固化类（core_theme…character_cards，同走本 llm_self_review）。
-# 所有子图（review_subgraph 与各 make_edit_step_subgraph）都汇到这个函数，故此处是唯一开关点。
-_SELF_REVIEW_DISABLED_TYPES = {
-    "titles",
-    "scene_beats",
-    "entity_cards",
-    "foreshadowing",
-    "phase_summary",
-    "entity_discover",
-}
-
 
 def llm_self_review(state: ReviewSubState) -> dict:
     """LLM reviews its own draft and returns feedback or empty string if OK."""
     # 已关闭自审的类型：不调 LLM，直接判过（等价于「零轮自审」），交给下游 human_review。
-    if state.review_type in _SELF_REVIEW_DISABLED_TYPES:
+    # 关闭清单为 config.SELF_REVIEW_DISABLED_TYPES（默认结构化数据维护类，可经 env 覆盖）；
+    # 所有子图（review_subgraph 与各 make_edit_step_subgraph）都汇到本函数，此处是唯一开关点。
+    if state.review_type in SELF_REVIEW_DISABLED_TYPES:
         return {"review_feedback": "", "llm_review_count": state.llm_review_count + 1}
 
     llm = get_llm(temperature=0.3, label=f"self_review:{state.review_type}")
