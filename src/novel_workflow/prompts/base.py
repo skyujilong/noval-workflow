@@ -233,10 +233,12 @@ class GenreFlavor:
     非空时字符串里可以用以下占位（base 拼装时用 .format() 展开）:
       - {BATCH_SIZE}           本批章数（NOVEL_BATCH_SIZE 环境变量）
       - {batch_max_burst}      按题材上限算出的最多爆发章数,如 max(1, int(BATCH_SIZE*0.2))
+      - {batch_mid_burst}      中间档爆发上限 max(1, int(BATCH_SIZE*0.3))——反爽文但仍要冒险撑主线的题材用
+      - {batch_mid_daily}      中间档日常下限 max(1, int(BATCH_SIZE*0.4))——与 batch_mid_burst 配套
       - {batch_min_daily}      按题材下限算出的最少日常章数,如 max(1, int(BATCH_SIZE*0.5))
       - {batch_default_burst}  base 默认爆发章上限 int(BATCH_SIZE*0.4)
       - {batch_default_calm}   base 默认铺垫章下限 max(1, BATCH_SIZE//3)
-    题材通常用前 3 个;后 2 个是给 base 默认模板保底用的。
+    题材通常用前几个;default 系列是给 base 默认模板保底用的。
 
     用途:搞笑异世界一类反爽文题材,需要爆发上限远低于 base 默认 40% —— 通过 override
     可以整段替换,而非追加,避免与 base 版本并列时数字打架。
@@ -802,7 +804,9 @@ class PromptPack:
             "batch_default_burst": int(BATCH_SIZE * 0.4),
             "batch_default_calm": max(1, BATCH_SIZE // 3),
             "batch_max_burst": max(1, int(BATCH_SIZE * 0.2)),
+            "batch_mid_burst": max(1, int(BATCH_SIZE * 0.3)),  # 反爽文但要冒险撑主线的中间档:~30% 爆发上限
             "batch_min_daily": max(1, int(BATCH_SIZE * 0.5)),
+            "batch_mid_daily": max(1, int(BATCH_SIZE * 0.4)),  # 与 batch_mid_burst 配套:日常仍是主体但让出冒险空间,~40% 下限
         }
         rhythm_template = (
             self.flavor.arc_rhythm_override
