@@ -13,4 +13,5 @@ export const GENRE_OPTIONS: GenreOption[] = [
   { value: "都市", label: "都市" },
   { value: "科幻", label: "科幻" },
   { value: "两性情感", label: "两性情感" },
+  { value: "搞笑异世界", label: "搞笑异世界" },
 ];

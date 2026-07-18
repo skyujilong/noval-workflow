@@ -7,7 +7,15 @@ get_prompt_pack(genre) 按 state.genre 加载对应题材的 PromptPack；未命
 from __future__ import annotations
 
 from noval_workflow.prompts.base import GenreFlavor, PromptPack
-from noval_workflow.prompts.genres import apocalypse, generic, romance, sci_fi, urban, xianxia
+from noval_workflow.prompts.genres import (
+    apocalypse,
+    comedy_isekai,
+    generic,
+    romance,
+    sci_fi,
+    urban,
+    xianxia,
+)
 
 # 题材注册表：genre_key → GenreFlavor。
 # 同一题材包可注册多个别名（如"玄幻"/"仙侠"共用 xianxia.FLAVOR）。
@@ -20,6 +28,7 @@ _REGISTRY: dict[str, GenreFlavor] = {
     "都市": urban.FLAVOR,
     "科幻": sci_fi.FLAVOR,
     "两性情感": romance.FLAVOR,
+    "搞笑异世界": comedy_isekai.FLAVOR,
 }
 
 # 回退用的通用包 key
@@ -47,4 +56,4 @@ def get_prompt_pack(genre: str, novel_name: str = "") -> PromptPack:
 
 def available_genres() -> list[str]:
     """返回前端下拉可用的题材主键列表（不含别名，顺序固定）。"""
-    return ["通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"]
+    return ["通用", "末日求生", "玄幻", "都市", "科幻", "两性情感", "搞笑异世界"]
