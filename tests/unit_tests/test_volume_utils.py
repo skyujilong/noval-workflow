@@ -8,6 +8,7 @@ from noval_workflow.state import NovelState, Volume
 from noval_workflow.volume_utils import (
     current_volume,
     find_boundary_crossings,
+    format_chapter_plan_volume_budget,
     volume_of_chapter,
     volume_position_card,
 )
@@ -220,3 +221,68 @@ def test_volume_position_card_no_in_progress_falls_back():
     state = NovelState(volumes=vs, total_chapters_written=30)
     card = volume_position_card(state)
     assert "第 2 卷" in card  # 下一章 31 属于卷 2
+
+
+# ── format_chapter_plan_volume_budget ─────────────────────────────────────────
+
+def test_budget_spans_two_volumes():
+    """本批 40 章横跨 2 卷:分别输出各卷覆盖区间 + 卷内位置 + 剩余额度。"""
+    vs = _four_volumes()
+    # 卷1 已收卷到 29；卷2 [29, 29+45-1=73]（target_max=45）
+    vs[0].status = "closed"
+    vs[0].actual_end = 29
+    # 本批 [50, 89]:横跨 卷2 尾部 [50, 73] + 卷3 头部 [74, 89]
+    hint = format_chapter_plan_volume_budget(vs, 50, 89)
+    assert hint != ""
+    assert "本批规划区间:第 50" in hint.replace("：", ":")
+    # 卷2 覆盖 50-73（24 章）
+    assert "本批覆盖第 50-73 章" in hint
+    # 卷3 覆盖 74-89（16 章）
+    assert "本批覆盖第 74-89 章" in hint
+    # 卷内位置显示（卷2 已到末尾 24 章位置 / 45；卷3 头 16 章）
+    assert "第 22-45/45" in hint  # 卷2 span=45(target_max), 50-73 → 卷内 22-45
+    assert "第 1-16/50" in hint   # 卷3 span=50, 74-89 → 卷内 1-16
+
+
+def test_budget_within_single_volume():
+    """本批完全在 1 卷内:只输出 1 行,卷内位置准确。"""
+    vs = _four_volumes()
+    # 卷3 [74, 74+50-1=123]，本批 [80, 100] 完全落在卷3
+    hint = format_chapter_plan_volume_budget(vs, 80, 100)
+    assert "第 3 卷" in hint
+    # 只覆盖 1 卷:2 卷/4 卷标题都不应出现在覆盖行
+    assert "第 1 卷《" not in hint
+    assert "第 2 卷《" not in hint
+    assert "第 4 卷《" not in hint
+    assert "本批覆盖第 80-100 章" in hint
+
+
+def test_budget_empty_volumes_returns_empty():
+    """未启用分卷 → 返回 ""(向后兼容,不注入 prompt)。"""
+    assert format_chapter_plan_volume_budget([], 1, 40) == ""
+
+
+def test_budget_no_overlap_returns_empty():
+    """本批区间落在所有卷之外(超出终卷 target_max 上限)→ 返回 ""。"""
+    vs = _four_volumes()  # 终卷 [124, 124+52-1=175]
+    hint = format_chapter_plan_volume_budget(vs, 500, 540)
+    assert hint == ""
+
+
+def test_budget_closed_volume_uses_actual_end():
+    """已收卷用 actual_end(而非 target_max)算区间上限;剩余额度 = actual_end 之后 = 0。"""
+    vs = _four_volumes()
+    vs[0].status = "closed"
+    vs[0].actual_end = 25  # 卷1 实收 25 章（虽然 target 22-28）
+    # 本批 [10, 30] 覆盖 卷1[10-25] + 卷2[29-30]
+    hint = format_chapter_plan_volume_budget(vs, 10, 30)
+    assert "本批覆盖第 10-25 章" in hint  # 卷1 到 actual_end=25 截止
+    assert "actual_end=25" in hint
+    # 卷2 从 29 起,本批到 30
+    assert "本批覆盖第 29-30 章" in hint
+
+
+def test_budget_invalid_range_returns_empty():
+    """end < start 视为非法输入 → 空串。"""
+    vs = _four_volumes()
+    assert format_chapter_plan_volume_budget(vs, 50, 20) == ""

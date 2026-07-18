@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
-from noval_workflow.volume_utils import volume_position_card
+from noval_workflow.volume_utils import format_chapter_plan_volume_budget, volume_position_card
 
 if TYPE_CHECKING:
     from noval_workflow.state import ChapterPlanItem, NovelState
@@ -75,6 +75,19 @@ ARC_CHAPTER_FORMAT = """\
 5. 伏笔&线索：本章新增伏笔、回收前文伏笔、遗留待解线索；纯过渡章可写"本章无伏笔进出，只做承接"
 6. 创作锚点：为章节标题、正文细节描写提供关键词/方向指引
 7. 下章衔接指引：本章收尾状态，明确下一章开篇切入方向"""
+
+
+# 【档位分配与节奏张弛】base 通用默认模板。
+# 使用 .format() 展开占位——因为 GenreFlavor.arc_rhythm_override 是纯字符串（不能嵌
+# f-string 表达式），故 base 默认版本也统一走 .format() 机制，保持与 override 的
+# 拼装路径完全一致。占位含义见 GenreFlavor.arc_rhythm_override docstring。
+DEFAULT_ARC_RHYTHM_TEMPLATE = """## 档位分配与节奏张弛（最高优先级，决定整批弧线的呼吸感）
+1. 每批 {BATCH_SIZE} 章必须呈现波浪式密度，**禁止章章高燃/章章强转折**。档位分布硬约束（合计 {BATCH_SIZE} 章）：
+   - 爆发 + 转折 ≤ 40%（每批最多 {batch_default_burst} 章承担硬爽点/反转/大战）
+   - 铺垫 + 缓冲 + 回落 ≥ 30%（每批至少 {batch_default_calm} 章承担蓄势、人物互动、氛围、情绪沉淀、信息释放）
+   - 推进章补足其余配额，承担主线小步稳走
+2. 首批开篇例外：首批 1-2 章允许密度稍高（用于立世界观/钩子），但仍须留 1 章做人物/氛围铺陈，避免开局就炸完所有牌。
+3. 档位错排：禁止连续 2 章以上同属爆发/转折，高潮之间必须插入铺垫/缓冲/推进让读者喘口气；同样，铺垫/缓冲不连续超 2 章，防止拖。"""
 
 
 def _extract_arc_chapter_block(arc_outline: str, batch_pos: int) -> str:
@@ -209,6 +222,25 @@ class GenreFlavor:
     """标题生成步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
     arc_focus: str = ""
     """故事弧步骤的题材聚焦补充，注入对应 prompt 的 focus 占位。"""
+
+    arc_rhythm_override: str = ""
+    """[可选] 题材专属【档位分配与节奏张弛】段，非空时**完全替换** base 通用档位约束
+    （即 arc_outline_prompt 里的默认 DEFAULT_ARC_RHYTHM_TEMPLATE 段落）。
+
+    默认空 → 走 base 通用规则（爆发+转折 ≤ 40% / 铺垫+缓冲+回落 ≥ 30%），向后兼容,
+    既有题材（末世/修仙/现代言情等）零影响。
+
+    非空时字符串里可以用以下占位（base 拼装时用 .format() 展开）:
+      - {BATCH_SIZE}           本批章数（NOVEL_BATCH_SIZE 环境变量）
+      - {batch_max_burst}      按题材上限算出的最多爆发章数,如 max(1, int(BATCH_SIZE*0.2))
+      - {batch_min_daily}      按题材下限算出的最少日常章数,如 max(1, int(BATCH_SIZE*0.5))
+      - {batch_default_burst}  base 默认爆发章上限 int(BATCH_SIZE*0.4)
+      - {batch_default_calm}   base 默认铺垫章下限 max(1, BATCH_SIZE//3)
+    题材通常用前 3 个;后 2 个是给 base 默认模板保底用的。
+
+    用途:搞笑异世界一类反爽文题材,需要爆发上限远低于 base 默认 40% —— 通过 override
+    可以整段替换,而非追加,避免与 base 版本并列时数字打架。
+    """
 
     # ── 自进化：历次人工反馈沉淀的强制整改要点（按 review_type 分桶）──────────
     # 三桶各存对应环节的历史整改要点，chapter/arc_outline/scene_beats 相互独立；
@@ -418,7 +450,8 @@ class PromptPack:
 
     def overall_outline_prompt(self, total_word_count: str) -> str:
         """生成全书四卷式整体顶层大纲 + 全局结局定位。"""
-        word_count_desc = f"{total_word_count}字" if total_word_count else "长篇"
+        # word_count_desc 直接用用户原文(如"50万字"),不再额外拼"字"——历史遗留双字 bug 修复
+        word_count_desc = total_word_count if total_word_count else "长篇"
         focus = f"\n- 题材聚焦：{self.flavor.overall_outline_focus}" if self.flavor.overall_outline_focus else ""
         return f"""{self.flavor.system_identity}
 任务：搭建本书四卷式整体顶层大纲 + 全局结局定位，只做战略骨架，不填充具体章节、台词、场景细节。
@@ -761,6 +794,23 @@ class PromptPack:
         max_words = BATCH_SIZE * 500
         focus = f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
 
+        # 【档位分配与节奏张弛】段:题材可通过 arc_rhythm_override 完全覆盖 base 通用版本。
+        # 用 .format() 展开 BATCH_SIZE 等占位——因为 override 字段是纯字符串,不能在其中
+        # 嵌 f-string 表达式。故 base 默认版本也统一走同一套占位机制,行为等价。
+        rhythm_kwargs = {
+            "BATCH_SIZE": BATCH_SIZE,
+            "batch_default_burst": int(BATCH_SIZE * 0.4),
+            "batch_default_calm": max(1, BATCH_SIZE // 3),
+            "batch_max_burst": max(1, int(BATCH_SIZE * 0.2)),
+            "batch_min_daily": max(1, int(BATCH_SIZE * 0.5)),
+        }
+        rhythm_template = (
+            self.flavor.arc_rhythm_override
+            if self.flavor.arc_rhythm_override
+            else DEFAULT_ARC_RHYTHM_TEMPLATE
+        )
+        rhythm_section = rhythm_template.format(**rhythm_kwargs)
+
         return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{volume_section}{position_section}{prev_section}{chapter_plan_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
@@ -771,13 +821,7 @@ class PromptPack:
 
 {ARC_CHAPTER_FORMAT}
 
-## 档位分配与节奏张弛（最高优先级，决定整批弧线的呼吸感）
-1. 每批 {BATCH_SIZE} 章必须呈现波浪式密度，**禁止章章高燃/章章强转折**。档位分布硬约束（合计 {BATCH_SIZE} 章）：
-   - 爆发 + 转折 ≤ 40%（每批最多 {int(BATCH_SIZE*0.4)} 章承担硬爽点/反转/大战）
-   - 铺垫 + 缓冲 + 回落 ≥ 30%（每批至少 {max(1, BATCH_SIZE//3)} 章承担蓄势、人物互动、氛围、情绪沉淀、信息释放）
-   - 推进章补足其余配额，承担主线小步稳走
-2. 首批开篇例外：首批 1-2 章允许密度稍高（用于立世界观/钩子），但仍须留 1 章做人物/氛围铺陈，避免开局就炸完所有牌。
-3. 档位错排：禁止连续 2 章以上同属爆发/转折，高潮之间必须插入铺垫/缓冲/推进让读者喘口气；同样，铺垫/缓冲不连续超 2 章，防止拖。
+{rhythm_section}
 
 ## 内容创作规则
 1. 严守作品既定设定：类型一致、战力体系、物资规则、队伍规矩、人物关系、势力矛盾，不新增私设、不强行降智/拔高角色。
@@ -978,6 +1022,12 @@ def render_chapter_plan_prompt(
     volume_card = volume_position_card(state)
     volume_section = f"\n\n{volume_card}" if volume_card else ""
 
+    # 【本批章数容量锚点】—— 基于 state.volumes(权威分卷)切出本批 [start, end] 覆盖的每卷
+    # 章数额度,让 LLM 明确"每卷剩余多少章空间/本批处于卷内哪个位置",防止把两卷份的
+    # 推进挤到一批。未启用分卷(volumes==[])时函数返回 "",天然回退不注入。
+    budget_hint = format_chapter_plan_volume_budget(state.volumes, start_chapter, end_chapter)
+    budget_section = f"\n\n{budget_hint}" if budget_hint else ""
+
     q = compute_chapter_plan_quotas(count)
     burst_max = q["burst_max"]
     burst_min = q["burst_min"]
@@ -1042,7 +1092,7 @@ def render_chapter_plan_prompt(
 
     genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
 
-    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{written_section}{locked_section}{status_section}
+    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{budget_section}{written_section}{locked_section}{status_section}
 
 # 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出 {count} 章的滚动路线图。
 
@@ -1107,6 +1157,7 @@ ending_hook **禁止**使用以下套路：
 1. 本 {count} 章须与整体大纲的阶段定位对齐，不要提前爆完终局。
 2. 严守作品既定设定（题材/世界观/力量或规则体系/人物关系），不新增私设、不降智/拔高角色。
 3. 能力 / 资源 / 身份 / 立场跃迁**必须有铺垫章在前**（{spec.escalation_prerequisites}），禁止「上一章还没起势，下一章直接跨阶段跳变」的跃迁式升级。
+4. **章数容量校准（若头部【本批章数容量锚点】存在，最高优先级）**：本 {count} 章的剧情密度必须与每卷剩余额度对齐——若本批覆盖到某卷末尾几章（卷内倒数 5 章内），这几章应写「本卷收束 / 卷末大高潮」而非「才刚开始铺垫」；若本批覆盖到某卷开局几章（卷内前 5 章），这几章应写「本卷开局 / 新阶段定位」而非「已经卷末收束」；若本批完全在卷中段，则稳态推进即可。**禁止**忽视卷内位置一律按"平均推进"式写法。
 
 ## 输出前自检（全部通过才输出）
 1. 是否严格 `[` 开头 `]` 结尾，无围栏无解释？

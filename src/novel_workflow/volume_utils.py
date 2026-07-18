@@ -165,3 +165,69 @@ def volume_position_card(state: "NovelState") -> str:
         lines.append("- 下一卷预告：（本卷为终卷）")
 
     return "\n".join(lines)
+
+
+def format_chapter_plan_volume_budget(
+    volumes: list["Volume"],
+    start_chapter: int,
+    end_chapter: int,
+) -> str:
+    """把「本批 [start, end] 章覆盖到的每卷章数额度」格式化成 prompt 注入段。
+
+    用途：chapter_plan_prompt 头部注入,让 LLM 明确"本批 40 章要跨越哪些卷 / 每卷需覆盖
+    多少章 / 卷内还剩多少额度",防止把两卷份的推进挤到一批里写导致进度过快。
+
+    覆盖规则（与 volume_of_chapter 一致的软边界语义）：
+    - 已收卷（actual_end != None）：卷章号区间 = [chapter_start, actual_end]
+    - 进行中卷（actual_end == None）：按 target_max 上限占位 → [chapter_start, chapter_start + target_max - 1]
+    - 与本批区间 [start_chapter, end_chapter] 有交集的卷都算"被本批覆盖"
+
+    volumes 为空 / 无交集 / 边界非法(end < start) 返回 ""（向后兼容）。
+    """
+    if not volumes or end_chapter < start_chapter:
+        return ""
+
+    lines: list[str] = []
+    for v in sorted(volumes, key=lambda x: x.index):
+        if v.target_max <= 0:
+            # 未定稿的坏数据跳过,不影响其他卷输出
+            continue
+        # 卷章号硬/软上限:已收卷用 actual_end,进行中卷用 chapter_start + target_max - 1
+        vol_start = v.chapter_start
+        vol_end = v.actual_end if v.actual_end is not None else v.chapter_start + v.target_max - 1
+        # 与本批区间求交集
+        overlap_start = max(vol_start, start_chapter)
+        overlap_end = min(vol_end, end_chapter)
+        if overlap_start > overlap_end:
+            continue
+        covered = overlap_end - overlap_start + 1
+        # 卷内剩余额度(以 target_max 为上限):本批之后本卷还能塞多少章
+        # 若已收卷,剩余额度 = 0(actual_end 之后不再属于本卷)
+        if v.actual_end is not None:
+            remaining_after_batch = max(0, v.actual_end - overlap_end)
+            cap_desc = f"actual_end={v.actual_end}"
+        else:
+            remaining_after_batch = max(0, vol_end - overlap_end)
+            cap_desc = f"target {v.target_min}-{v.target_max} 章"
+        # 本批在本卷内的相对位置(第几章/共几章),让 LLM 立刻感知"卷开局/卷中段/卷末"
+        vol_span = vol_end - vol_start + 1
+        pos_start_in_vol = overlap_start - vol_start + 1
+        pos_end_in_vol = overlap_end - vol_start + 1
+        lines.append(
+            f"  · 第 {v.index} 卷《{v.title}》（第 {vol_start} 章起,{cap_desc}）："
+            f"本批覆盖第 {overlap_start}-{overlap_end} 章（共 {covered} 章,"
+            f"即卷内第 {pos_start_in_vol}-{pos_end_in_vol}/{vol_span} 章位置,"
+            f"本批之后本卷剩余 ≈ {remaining_after_batch} 章额度）"
+        )
+
+    if not lines:
+        return ""
+
+    return (
+        f"【本批章数容量锚点（基于分卷 target 章数,LLM 必须据此校准剧情密度）】\n"
+        f"- 本批规划区间：第 {start_chapter} - {end_chapter} 章（共 {end_chapter - start_chapter + 1} 章）\n"
+        f"- 覆盖到的分卷：\n"
+        + "\n".join(lines)
+        + "\n- **密度校准要点**：卷开局位置(第 1-5 章)应重铺垫/新阶段定位；卷中段稳态推进；"
+        "卷末位置(倒数 5 章内)应集中收束/大高潮。**禁止**忽视卷内位置一律按平均推进写。"
+    )
