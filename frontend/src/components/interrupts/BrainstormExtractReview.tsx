@@ -23,10 +23,12 @@
 // 覆盖 flag，只按 payload.has_power_system 展示/隐藏力量体系编辑区。若用户结束脑爆后发现开关
 // 选错，走「返回脑爆继续修改」回到聊天页调整 switch 即可。
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
+import { GENRE_OPTIONS } from "@/constants/genreOptions";
+import { fetchAvailableGenres } from "@/lib/langgraph";
 import {
   buildBrainstormReviewAdvanceResume,
   buildBrainstormReviewBackResume,
@@ -34,8 +36,10 @@ import {
   type BrainstormReviewResume,
 } from "../../lib/interruptTypes";
 
-// 老后端不带 allowed_genres 时的 fallback（与 nodes/brainstorm.py._ALLOWED_GENRES 一致）
-const FALLBACK_GENRES = ["通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"];
+// 首屏兜底：HTTP 请求返回前先用编译期 GENRE_OPTIONS 撑住渲染，接口拿到值后覆盖。
+// 不再用 payload.allowed_genres——那个字段随 langgraph checkpoint 落盘，
+// 老 thread 会锁死在旧快照上看不到新增题材（「搞笑异世界」漏进 review 面板的直接原因）。
+const BOOTSTRAP_GENRES = GENRE_OPTIONS.map((opt) => opt.value);
 
 interface Props {
   payload: BrainstormExtractReviewPayload;
@@ -66,11 +70,23 @@ export function BrainstormExtractReview({ payload, onSubmit, disabled }: Props) 
   // 命中的字段头部渲染黄色警告条提示用户手填或返回聊天补充。
   const missing = new Set(payload.missing_fields ?? []);
 
-  // genre 下拉候选：优先用后端传的 allowed_genres，老后端未传时 fallback 到硬编码六选一
-  const genreOptions =
-    payload.allowed_genres && payload.allowed_genres.length > 0
-      ? payload.allowed_genres
-      : FALLBACK_GENRES;
+  // genre 下拉候选：挂载时从 HTTP GET /genres 拉，绕过 checkpoint 快照。
+  // 首屏用 BOOTSTRAP_GENRES 撑住渲染避免闪空。请求失败保留 bootstrap 值，不 crash。
+  const [genreOptions, setGenreOptions] = useState<string[]>(BOOTSTRAP_GENRES);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAvailableGenres()
+      .then((genres) => {
+        if (!cancelled && genres.length > 0) setGenreOptions(genres);
+      })
+      .catch((err) => {
+        // 拉不到就用 bootstrap 值继续渲染，控制台留一行方便排查
+        console.warn("[BrainstormExtractReview] fetchAvailableGenres 失败,继续使用 bootstrap:", err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 必填校验：3 设定 + 4 基础参数（写作风格/目标读者/核心基调允许空，下游有占位兜底）
   const canAdvance =

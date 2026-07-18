@@ -903,7 +903,25 @@ async def post_entity_card_delete(request: Request) -> JSONResponse:
 
 # ── 应用组装 ─────────────────────────────────────────────────────────────────────
 # 前端直连 langgraph dev（跨域），写接口（PUT）会触发预检，故挂 CORS 中间件放行。
+
+
+async def get_genres(request: Request) -> JSONResponse:
+    """返回全书可用题材主键列表。
+
+    独立 HTTP 接口而非塞进 interrupt payload——前者是应用级静态配置（跟着代码走，
+    新增题材立即生效），后者会随 langgraph checkpoint 落盘（老 thread 死锁在旧 6 项快照）。
+    这就是「搞笑异世界」新增后老 thread 在 review 抽屉里看不到该选项的根因。
+
+    resp: {"genres": [...]}——顺序与 registry.available_genres() 一致。
+    """
+    # 惰性 import 与其他 handler 同一策略
+    from noval_workflow.prompts.registry import available_genres
+
+    return JSONResponse({"genres": available_genres()})
+
+
 routes = [
+    Route("/genres", get_genres, methods=["GET"]),
     Route("/prompt-overrides", get_prompt_overrides, methods=["GET"]),
     Route("/prompt-overrides", put_prompt_overrides, methods=["PUT"]),
     Route("/prompt-overrides/all-evolved", get_all_evolved_directives, methods=["GET"]),

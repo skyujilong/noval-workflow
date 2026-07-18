@@ -210,6 +210,17 @@ export interface PromptOverridesResponse {
   overrides: Record<string, string>; // 已存覆盖（仅含与默认不同的字段）
 }
 
+/** 拉取全书可用题材主键列表。走独立 HTTP 接口而非 interrupt payload——
+ * 后者会随 checkpoint 落盘导致老 thread 死锁在旧快照上，看不到新增题材。 */
+export async function fetchAvailableGenres(): Promise<string[]> {
+  const res = await fetch(`${API_URL}/genres`);
+  if (!res.ok) {
+    throw new Error(`读取题材列表失败 (${res.status})：${await res.text()}`);
+  }
+  const data = (await res.json()) as { genres: string[] };
+  return data.genres;
+}
+
 /** 拉取某小说的题材默认值（供预填）与已存覆盖。 */
 export async function getPromptOverrides(
   novelName: string,

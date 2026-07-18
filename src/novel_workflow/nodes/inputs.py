@@ -6,6 +6,7 @@ from langgraph.types import interrupt
 
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.prompts import get_prompt_pack
+from noval_workflow.prompts.registry import available_genres
 from noval_workflow.state import NovelState
 
 
@@ -30,13 +31,16 @@ def collect_user_inputs(state: NovelState) -> dict:
     ):
         return {}
 
+    # genre 提示文案里的候选值：动态注入 registry.available_genres()，避免遗漏新增题材。
+    genres_hint = "/".join(available_genres())
+
     answers = interrupt(
         {
             "type": InterruptType.USER_INPUTS.value,
             "message": "请提供以下小说创作参数：",
             "fields": {
                 "novel_name": "小说名称（用于输出目录命名，如：星际迷途、长安风云）",
-                "genre": "小说类型（请从下拉选择：通用/末日求生/玄幻/都市/科幻/两性情感）",
+                "genre": f"小说类型（请从下拉选择：{genres_hint}）",
                 "writing_style": "写作风格（如：硬核、轻松、意识流、简洁白描等）",
                 "target_audience": "目标读者（如：青少年、成年男性、职场女性等）",
                 "core_tone": "核心基调（如：热血励志、压抑沉重、温馨治愈等）",

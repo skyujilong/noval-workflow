@@ -28,6 +28,7 @@ from langgraph.types import interrupt
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.llm import get_llm
+from noval_workflow.prompts.registry import available_genres
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ _BRAINSTORM_SYSTEM_PROMPT_BASE = """你是一位资深的小说策划与灵感�
 【结束前必须共同敲定的 7 个基础参数】
 在提示用户「结束脑爆」之前，请确认下列 7 项都已经和用户聊清楚（可以是用户主动提，也可以你主动提问引导）：
 1. 小说名称
-2. 小说类型（必须落在这六选一之内：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感——不要引导用户去"武侠""奇幻"等不在候选内的类型；如果讨论中偏离，主动收敛到最近的候选值）
+2. 小说类型（必须落在这几个候选之内：{genres_list}——不要引导用户去"武侠""奇幻"等不在候选内的类型；如果讨论中偏离，主动收敛到最近的候选值）
 3. 写作风格（如硬核、意识流、白描、幽默轻快、细腻内省等，1-3 个关键词即可）
 4. 目标读者（以兴趣 / 身份为主，如青少年男性、职场女性、中年科幻迷；避免使用"18-25 岁"这类人口学标签）
 5. 核心基调（如热血励志、压抑沉重、温情治愈、悬疑压抑等，1-3 个关键词即可）
@@ -133,9 +134,12 @@ _POWER_SYSTEM_OFF_RULE = """
 
 def _build_brainstorm_system_prompt(has_power_system: bool) -> str:
     """按作品级 has_power_system 拼脑爆 system prompt。前端 switch 切换后写回 state，
-    下一轮 respond 立即感知新 flag——AI 引导风格随开关变化。"""
+    下一轮 respond 立即感知新 flag——AI 引导风格随开关变化。
+
+    题材候选值 {genres_list} 从 registry 单一权威源动态注入，新增题材包时自动同步进 prompt。"""
     rule = _POWER_SYSTEM_ON_RULE if has_power_system else _POWER_SYSTEM_OFF_RULE
-    return _BRAINSTORM_SYSTEM_PROMPT_BASE + rule
+    genres_list = " / ".join(available_genres())
+    return _BRAINSTORM_SYSTEM_PROMPT_BASE.replace("{genres_list}", genres_list) + rule
 
 _COMPRESS_SYSTEM_PROMPT = "你是严谨的对话纪要员，擅长把长对话压缩成不丢关键信息的要点概要。"
 
@@ -502,10 +506,10 @@ def _split_finalize_markdown(md: str, has_power_system: bool) -> tuple[dict[str,
 
 
 # ── 7 基础字段的隐藏 LLM 抽取（use 分支里调用）─────────────────────────────────
-# 允许的 genre 值域（与 collect_user_inputs 前端下拉严格对齐）。
-# 抽出后若不在集合内，一律降级为 ""，让 collect_user_inputs 让用户从下拉手选，
-# 而不是往 state 里塞"科幻/奇幻"这种下拉不识别的野值。
-_ALLOWED_GENRES = frozenset({"通用", "末日求生", "玄幻", "都市", "科幻", "两性情感"})
+# 允许的 genre 值域——直接引用 registry.available_genres() 作为单一权威源，
+# 避免每次新增题材要同步改多处硬编码列表。抽出后若不在集合内，一律降级为 ""，
+# 让 collect_user_inputs 让用户从下拉手选，而不是往 state 里塞下拉不识别的野值。
+_ALLOWED_GENRES: frozenset[str] = frozenset(available_genres())
 
 _BASIC_EXTRACT_SYSTEM_PROMPT = """你是一位小说信息抽取员。你的唯一任务是从一段脑爆对话历史 + 完整版整理稿里，
 把用户和 AI 已经共同敲定的 7 个基础参数抽成一份严格的 JSON。**不同字段有不同的严格度**——
@@ -525,7 +529,7 @@ _BASIC_EXTRACT_PROMPT = """以下是一段小说灵感脑爆对话（含 AI 已�
   用户没提就 ""；**禁止按题材套模板猜**（如"网文一般 300 万"这种 stereotype 一律不允许）。
 
 【半严格类 · 白名单命中才收】
-- `genre`: 必须从下列六选一，其他一律给 ""：通用 / 末日求生 / 玄幻 / 都市 / 科幻 / 两性情感。
+- `genre`: 必须从下列候选值命中一个，其他一律给 ""：{genres_list}。
   用户如果说了"武侠""奇幻""穿越"这种候选外的词，一律 "" 让用户下拉手选，不要强行归类。
 
 【推断类 · 有线索可温和归纳】
@@ -582,7 +586,12 @@ def _extract_basic_fields(state: NovelState) -> dict[str, str]:
         reply = llm.invoke(
             [
                 SystemMessage(content=_BASIC_EXTRACT_SYSTEM_PROMPT),
-                HumanMessage(content=_BASIC_EXTRACT_PROMPT.format(material=material)),
+                HumanMessage(
+                    content=_BASIC_EXTRACT_PROMPT.format(
+                        material=material,
+                        genres_list=" / ".join(available_genres()),
+                    )
+                ),
             ],
             config={"tags": ["nostream"]},
         ).content
@@ -729,8 +738,10 @@ def brainstorm_extract_review(state: NovelState) -> dict:
       - {"action": "back_to_chat"}                    → 不写回字段，brainstorm_done 置回 False
         → 路由回 brainstorm_chat 继续聊天
 
-    payload 里带 has_power_system 供前端判定是否渲染力量体系编辑区；带 allowed_genres 供前端
-    渲染 genre 下拉。has_power_system 值来源于 state（用户在聊天页 switch 已经决定过），本节点
+    payload 里带 has_power_system 供前端判定是否渲染力量体系编辑区。
+    题材下拉候选由前端另走 HTTP GET /genres 独立接口拉——放 payload 会随 checkpoint
+    落盘，老 thread 死锁在旧快照上看不到新增题材（历史教训:「搞笑异世界」漏进 review 面板）。
+    has_power_system 值来源于 state（用户在聊天页 switch 已经决定过），本节点
     不再让用户在抽屉里覆盖 flag——避免"聊天时说不要 → 抽屉里又勾上但没有内容可展示"的错位。
 
     向后兼容：老前端 resume dict 不带 7 基础字段的键 → `answer.get(k)` 返回 None → 该字段跳过，
@@ -757,8 +768,6 @@ def brainstorm_extract_review(state: NovelState) -> dict:
         "core_tone": state.core_tone,
         "chapter_word_count": state.chapter_word_count,
         "total_word_count": state.total_word_count,
-        # genre 下拉候选：前端渲染 <select>，缺失时前端 fallback 到硬编码六选一
-        "allowed_genres": sorted(_ALLOWED_GENRES),
     })
 
     # 契约：前端必发 dict。非 dict 视为契约故障，回炉聊天避免坑住图；不试图猜测意图。
