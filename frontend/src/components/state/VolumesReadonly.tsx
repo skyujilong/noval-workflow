@@ -13,7 +13,7 @@ interface Props {
 function statusMeta(status: Volume["status"]) {
   switch (status) {
     case "planning":
-      return { label: "未开启", cls: "border-gray-200 bg-gray-50 text-gray-500" };
+      return { label: "前瞻草稿", cls: "border-gray-200 bg-gray-50 text-gray-500" };
     case "in_progress":
       return { label: "进行中", cls: "border-blue-300 bg-blue-50 text-blue-700" };
     case "closed":
@@ -35,7 +35,8 @@ export function VolumesReadonly({ volumes }: Props) {
   return (
     <div className="space-y-2">
       {volumes.map((v) => {
-        // planned_end 权威末章号
+        // planned_end 权威末章号；planned_end<=0 为前瞻草稿卷（未锁章号）
+        const isDraft = v.planned_end <= 0;
         const winEnd = v.planned_end;
         const planLen = winEnd - v.chapter_start + 1;
         const meta = statusMeta(v.status);
@@ -52,9 +53,15 @@ export function VolumesReadonly({ volumes }: Props) {
               <span className={`rounded border px-1.5 py-0.5 text-[10px] ${meta.cls}`}>
                 {meta.label}
               </span>
-              <span className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
-                第 {v.chapter_start}-{winEnd} 章 · 共 {planLen} 章
-              </span>
+              {isDraft ? (
+                <span className="rounded border border-dashed border-gray-300 bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-400">
+                  章号未锁定（轮到时赋值）
+                </span>
+              ) : (
+                <span className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
+                  第 {v.chapter_start}-{winEnd} 章 · 共 {planLen} 章
+                </span>
+              )}
               {v.actual_end != null && (
                 <span className="rounded border border-green-300 bg-green-50 px-1.5 py-0.5 text-[10px] text-green-700">
                   实际收卷第 {v.actual_end} 章

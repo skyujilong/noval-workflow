@@ -67,14 +67,17 @@ function VolumeChip({
   const isCurrent = volume.status === "in_progress";
   const isClosed = volume.status === "closed";
 
-  // 紧凑进度文案（章号区间挪进详情弹窗）：进行中「N/共M」；已收卷「✓ N章」；未开启「共M章」。
+  // 紧凑进度文案（章号区间挪进详情弹窗）：进行中「N/共M」；已收卷「✓ N章」；前瞻草稿「规划中」；否则「共M章」。
   const doneN = chaptersDoneInVolume(volume, totalWritten);
   const planLen = plannedLength(volume);
+  const isDraft = volume.planned_end <= 0; // 前瞻草稿卷未锁章号
   const progressLabel = isCurrent
     ? `${doneN}/${planLen}`
     : isClosed
       ? `✓ ${actualLength(volume)}章`
-      : `共${planLen}章`;
+      : isDraft
+        ? "规划中"
+        : `共${planLen}章`;
 
   return (
     <button
@@ -119,8 +122,11 @@ function VolumeDetailDialog({
             {volume.title ? `：${volume.title}` : ""}
           </DialogTitle>
           <DialogDescription>
-            第 {volume.chapter_start}-{winEnd} 章 · 共 {plannedLength(volume)} 章
-            {volume.actual_end != null && ` · 实际收卷第 ${volume.actual_end} 章`}
+            {volume.planned_end > 0
+              ? `第 ${volume.chapter_start}-${winEnd} 章 · 共 ${plannedLength(volume)} 章${
+                  volume.actual_end != null ? ` · 实际收卷第 ${volume.actual_end} 章` : ""
+                }`
+              : "前瞻草稿卷 · 章号未锁定（轮到展开时由系统赋值）"}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 text-sm">

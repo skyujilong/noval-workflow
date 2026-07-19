@@ -25,22 +25,25 @@ export interface ChapterPlanItem {
 
 /** 分卷条目（镜像 state.py::Volume）。横向大结构中间层——overall_outline 之下、chapter_plan 之上。
  *
- * 滚动生成卷语义（与后端一致）：
+ * 滚动生成卷 + 前瞻队列语义（与后端一致）：
  *  - chapter_start 是本卷**起始章号**（1-based，由后端 save_volumes 权威锁定）
  *  - planned_end 是本卷**末章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]，
  *    本卷章数 = planned_end - chapter_start + 1
  *  - actual_end：滚动到下一卷时上一卷收口写入（= planned_end）；进行中卷为 null
- *  - status: planning(未开启) | in_progress(进行中) | closed(已收卷)
+ *  - status: planning(前瞻草稿·未锁章号) | in_progress(进行中) | closed(已收卷)
+ *  - **前瞻草稿卷**：status=planning 且 chapter_start=planned_end=0（未锁章号）——只有方向骨架
+ *    title/summary/setup_for_next，轮到激活时后端才权威锁章号转正。判定「已激活」统一用 planned_end>0。
  */
 export interface Volume {
   index: number;
   title: string;
   summary: string;
   setup_for_next: string;
+  // chapter_start：起始章号；前瞻草稿卷为 0（未锁）。
   chapter_start: number;
-  // planned_end：本卷规划末章号（绝对章号，滚动生成卷架构的权威边界）。
+  // planned_end：本卷规划末章号（绝对章号，权威边界）；前瞻草稿卷为 0（未锁，判「已激活」用 >0）。
   planned_end: number;
-  // chapters：本卷章数——仅 volumes review 草稿（单卷对象）的可编辑字段；存量卷用 planned_end 导出，无此字段。
+  // chapters：本卷章数——仅 volumes review 草稿的**激活卷**可编辑字段；落库卷用 planned_end 导出，无此字段。
   chapters?: number;
   actual_end: number | null;
   status: "planning" | "in_progress" | "closed";

@@ -381,7 +381,7 @@ export function parseVolumesJson(text: string): VolumesParse {
     // 白名单外的字段直接拒绝（对齐 Volume(**item) 的 TypeError 语义）
     for (const key of Object.keys(rec)) {
       if (!VOLUME_ALLOWED_KEYS.has(key)) {
-        return { ok: false, error: `${at}含未知字段「${key}」（Volume 只支持 9 个字段）` };
+        return { ok: false, error: `${at}含未知字段「${key}」（Volume 只支持 8 个字段）` };
       }
     }
 
@@ -424,17 +424,29 @@ export function parseVolumesJson(text: string): VolumesParse {
     if (index !== i + 1) {
       return { ok: false, error: `${at} index=${index}，应为 ${i + 1}（1-based 严格顺次）` };
     }
-    if (chapter_start !== nextExpectedStart) {
-      return {
-        ok: false,
-        error: `${at} chapter_start=${chapter_start}，应为 ${nextExpectedStart}（拼接规则：chapter_start[i+1] = 上一卷 planned_end + 1）`,
-      };
-    }
-    if (planned_end < chapter_start) {
-      return {
-        ok: false,
-        error: `${at} planned_end=${planned_end} 必须 ≥ chapter_start=${chapter_start}（本卷至少 1 章）`,
-      };
+    // 前瞻草稿卷（planned_end<=0）未锁章号：chapter_start/planned_end 均应为 0，不参与章号链、
+    // 不推进 nextExpectedStart（章号在轮到激活时才由后端权威赋值）。已激活卷才走严格拼接链。
+    if (planned_end <= 0) {
+      if (chapter_start !== 0 || planned_end !== 0) {
+        return {
+          ok: false,
+          error: `${at} 草稿卷(前瞻，未锁章号)应 chapter_start=0 且 planned_end=0（轮到激活时后端才锁章号）`,
+        };
+      }
+    } else {
+      if (chapter_start !== nextExpectedStart) {
+        return {
+          ok: false,
+          error: `${at} chapter_start=${chapter_start}，应为 ${nextExpectedStart}（拼接规则：chapter_start[i+1] = 上一卷 planned_end + 1）`,
+        };
+      }
+      if (planned_end < chapter_start) {
+        return {
+          ok: false,
+          error: `${at} planned_end=${planned_end} 必须 ≥ chapter_start=${chapter_start}（本卷至少 1 章）`,
+        };
+      }
+      nextExpectedStart = planned_end + 1;
     }
 
     volumes.push({
@@ -447,7 +459,6 @@ export function parseVolumesJson(text: string): VolumesParse {
       actual_end,
       status: status as Volume["status"],
     });
-    nextExpectedStart = planned_end + 1;
   }
   return { ok: true, value: volumes };
 }
