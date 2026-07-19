@@ -98,6 +98,21 @@ if _raw_stride > CHAPTER_PLAN_WINDOW:
 CHAPTER_PLAN_STRIDE: int = _raw_stride
 
 
+# ── 分卷章数松护栏（滚动生成卷时钳制 LLM 产出的本卷章数）─────────────────────────
+#
+# 长篇连载卷长由 LLM 内容驱动（不同卷承载内容大小不同），但需一道松护栏防跑偏：
+# save_volumes 把 LLM 产出的「本卷章数」clamp 到 [MIN, MAX] 并打 warning；人类可在
+# review_volumes 抽屉里突破此范围（LLM 夹、人可破）。默认 15~50 章。
+VOLUME_MIN_CHAPTERS: int = _read_positive_int("NOVEL_VOLUME_MIN_CHAPTERS", 15)
+VOLUME_MAX_CHAPTERS: int = _read_positive_int("NOVEL_VOLUME_MAX_CHAPTERS", 50)
+if VOLUME_MIN_CHAPTERS > VOLUME_MAX_CHAPTERS:
+    print(
+        f"[config] NOVEL_VOLUME_MIN_CHAPTERS={VOLUME_MIN_CHAPTERS} 大于 "
+        f"NOVEL_VOLUME_MAX_CHAPTERS={VOLUME_MAX_CHAPTERS},二者对调"
+    )
+    VOLUME_MIN_CHAPTERS, VOLUME_MAX_CHAPTERS = VOLUME_MAX_CHAPTERS, VOLUME_MIN_CHAPTERS
+
+
 # ── 章末精简(伏笔台账 + 实体卡库)节流步长 ─────────────────────────────────────
 #
 # 精简 = LLM 分析整库 + 人工/自动勾选删库。默认每章都触发,代价高(每章一次 LLM 调用

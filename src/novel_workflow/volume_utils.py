@@ -25,13 +25,27 @@ class BoundaryCrossing(TypedDict):
     chapter: int           # 该边界对应的绝对章号
 
 
+def _volume_upper_bound(v: "Volume") -> int:
+    """开着的卷（actual_end == None）的卷内章号上限（绝对章号）。
+
+    优先用权威的 planned_end；planned_end 未赋值（过渡期老快照 / 尚未走新 save_volumes）时
+    回退到 target_max 换算 chapter_start + target_max - 1；两者都缺则退化为只覆盖起始章。
+    """
+    if v.planned_end > 0:
+        return v.planned_end
+    if v.target_max > 0:
+        return v.chapter_start + v.target_max - 1
+    return v.chapter_start
+
+
 def volume_of_chapter(chapter_num: int, volumes: list["Volume"]) -> "Volume | None":
     """回答"第 N 章属于第几卷"。
 
     规则：
     - 已收卷（actual_end != None）：chapter ∈ [chapter_start, actual_end] 时命中
-    - 进行中卷（actual_end == None）：chapter >= chapter_start 且是当前第一个未收卷时命中
-    - 章号超出所有卷范围 → None（发生在超出最后一卷 target_max 时，语义上"越界"）
+    - 进行中卷（actual_end == None）：chapter ∈ [chapter_start, planned_end] 时命中
+      （planned_end 未赋值的过渡期老快照回退 target_max 换算，见 _volume_upper_bound）
+    - 章号超出所有卷范围 → None（滚动架构下仅出现在"下一卷尚未滚出"的短暂窗口，路由兜底）
     """
     if chapter_num < 1 or not volumes:
         return None
@@ -41,15 +55,12 @@ def volume_of_chapter(chapter_num: int, volumes: list["Volume"]) -> "Volume | No
         if v.actual_end is not None and v.chapter_start <= chapter_num <= v.actual_end:
             return v
 
-    # 进行中/未开启卷：找 chapter_start <= chapter_num 的最靠后卷
-    # 其 chapter_num 上限 = chapter_start + target_max - 1（软边界）
+    # 进行中/未开启卷：找 chapter_start <= chapter_num 的最靠后卷，用 planned_end 作上限（不再容忍越界）
     candidates = [v for v in volumes if v.actual_end is None and v.chapter_start <= chapter_num]
     if not candidates:
         return None
     latest = max(candidates, key=lambda v: v.chapter_start)
-    # 允许略超 target_max（软边界），但超太多（>target_max * 2）视为越界
-    upper_bound = latest.chapter_start + latest.target_max - 1
-    if chapter_num <= upper_bound + latest.target_max:  # 容忍度：软上限 + 一个 target_max
+    if chapter_num <= _volume_upper_bound(latest):
         return latest
     return None
 
@@ -57,16 +68,15 @@ def volume_of_chapter(chapter_num: int, volumes: list["Volume"]) -> "Volume | No
 def current_volume(volumes: list["Volume"], total_chapters_written: int) -> "Volume | None":
     """当前活跃卷 —— 即"下一章将属于哪一卷"。
 
-    优先规则：
-    1. 有 status == "in_progress" 的卷 → 直接返回该卷
-    2. 否则按 total_chapters_written + 1（下一章号）走 volume_of_chapter
-    3. 无卷或全部越界 → None
+    章号映射优先（滚动生成卷架构，决策 5）：直接按下一章号 total_chapters_written + 1 走
+    volume_of_chapter，status 退化为纯展示字段、不参与判定。
+
+    背景：旧实现优先返回 status == "in_progress" 的卷；但滚动生成卷时——写作还在卷 N 尾部、
+    卷 N+1 已 append 并标 in_progress——会"提前翻卷"到卷 N+1。改为章号映射后，只要下一章
+    仍落在卷 N 的 [chapter_start, planned_end] 内就稳定停在卷 N。
     """
     if not volumes:
         return None
-    in_progress = [v for v in volumes if v.status == "in_progress"]
-    if in_progress:
-        return in_progress[0]
     return volume_of_chapter(total_chapters_written + 1, volumes)
 
 
@@ -136,13 +146,23 @@ def volume_position_card(state: "NovelState") -> str:
     done_in_vol = max(0, state.total_chapters_written - cur.chapter_start + 1)
 
     lines = ["【当前卷位置】"]
-    lines.append(
-        f"- 当前所在：第 {cur.index} 卷《{cur.title}》"
-        f"（第 {cur.chapter_start} 章起，目标 {cur.target_min}-{cur.target_max} 章）"
-    )
-    lines.append(
-        f"- 本卷进度：本卷已完成 {done_in_vol}/({cur.target_min}~{cur.target_max}) 章"
-    )
+    if cur.planned_end > 0:
+        # 新架构：planned_end 权威，本卷跨度 = [chapter_start, planned_end]
+        span = cur.planned_end - cur.chapter_start + 1
+        lines.append(
+            f"- 当前所在：第 {cur.index} 卷《{cur.title}》"
+            f"（第 {cur.chapter_start}-{cur.planned_end} 章，共 {span} 章）"
+        )
+        lines.append(f"- 本卷进度：本卷已完成 {done_in_vol}/{span} 章")
+    else:
+        # 过渡期老快照（planned_end 未赋值）：回退 target 章数区间展示
+        lines.append(
+            f"- 当前所在：第 {cur.index} 卷《{cur.title}》"
+            f"（第 {cur.chapter_start} 章起，目标 {cur.target_min}-{cur.target_max} 章）"
+        )
+        lines.append(
+            f"- 本卷进度：本卷已完成 {done_in_vol}/({cur.target_min}~{cur.target_max}) 章"
+        )
 
     # 上一卷
     prev_list = [v for v in state.volumes if v.index < cur.index]

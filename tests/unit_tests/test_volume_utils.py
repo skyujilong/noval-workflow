@@ -78,13 +78,37 @@ def test_volume_of_chapter_far_beyond_returns_last_volume():
     assert volume_of_chapter(175, vs).index == 4
 
 
+def test_volume_of_chapter_uses_planned_end_boundary():
+    """planned_end 赋值后用它作卷内上限（不再走 target_max 换算，也不再容忍越界）。"""
+    vs = [
+        Volume(index=1, title="卷1", chapter_start=1, planned_end=20,
+               target_min=99, target_max=99, actual_end=None, status="in_progress"),
+        Volume(index=2, title="卷2", chapter_start=21, planned_end=40,
+               actual_end=None, status="planning"),
+    ]
+    assert volume_of_chapter(20, vs).index == 1   # 卷1 末章
+    assert volume_of_chapter(21, vs).index == 2   # 越过 planned_end=20 → 进卷2
+    # 末卷 planned_end=40 之外 → None（滚动架构靠路由在越界前滚出下一卷）
+    assert volume_of_chapter(41, vs) is None
+
+
 # ── current_volume ───────────────────────────────────────────────────────────
 
-def test_current_volume_prefers_in_progress():
-    """有 in_progress 卷时直接返回它，无关 total_chapters_written。"""
-    vs = _four_volumes()
-    assert current_volume(vs, 0).index == 1
-    assert current_volume(vs, 5).index == 1
+def test_current_volume_maps_by_chapter_not_in_progress_status():
+    """决策 5：按下一章号映射，status=in_progress 不再抢优先——修"提前翻卷"bug。
+
+    滚动生成卷场景：写到卷 1 尾部（done=20）时卷 2 已 append 并标 in_progress、卷 1 收为
+    closed。旧实现会优先返回 in_progress 的卷 2（提前翻卷）；新实现按下一章 21 映射，21 仍在
+    卷 1 的 [1, 30] 内 → 稳定停在卷 1。
+    """
+    vs = [
+        Volume(index=1, title="卷1", chapter_start=1, planned_end=30,
+               actual_end=30, status="closed"),
+        Volume(index=2, title="卷2", chapter_start=31, planned_end=60,
+               actual_end=None, status="in_progress"),
+    ]
+    assert current_volume(vs, 20).index == 1   # 下一章 21 ∈ [1,30] → 卷1（不被 in_progress 卷2 抢走）
+    assert current_volume(vs, 30).index == 2   # 下一章 31 ∈ [31,60] → 卷2
 
 
 def test_current_volume_falls_back_by_chapter():
@@ -205,6 +229,23 @@ def test_volume_position_card_last_volume():
     card = volume_position_card(state)
     assert "第 4 卷" in card
     assert "下一卷预告：（本卷为终卷）" in card
+
+
+def test_volume_position_card_uses_planned_end_span():
+    """planned_end 赋值后，位置卡按 [chapter_start, planned_end] 绝对区间 + 共 N 章展示。"""
+    vs = [
+        Volume(index=1, title="第一卷 · 少年入宗", chapter_start=1, planned_end=30,
+               summary="卷1主线", setup_for_next="埋卷2钩", actual_end=None, status="in_progress"),
+        Volume(index=2, title="第二卷 · 内门风云", chapter_start=31, planned_end=65,
+               summary="卷2主线", actual_end=None, status="planning"),
+    ]
+    state = NovelState(volumes=vs, total_chapters_written=9)
+    card = volume_position_card(state)
+    assert "第 1 卷" in card
+    assert "第 1-30 章，共 30 章" in card            # 绝对章号区间 + 章数
+    assert "本卷已完成 9/30 章" in card              # done_in_vol=9, span=30
+    assert "目标" not in card                        # planned_end 分支不出现 target 文案
+    assert "下一卷预告：第二卷 · 内门风云" in card
 
 
 def test_volume_position_card_empty_volumes_returns_empty():

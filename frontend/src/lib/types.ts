@@ -38,6 +38,11 @@ export interface Volume {
   summary: string;
   setup_for_next: string;
   chapter_start: number;
+  // planned_end：本卷规划**末章号**（绝对章号，滚动生成卷架构的权威边界）。
+  // chapters：本卷章数（planned_end = chapter_start + chapters - 1）。
+  // 过渡期先补为可选，Step 2 契约切换时转必填、删 target_*。
+  planned_end?: number;
+  chapters?: number;
   target_min: number;
   target_max: number;
   actual_end: number | null;

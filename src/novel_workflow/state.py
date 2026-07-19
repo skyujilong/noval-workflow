@@ -51,8 +51,12 @@ class Volume:
     summary: str = ""              # 本卷主线目标 + 情绪基调 + 收尾状态（≤80 字）
     setup_for_next: str = ""       # 卷尾要为下一卷埋的钩（≤60 字，最后一卷可空）
     chapter_start: int = 1         # 起始**章号**（1-based，硬锁定）
-    target_min: int = 0            # 目标**章数**下限（数量，软约束）
-    target_max: int = 0            # 目标**章数**上限（数量，软约束）
+    # planned_end：本卷规划**末章号**（绝对章号，1-based）。滚动生成卷架构的权威边界——
+    # save_volumes 按 chapter_start + clamp(LLM 建议章数) - 1 权威赋值。
+    # 卷内绝对章号窗口 = [chapter_start, planned_end]。
+    planned_end: int = 0
+    target_min: int = 0            # 【过渡期遗留，Step 5 删】目标章数下限（软约束）
+    target_max: int = 0            # 【过渡期遗留，Step 5 删】目标章数上限（软约束）
     actual_end: int | None = None  # 实际收卷**章号**，None = 仍在进行中
     status: str = "planning"       # planning | in_progress | closed
 
