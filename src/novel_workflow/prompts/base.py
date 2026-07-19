@@ -468,33 +468,40 @@ class PromptPack:
 {_FOUNDATION_RIGOR}
 输出要求：直接输出纯大纲正文，无需开场白、解释、标题，各阶段分段清晰；战略骨架总字数约 2500-3500 字（与后续审核口径一致），过短则骨架信息不足、过长则侵占细分大纲的留白空间。"""
 
-    def volumes_prompt(self, overall_outline: str) -> str:
-        """规划**第一卷**——从整书大纲切出卷 1，返回严格 JSON 对象（单卷，滚动生成卷架构）。
+    def volumes_prompt(self, overall_outline: str, lookahead: int = 2) -> str:
+        """规划开篇前 (1+lookahead) 卷——第 1 卷激活（要立即展开），其余为前瞻草稿。
 
-        滚动生成卷：开书只规划卷 1；后续卷在写作推进到本卷尾声时由 prepare_volumes 滚动追加。
-        契约（关键，与 nodes/volumes.save_volumes 对齐）：
-          - LLM 只出 4 个内容字段 title/summary/setup_for_next/chapters
+        滚动生成卷 + 前瞻队列：开书一次规划「1 激活卷 + N 草稿卷」；草稿卷只出方向骨架、
+        不锁章号，给当前卷规划提供中期地图，轮到时再由 save_volumes 权威锁章号转正。
+        契约（关键，与 nodes/volumes._parse_volume_drafts 对齐）：
+          - 输出 `{"volumes": [激活卷, 草稿1, ...]}`，数组长度 = 1 + lookahead
+          - 激活卷（第 1 项）4 字段 title/summary/setup_for_next/chapters（本卷章数）
+          - 草稿卷（其余项）3 字段 title/summary/setup_for_next（无 chapters）
           - index/chapter_start/planned_end/status 由后端权威赋值，LLM 不出绝对章号
-          - chapters = 本卷「章数」（数量），松护栏 [15,50]，人工可在 review 抽屉突破
         """
-        return f"""你是网文分卷结构化规划助手。任务：为本书规划**第一卷**，返回严格 JSON 对象（只规划这一卷）。
+        total = 1 + lookahead
+        return f"""你是网文分卷结构化规划助手。任务：为本书规划开篇的前 {total} 卷，返回严格 JSON 对象。
+第 1 卷是**要立即展开写作的激活卷**，第 2-{total} 卷是**前瞻草稿卷**（只给方向、不写细节，用于规划当前卷时提供中期地图）。
 
 # 输入：整体大纲（全书战略方向）
 {overall_outline}
 
 # 硬约束
-1. 输出**纯 JSON 对象**（以 {{ 开头、}} 结尾），不要 markdown 代码围栏（```），不要任何解释文字，不要前后空行。
-2. 对象必须包含且仅包含 4 个字段：
-   - title: str（卷名，如「第一卷 · 少年入宗」，≤20 字）
-   - summary: str（本卷主线目标 + 情绪基调 + 收尾状态，≤80 字）
-   - setup_for_next: str（卷尾要为下一卷埋的钩子/悬念/角色转折，具体、非套话）
-   - chapters: int（本卷**章数**，按本卷承载的内容量自行判断；松区间 15-50 章，内容确实需要可略超）
-3. **卷是一个完整的小故事**：有清晰的起（引入舞台/人物/目标）→承（展开与铺垫）→转（本卷高潮/关键转折）→合（收束本卷 + 埋下一卷钩）。chapters 服务于把这个小故事讲完整，不要为凑数注水、也不要硬砍到讲不完。
-4. **只规划第一卷**，不要输出后续卷、不要输出数组——后续卷会在写作推进到本卷尾声时再滚动规划。
-5. 不要输出 index / chapter_start / planned_end / status / actual_end 等字段，它们由系统权威赋值。
+1. 输出**纯 JSON 对象**（以 {{ 开头、}} 结尾），不要 markdown 代码围栏（```），不要任何解释文字。
+2. 对象仅含一个字段 `volumes`：一个长度为 {total} 的数组。
+   - 激活卷（数组第 1 项）含 4 字段：
+     · title: str（卷名，如「第一卷 · 少年入宗」，≤20 字）
+     · summary: str（本卷主线目标 + 情绪基调 + 收尾状态，≤80 字）
+     · setup_for_next: str（卷尾为下一卷埋的钩子/悬念/角色转折，具体、非套话）
+     · chapters: int（本卷**章数**，按内容量判断；松区间 15-50 章）
+   - 草稿卷（第 2 项起）只含 3 字段 title / summary / setup_for_next（**不要 chapters**——草稿卷不定章数，轮到展开时再定）。
+3. **卷是一个完整的小故事**：起（引入舞台/人物/目标）→承（展开铺垫）→转（本卷高潮/关键转折）→合（收束 + 埋下一卷钩）。
+4. **激活卷（卷1）要具体、可直接展开**；**草稿卷只给方向骨架**——写清本卷大致要发生什么、承接前一卷什么钩即可，summary 精炼，不写章级细节。
+5. 后续每卷从前一卷 setup_for_next 自然承接，整体沿 overall_outline 的阶段推进、不重复不倒退。
+6. 不要输出 index / chapter_start / planned_end / status 等字段，它们由系统权威赋值。
 
-# 输出样例（仅示格式，不要照抄内容）
-{{"title": "第一卷 · 破题", "summary": "主角从平凡卷入江湖，初识伙伴与劲敌，卷末踏入更大舞台", "setup_for_next": "母亲遗物中的半张地图指向禁地", "chapters": 28}}
+# 输出样例（仅示字段格式；实际 volumes 长度以硬约束 {total} 为准）
+{{"volumes": [{{"title": "第一卷 · 破题", "summary": "主角从平凡卷入江湖，初识伙伴与劲敌，卷末踏入更大舞台", "setup_for_next": "母亲遗物半张地图指向禁地", "chapters": 28}}, {{"title": "第二卷 · 入局", "summary": "循地图进入禁地，牵出隐藏势力，身世露端倪", "setup_for_next": "宿敌登场"}}]}}
 
 现在开始，直接输出 JSON 对象："""
 
@@ -506,19 +513,23 @@ class PromptPack:
         next_index: int,
         next_chapter_start: int,
         prev_setup_for_next: str,
+        lookahead: int = 2,
     ) -> str:
-        """滚动规划**下一卷**（第 next_index 卷）——承接上一卷卷尾钩，返回严格 JSON 对象（单卷）。
+        """滚动重新规划从第 next_index 卷起的 (1+lookahead) 卷——激活卷承接上一卷卷尾钩，其余前瞻草稿。
 
-        与首卷契约相同（4 个内容字段 + 后端权威赋值绝对章号），只是输入换成「已写进度 + 已有卷
-        节选 + 上一卷卷尾钩」，要求新卷自然承接、推进整体大纲的下一阶段、不重复已写内容。
+        每次滚动只重新生成「未开始的卷」；已排产/已写的卷（prior_volumes_brief）冻结、不改动。
+        契约同首卷（`{"volumes":[...]}`，激活卷含 chapters、草稿卷不含），只是输入换成
+        「已写进度 + 已冻结卷节选 + 上一卷卷尾钩」，要求激活卷自然承接、推进下一阶段、不重复已写内容。
         """
+        total = 1 + lookahead
+        last_index = next_index + lookahead
         prev_hook = prev_setup_for_next.strip() or "（上一卷未显式埋钩，请自行从整体大纲下一阶段接续）"
-        return f"""你是网文分卷结构化规划助手。本书正在连载，现需为**第 {next_index} 卷**做规划，返回严格 JSON 对象（只规划这一卷）。
+        return f"""你是网文分卷结构化规划助手。本书正在连载，现需重新规划**从第 {next_index} 卷起的后续 {total} 卷**（第 {next_index} 卷是即将展开的激活卷，第 {next_index + 1}-{last_index} 卷是前瞻草稿），返回严格 JSON 对象。
 
 # 整体大纲（全书战略方向）
 {overall_outline}
 
-# 已规划/已写的卷（节选）
+# 已排产/已写的卷（节选，已冻结——不要改动、不要重复）
 {prior_volumes_brief}
 
 # 当前进度
@@ -528,13 +539,14 @@ class PromptPack:
 
 # 硬约束
 1. 输出**纯 JSON 对象**（以 {{ 开头、}} 结尾），不要 markdown 围栏，不要解释文字。
-2. 对象必须包含且仅包含 4 个字段：title / summary / setup_for_next / chapters（含义同首卷契约）。
-3. 本卷必须**自然承接上一卷卷尾的钩子/悬念**，推进整体大纲的下一阶段，**不重复已写内容**、不倒退。
-4. **卷是一个完整的小故事**：起承转合闭环 + 卷末埋下一卷钩（若为全书收官卷，setup_for_next 可说明「本作终卷」）。chapters 按本卷内容量定，松区间 15-50 章。
-5. **只规划这一卷**，不要输出多卷、不要输出数组；不要输出 index/chapter_start/planned_end/status 等字段（系统权威赋值）。
+2. 对象仅含 `volumes` 数组，长度 {total}：第 1 项 = 第 {next_index} 卷（激活卷，4 字段含 chapters）；其余 = 前瞻草稿卷（3 字段，无 chapters）。
+3. 激活卷必须**自然承接上一卷卷尾的钩子/悬念**，推进 overall_outline 下一阶段，**不重复已写内容、不倒退**。
+4. **激活卷要具体可展开**；草稿卷只给方向骨架，可基于最新剧情走向自由调整（这些卷尚未开写）。
+5. 每卷是完整小故事（起承转合 + 卷末埋钩）；若某卷为全书收官卷，其 setup_for_next 可说明「本作终卷」。
+6. 不要输出 index/chapter_start/planned_end/status 等字段（系统权威赋值）。
 
-# 输出样例（仅示格式，不要照抄内容）
-{{"title": "第 {next_index} 卷 · 风起", "summary": "承接上一卷的悬念，主角踏入新舞台，卷末揭开一层真相", "setup_for_next": "盟友的真实身份浮出水面", "chapters": 32}}
+# 输出样例（仅示字段格式；实际 volumes 长度以硬约束 {total} 为准）
+{{"volumes": [{{"title": "第 {next_index} 卷 · 风起", "summary": "承接上一卷悬念，主角踏入新舞台，卷末揭开一层真相", "setup_for_next": "盟友真实身份浮出水面", "chapters": 32}}, {{"title": "第 {next_index + 1} 卷 · 潮涌", "summary": "新势力入局，矛盾升级", "setup_for_next": "关键抉择迫近"}}]}}
 
 现在开始，直接输出 JSON 对象："""
 

@@ -1,17 +1,20 @@
-"""Phase 1.5 / 滚动：分卷规划(volumes) 节点——横向大结构中间层（滚动生成卷架构）。
+"""Phase 1.5 / 滚动：分卷规划(volumes) 节点——横向大结构中间层（滚动生成卷 + 前瞻队列）。
 
-位于 overall_outline 之下、chapter_plan 之上。滚动生成卷：开书只规划卷 1；写作推进到接近
-当前卷末章时，由 route_continue_or_end 触发再规划下一卷。卷长由 LLM 内容驱动（松护栏
-[VOLUME_MIN,VOLUME_MAX]，「LLM 夹、人可破」），index/chapter_start/planned_end/status 一律
-由 save_volumes 权威赋值——不信 LLM 的绝对章号，只取它给的「本卷章数(chapters)」建议。
+位于 overall_outline 之下、chapter_plan 之上。前瞻队列：每次规划「1 个激活卷（要立即展开）
++ N 个前瞻草稿卷」（N = config.VOLUME_LOOKAHEAD）。草稿卷只出方向骨架、不锁章号
+（chapter_start=planned_end=0, status=planning），给当前卷规划提供中期地图，轮到时才转正。
+写作推进到接近当前激活卷末章时，由 route_continue_or_end 触发滚动：重新生成「未开始的卷」
+（含即将转正的队首），已开始的卷（in_progress/closed）冻结不改。卷长由 LLM 内容驱动
+（松护栏 [VOLUME_MIN,VOLUME_MAX]，「LLM 夹、人可破」），index/chapter_start/planned_end/status
+一律由 save_volumes 权威赋值——不信 LLM 的绝对章号，只取它给的「本卷章数(chapters)」建议。
 
-单卷契约（current_draft 是一个 JSON 对象，不是数组）：
-  LLM 输出 4 个内容字段 title/summary/setup_for_next/chapters；其余字段后端算。
-  review 表单「通过」时会带上算好的 planned_end 作为「人工终裁」标记（LLM 原样无此字段）。
+契约（current_draft 是对象 {"volumes":[激活卷, 草稿1, ...], "human_confirmed"?: bool}）：
+  激活卷 4 字段 title/summary/setup_for_next/chapters；草稿卷 3 字段（无 chapters）。
+  review 表单「通过」时带 human_confirmed=true 作「人工终裁」标记（LLM 原样无此字段），控激活卷章数是否夹护栏。
 
-- prepare_volumes: 双模（首次仅规划卷 1 / 滚动规划下一卷）
-- save_volumes: 单卷解析 + 权威赋值（首次→卷1 in_progress；滚动→上一卷收口 append 新卷）
-- route_after_save_volumes: 首次(written==0)→继续设定链(人物卡)；滚动→展开新卷 chapter_plan
+- prepare_volumes: 双模（首次规划前 1+N 卷 / 滚动重规划未开始的 1+N 卷）
+- save_volumes: 多卷解析 + 权威赋值（激活卷 in_progress + 草稿卷 planning；滚动收口上一卷 + 丢旧草稿）
+- route_after_save_volumes: 首次(written==0)→继续设定链(人物卡)；滚动→展开新激活卷 chapter_plan
 """
 
 from __future__ import annotations
@@ -54,22 +57,29 @@ def _prior_volumes_brief(volumes: list[Volume]) -> str:
 
 
 def prepare_volumes(state: NovelState) -> dict:
-    """双模抽卷：首次仅规划卷 1；滚动规划下一卷。拼装 task_prompt 交给通用 review_subgraph。"""
+    """双模抽卷：首次规划开篇前 1+N 卷；滚动重规划从下一卷起的 1+N 卷（N=VOLUME_LOOKAHEAD）。
+
+    第 1 卷是要立即展开的激活卷，其后是前瞻草稿卷（只出方向、不锁章号，可动态修订）。
+    """
+    from noval_workflow.config import VOLUME_LOOKAHEAD
+
     pack = get_prompt_pack(state.genre, state.novel_name)
     if not state.volumes:
-        # 首次：整书大纲 → 卷 1
-        task_prompt = pack.volumes_prompt(state.overall_outline)
+        # 首次：整书大纲 → 卷 1 激活 + 前瞻草稿
+        task_prompt = pack.volumes_prompt(state.overall_outline, lookahead=VOLUME_LOOKAHEAD)
     else:
-        # 滚动：整书大纲 + 已有卷节选 + 当前进度 + 上一卷卷尾钩 → 下一卷
+        # 滚动：只承接「已激活卷」(planned_end>0)——旧草稿卷本轮要重生成，不参与承接。
         existing = [_coerce_volume(v) for v in state.volumes]
-        prev = max(existing, key=lambda v: v.index)
+        activated = [v for v in existing if v.planned_end > 0]
+        prev = max(activated, key=lambda v: v.index)
         task_prompt = pack.volumes_prompt_rolling(
             overall_outline=state.overall_outline,
-            prior_volumes_brief=_prior_volumes_brief(existing),
+            prior_volumes_brief=_prior_volumes_brief(activated),
             total_chapters_written=state.total_chapters_written,
             next_index=prev.index + 1,
             next_chapter_start=prev.planned_end + 1,
             prev_setup_for_next=prev.setup_for_next,
+            lookahead=VOLUME_LOOKAHEAD,
         )
     return {
         "system_context": build_foundation_context(state),
@@ -79,32 +89,67 @@ def prepare_volumes(state: NovelState) -> dict:
     }
 
 
-def _parse_single_volume_draft(draft: str) -> tuple[str, str, str, int, bool]:
-    """解析单卷草稿对象 → (title, summary, setup_for_next, chapters, human_authored)。
+def _parse_active_volume(raw) -> tuple[str, str, str, int]:
+    """解析激活卷（数组第 1 项）→ (title, summary, setup_for_next, chapters)。字段错抛 ValueError。"""
+    if not isinstance(raw, dict):
+        raise ValueError(f"激活卷必须是 JSON 对象，实际类型={type(raw).__name__}")
+    title = raw.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError(f"激活卷缺 title(卷名)，原始={raw!r}")
+    summary = raw.get("summary", "")
+    setup_for_next = raw.get("setup_for_next", "")
+    if not isinstance(summary, str) or not isinstance(setup_for_next, str):
+        raise ValueError(f"激活卷 summary/setup_for_next 必须是字符串，原始={raw!r}")
+    chapters = raw.get("chapters")
+    # bool 是 int 子类，需显式排除（True/False 混进章数是 LLM 常见错）
+    if not isinstance(chapters, int) or isinstance(chapters, bool) or chapters <= 0:
+        raise ValueError(f"激活卷 chapters(本卷章数)必须是正整数，实际={chapters!r}")
+    return title.strip(), summary, setup_for_next, chapters
 
-    human_authored：草稿是否带 `human_confirmed: true`。review 表单「通过」时会带上此标记（人工终裁），
-    LLM 原样不带。用于决定章数是否夹护栏（见 _clamp_chapters）——LLM 夹、人可破。
+
+def _parse_draft_volume(raw, position: int) -> tuple[str, str, str]:
+    """解析前瞻草稿卷（数组第 2 项起）→ (title, summary, setup_for_next)。草稿卷不含 chapters。"""
+    if not isinstance(raw, dict):
+        raise ValueError(f"草稿卷(第 {position} 项)必须是 JSON 对象，实际类型={type(raw).__name__}")
+    title = raw.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise ValueError(f"草稿卷(第 {position} 项)缺 title(卷名)，原始={raw!r}")
+    summary = raw.get("summary", "")
+    setup_for_next = raw.get("setup_for_next", "")
+    if not isinstance(summary, str) or not isinstance(setup_for_next, str):
+        raise ValueError(f"草稿卷(第 {position} 项) summary/setup_for_next 必须是字符串，原始={raw!r}")
+    return title.strip(), summary, setup_for_next
+
+
+def _parse_volume_drafts(
+    draft: str,
+) -> tuple[tuple[str, str, str, int], list[tuple[str, str, str]], bool]:
+    """解析多卷草稿 → (激活卷, 草稿卷列表, human_authored)。
+
+    契约：current_draft 是对象 `{"volumes": [激活卷, 草稿1, ...], "human_confirmed"?: bool}`。
+      - 激活卷（数组第 1 项）：title/summary/setup_for_next/chapters（要立即展开，含章数）
+      - 草稿卷（其余项）：title/summary/setup_for_next（前瞻方向，不含章数）
+    human_authored：顶层 `human_confirmed is True`（review 表单「通过」时带），控激活卷章数是否夹护栏
+    （见 _clamp_chapters）——LLM 夹、人可破。宽松兼容：LLM 偶尔直接吐裸数组（未包 volumes 键）也接受。
     解析/字段错抛 ValueError，由 review 子图下一轮兜底重生成。
     """
     try:
         raw = repair_and_parse(draft, kind=dict)
-    except JsonParseError as exc:
-        raise ValueError(f"分卷规划 JSON 解析失败: {exc}") from exc
+    except JsonParseError:
+        # 兼容 LLM 偶尔直接吐裸数组（未包 volumes 键）
+        try:
+            raw = {"volumes": repair_and_parse(draft, kind=list)}
+        except JsonParseError as exc:
+            raise ValueError(f"分卷规划 JSON 解析失败: {exc}") from exc
 
-    title = raw.get("title")
-    if not isinstance(title, str) or not title.strip():
-        raise ValueError(f"分卷缺 title(卷名)，原始={raw!r}")
-    summary = raw.get("summary", "")
-    setup_for_next = raw.get("setup_for_next", "")
-    if not isinstance(summary, str) or not isinstance(setup_for_next, str):
-        raise ValueError(f"分卷 summary/setup_for_next 必须是字符串，原始={raw!r}")
-    chapters = raw.get("chapters")
-    # bool 是 int 子类，需显式排除（True/False 混进章数是 LLM 常见错）
-    if not isinstance(chapters, int) or isinstance(chapters, bool) or chapters <= 0:
-        raise ValueError(f"分卷 chapters(本卷章数)必须是正整数，实际={chapters!r}")
-
+    vol_list = raw.get("volumes")
+    if not isinstance(vol_list, list) or not vol_list:
+        raise ValueError(f"分卷规划必须含非空 volumes 数组，原始={raw!r}")
     human_authored = raw.get("human_confirmed") is True
-    return title.strip(), summary, setup_for_next, chapters, human_authored
+
+    active = _parse_active_volume(vol_list[0])
+    drafts = [_parse_draft_volume(v, pos) for pos, v in enumerate(vol_list[1:], start=2)]
+    return active, drafts, human_authored
 
 
 def _clamp_chapters(chapters: int, human_authored: bool) -> int:
@@ -128,53 +173,61 @@ def _clamp_chapters(chapters: int, human_authored: bool) -> int:
 
 
 def save_volumes(state: NovelState) -> dict:
-    """单卷解析 + 权威赋值 + 滚动 merge。
+    """多卷解析 + 权威赋值 + 前瞻队列 merge。
 
-    首次（state.volumes 空）：生成卷 1（chapter_start=1, in_progress）。
-    滚动（已有卷）：上一卷收口（actual_end=planned_end, status=closed）、append 新卷
-    （chapter_start=上一卷 planned_end+1, in_progress）。不做拆卷/合卷。
+    首次（无已激活卷）：激活卷=卷 1 [1, chapters] in_progress + 草稿卷 planning（章号 0）。
+    滚动（已有激活卷）：上一激活卷收口（actual_end=planned_end, status=closed）、丢弃所有旧 planning
+    草稿、append 新激活卷（chapter_start=上一卷 planned_end+1）+ 新草稿卷。已 closed 卷冻结不动。
 
-    章数走松护栏（_clamp_chapters）；index/chapter_start/planned_end/status 一律权威赋值。
-    覆盖语义：返回全量 volumes 列表（含收口的旧卷 + 新卷）。
+    激活卷章数走松护栏（_clamp_chapters）；index/chapter_start/planned_end/status 一律权威赋值。
+    覆盖语义：返回全量 volumes（已激活卷[含刚收口的] + 新激活卷 + 新草稿卷）。
     """
-    title, summary, setup_for_next, chapters, human_authored = _parse_single_volume_draft(
-        state.current_draft
-    )
-    chapters = _clamp_chapters(chapters, human_authored)
+    active, drafts, human_authored = _parse_volume_drafts(state.current_draft)
+    a_title, a_summary, a_setup, a_chapters = active
+    a_chapters = _clamp_chapters(a_chapters, human_authored)
 
     existing = [_coerce_volume(v) for v in state.volumes]
-    if not existing:
-        # 首次：仅卷 1，起始章号锁 1
-        new_vol = Volume(
-            index=1,
-            title=title,
-            summary=summary,
-            setup_for_next=setup_for_next,
-            chapter_start=1,
-            planned_end=chapters,  # chapter_start(1) + chapters - 1
-            status="in_progress",
-        )
-        volumes = [new_vol]
+    # 已激活卷 = 有权威章号（planned_end>0）的卷；旧 planning 草稿（planned_end=0）本轮丢弃重生成。
+    activated = [v for v in existing if v.planned_end > 0]
+
+    if not activated:
+        # 首次：激活卷 = 卷 1，起始章号锁 1；无历史卷需保留
+        base_index = 0
+        chapter_start = 1
+        kept: list[Volume] = []
     else:
-        # 滚动：上一卷收口 + append 新卷
-        prev = max(existing, key=lambda v: v.index)
-        if prev.planned_end <= 0:
-            raise ValueError(f"滚动生成卷失败：上一卷（第 {prev.index} 卷）planned_end 未赋值")
+        # 滚动：上一激活卷（最大 index）收口 closed，保留全部已激活卷（含它），丢弃旧草稿
+        prev = max(activated, key=lambda v: v.index)
         closed_prev = replace(prev, actual_end=prev.planned_end, status="closed")
+        kept = [closed_prev if v.index == prev.index else v for v in activated]
+        base_index = prev.index
         chapter_start = prev.planned_end + 1
-        new_vol = Volume(
-            index=prev.index + 1,
-            title=title,
-            summary=summary,
-            setup_for_next=setup_for_next,
-            chapter_start=chapter_start,
-            planned_end=chapter_start + chapters - 1,
-            status="in_progress",
+
+    active_vol = Volume(
+        index=base_index + 1,
+        title=a_title,
+        summary=a_summary,
+        setup_for_next=a_setup,
+        chapter_start=chapter_start,
+        planned_end=chapter_start + a_chapters - 1,
+        status="in_progress",
+    )
+    # 草稿卷：不锁章号（chapter_start=planned_end=0），index 顺延，planning 态。
+    draft_vols = [
+        Volume(
+            index=base_index + 1 + offset,
+            title=d_title,
+            summary=d_summary,
+            setup_for_next=d_setup,
+            chapter_start=0,
+            planned_end=0,
+            status="planning",
         )
-        volumes = [closed_prev if v.index == prev.index else v for v in existing] + [new_vol]
+        for offset, (d_title, d_summary, d_setup) in enumerate(drafts, start=1)
+    ]
 
     return {
-        "volumes": volumes,
+        "volumes": kept + [active_vol] + draft_vols,
         **reset_review_fields(),
     }
 

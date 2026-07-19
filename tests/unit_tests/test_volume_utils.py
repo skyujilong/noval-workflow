@@ -127,7 +127,8 @@ def test_volume_position_card_first_volume():
     assert "第 1-28 章，共 28 章" in card
     assert "本卷已完成 0/28 章" in card
     assert "上一卷" not in card  # 首卷无上一卷
-    assert "下一卷预告：第二卷" in card
+    assert "后续卷前瞻：" in card
+    assert "第 2 卷《第二卷 · 内门风云》" in card
 
 
 def test_volume_position_card_middle_volume():
@@ -143,7 +144,7 @@ def test_volume_position_card_middle_volume():
     assert "第 2 卷" in card
     assert "本卷已完成 5/48 章" in card
     assert "上一卷：第一卷 · 少年入宗" in card
-    assert "下一卷预告：第三卷" in card
+    assert "第 3 卷《第三卷 · 远征异域》" in card
 
 
 def test_volume_position_card_last_volume():
@@ -156,7 +157,7 @@ def test_volume_position_card_last_volume():
     state = NovelState(volumes=vs, total_chapters_written=125)
     card = volume_position_card(state)
     assert "第 4 卷" in card
-    assert "下一卷预告：（本卷为终卷）" in card
+    assert "后续卷前瞻：（本卷为终卷，无后续）" in card
 
 
 def test_volume_position_card_uses_planned_end_span():
@@ -173,7 +174,7 @@ def test_volume_position_card_uses_planned_end_span():
     assert "第 1-30 章，共 30 章" in card
     assert "本卷已完成 9/30 章" in card
     assert "目标" not in card
-    assert "下一卷预告：第二卷 · 内门风云" in card
+    assert "第 2 卷《第二卷 · 内门风云》" in card
 
 
 def test_volume_position_card_empty_volumes_returns_empty():

@@ -76,7 +76,8 @@ def volume_position_card(state: "NovelState") -> str:
         - 上一卷：第一卷 · 少年入宗 —— …
         - 本卷主线：林渊晋升内门卷入派系与妖族危机…
         - 卷尾 setup：血月教锁定林渊为目标
-        - 下一卷预告：第三卷 · 远征异域
+        - 后续卷前瞻：
+          · 第 3 卷《远征异域》：林渊率队远征妖域，中途遭遇……
     """
     if not state.volumes:
         return ""
@@ -108,12 +109,14 @@ def volume_position_card(state: "NovelState") -> str:
     if cur.setup_for_next:
         lines.append(f"- 卷尾 setup：{cur.setup_for_next}")
 
-    # 下一卷
-    next_list = [v for v in state.volumes if v.index > cur.index]
+    # 后续卷前瞻（含前瞻草稿卷）：给当前卷规划提供「中期方向地图」——只列方向，不含章级细节。
+    next_list = sorted((v for v in state.volumes if v.index > cur.index), key=lambda v: v.index)
     if next_list:
-        nxt = min(next_list, key=lambda v: v.index)
-        lines.append(f"- 下一卷预告：{nxt.title}")
+        lines.append("- 后续卷前瞻：")
+        for nv in next_list:
+            brief = nv.summary.strip() if nv.summary else "（方向待定）"
+            lines.append(f"  · 第 {nv.index} 卷《{nv.title}》：{brief}")
     else:
-        lines.append("- 下一卷预告：（本卷为终卷）")
+        lines.append("- 后续卷前瞻：（本卷为终卷，无后续）")
 
     return "\n".join(lines)
