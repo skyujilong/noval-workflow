@@ -58,22 +58,37 @@ def merge_chapter_plan(
     existing_plan: list[ChapterPlanItem],
     new_items: list[ChapterPlanItem],
     done: int,
+    plan_end: int | None = None,
 ) -> list[ChapterPlanItem]:
     """合并新旧章节规划:章号 <= done 的历史条目锁定为真值,LLM 若误输这些章号一律
     丢弃并 warning;章号 > done 采用新条目。返回按 chapter 升序的完整 list。
+
+    plan_end 非 None 时再钳制上界:章号 > plan_end 的新条目一律丢弃——LLM 常无视
+    「只规划 N 章」而超发(实测首规划被要求 40 章却一口气吐 119 章),不拦就会静默全收、
+    还会把 planned_upto 顶到 119 污染 STRIDE 滚动记账。与下界 done 对称,把新条目锁死
+    在 [done+1, plan_end] 窗口内。mid-batch 编辑子图不传此参(默认 None),行为不变。
 
     唯一的锁定合并实现——主图 save_chapter_plan 与章末 mid-batch 编辑子图共用,
     避免两套语义漂移成新的分叉源。
     """
     historical = _extract_chapter_plan_range(existing_plan, 1, done) if done > 0 else []
     fresh: list[ChapterPlanItem] = []
+    overshoot = 0
     for item in new_items:
         if item.chapter <= done:
             _logger.warning(
                 "章节规划 LLM 输出了已锁定章号 %d,丢弃(以历史真值为准)", item.chapter
             )
             continue
+        if plan_end is not None and item.chapter > plan_end:
+            overshoot += 1
+            continue
         fresh.append(item)
+    if overshoot:
+        # 聚合成一条 warning,避免超发几十条时刷屏
+        _logger.warning(
+            "章节规划 LLM 超发 %d 条(章号 > 窗口末章 %d),已截断丢弃", overshoot, plan_end
+        )
     return sorted(historical + fresh, key=lambda x: x.chapter)
 
 
@@ -118,10 +133,13 @@ def save_chapter_plan(state: NovelState) -> dict:
       章号 > done 的条目采用 LLM 输出。最后按 chapter 升序返回。
     """
     done = state.total_chapters_written
+    # 本次规划窗口末章(= done + WINDOW),传给 merge 钳制 LLM 超发;复用 _plan_range 保持
+    # 窗口末章公式单一来源。
+    _, plan_end = _plan_range(state)
 
     # 解析 + 校验 + 锁定合并全部走公共 helper(与 mid-batch 编辑子图共用同一实现)
     new_items = parse_chapter_plan_items(state.current_draft)
-    merged = merge_chapter_plan(state.chapter_plan, new_items, done)
+    merged = merge_chapter_plan(state.chapter_plan, new_items, done, plan_end)
     planned_upto = merged[-1].chapter if merged else state.chapter_plan_planned_upto
 
     return {
