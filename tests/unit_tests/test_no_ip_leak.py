@@ -98,16 +98,18 @@ def test_comedy_isekai_rhythm_keywords_present():
 
 
 # ── arc_rhythm_override 覆盖 base 通用档位护栏 ────────────────────────────
-# 搞笑异世界是反爽文题材,爆发上限必须远低于 base 默认 40%。通过 arc_rhythm_override
+# 搞笑异世界是反爽文题材,爆发上限必须低于 base 默认 40%。通过 arc_rhythm_override
 # 字段整段替换 base 通用档位约束,不能与之并列(否则 LLM 会看到两套占比数字迷惑)。
+# 注:配比经「适度上调冒险比重」再平衡——爆发+大转折 ≤ ~30%(不是压到 ≤20%)、日常 ≥ ~40%,
+# 占位符相应改用 {batch_mid_burst}/{batch_mid_daily}(而非旧的 max/min 焊死档)。
 REQUIRED_ARC_RHYTHM_OVERRIDE_KEYWORDS = [
     "arc_rhythm_override",         # 字段本身存在
     "{BATCH_SIZE}",                # 动态占位——章数由环境变量决定
-    "{batch_max_burst}",           # 题材上限占位
-    "{batch_min_daily}",           # 题材下限占位
-    "≤ 20%",                       # 爆发+大转折 上限(远低于 base 40%)
-    "≥ 50%",                       # 铺垫+缓冲+回落+推进 下限
-    "日常闹剧为主体",              # 覆盖 base 的定性依据
+    "{batch_mid_burst}",           # 题材上限占位(~30% 中间档)
+    "{batch_mid_daily}",           # 题材下限占位(~40% 中间档)
+    "≤ ~30%",                      # 爆发+大转折 上限(低于 base 40%,但不再压到 20%)
+    "≥ ~40%",                      # 铺垫+缓冲+回落+推进 下限
+    "日常为主体",                  # 覆盖 base 的定性依据
     "覆盖 base 通用规则",          # 显式声明覆盖关系
 ]
 
@@ -115,8 +117,9 @@ REQUIRED_ARC_RHYTHM_OVERRIDE_KEYWORDS = [
 def test_comedy_isekai_has_arc_rhythm_override():
     """搞笑异世界必须填 arc_rhythm_override 字段以覆盖 base 通用档位约束。
 
-    base 默认 「爆发+转折 ≤ 40%」的上限对本题材过于宽松（反爽文题材应远低于此），
+    base 默认 「爆发+转折 ≤ 40%」的上限对本题材过于宽松（反爽文题材应低于此），
     故本题材必须提供 override 版本整段替换,保证 LLM 拿到的档位红线与题材气质一致。
+    配比按「日常为主体 + 冒险推动主线」再平衡:爆发+大转折 ≤ ~30%、日常 ≥ ~40%。
     """
     target = _GENRES_DIR / "comedy_isekai.py"
     text = target.read_text(encoding="utf-8")
@@ -124,5 +127,5 @@ def test_comedy_isekai_has_arc_rhythm_override():
     assert not missing, (
         f"arc_rhythm_override 关键字缺失: {missing}\n"
         f"本题材是反爽文,必须通过 arc_rhythm_override 覆盖 base 默认 40% 爆发上限,"
-        f"降到题材专属 ≤ 20%,且用 {{BATCH_SIZE}} 等动态占位对齐环境变量。"
+        f"降到题材专属 ≤ ~30%,且用 {{BATCH_SIZE}} 等动态占位对齐环境变量。"
     )
