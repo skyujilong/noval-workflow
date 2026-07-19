@@ -81,7 +81,7 @@ def prepare_initial_status(state: NovelState) -> dict:
     复用 review_type="phase_summary" —— 本质是数据维护员式的结构化萃取，需继承 snapshot
     的身份/关思考/审核 prompt/中断表单。故上下文参数对标 chapter_edit_subgraph._prepare_phase
     （exclude_snapshots=True 保持干净、include_identity=False 让 generate 拼数据维护员身份）；
-    deep_character_view=True 注入人物卡的底牌契约/四卷天花板，供固化战力基线校验。
+    deep_character_view=True 注入人物卡的底牌契约/全书成长天花板，供固化战力基线校验。
     但作为顶层 foundation 节点，须 reset_review_fields() 清掉上一步（character_cards）的
     审核桥接字段。产出经审核后写入同一个 phase_summary 字段，Phase 2.5 首批据此 carry-over。
     """

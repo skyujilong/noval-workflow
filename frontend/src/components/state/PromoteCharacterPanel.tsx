@@ -20,8 +20,8 @@ import type { EntityCard } from "../../lib/types";
 const DEEP_FIELDS: Array<{ key: keyof CharacterPromotePatch; label: string; hint: string }> = [
   { key: "appearance", label: "外貌", hint: "体貌基线：身形/气质/年龄段/大致长相 + 可选识别特征" },
   { key: "hidden_persona", label: "隐藏人设", hint: "暗线秘密/异常/隐藏能力/立场偏差，可后期反转" },
-  { key: "arc_trajectory", label: "四卷弧光", hint: "卷一→卷四心性/立场/认知迭代大势（只写大势）" },
-  { key: "ability_contract", label: "底牌契约", hint: "初始锚点+四卷天花板+隐藏杀手锏（非战斗角色可留空）" },
+  { key: "arc_trajectory", label: "全书弧光", hint: "开篇→收官心性/立场/认知迭代大势（只写大势）" },
+  { key: "ability_contract", label: "底牌契约", hint: "初始锚点+全书成长天花板+隐藏杀手锏（非战斗角色可留空）" },
 ];
 
 // 现状卡里供审改参照的只读字段（提升不改这些）。
@@ -60,7 +60,7 @@ export function PromoteCharacterPanel({ ctl }: { ctl: UsePromoteCharacter }) {
         <DialogHeader>
           <DialogTitle>提升为重要角色 · {card.name}</DialogTitle>
           <DialogDescription>
-            为原「次要角色」补齐深层设计（隐藏人设/四卷弧光/底牌契约）。LLM 生成草稿后可逐字段审改，落库即覆盖。
+            为原「次要角色」补齐深层设计（隐藏人设/全书弧光/底牌契约）。LLM 生成草稿后可逐字段审改，落库即覆盖。
           </DialogDescription>
         </DialogHeader>
 

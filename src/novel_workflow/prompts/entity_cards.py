@@ -506,7 +506,7 @@ def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> 
     两档视图治上下文膨胀（原 bible 每次全量灌，这里默认有界）：
     - deep=False（默认，写正文/常规 context）：操作视图——role/外貌/口吻/性格/能力/动机/处境/关系；
       **已离场角色（current_state 命中 _OFFSTAGE_MARKERS）压成一行**，只留身份 + 离场状态，不占全字段。
-    - deep=True（outline/arc/consistency 规划）：追加深层视图——隐藏人设/四卷弧光/底牌契约
+    - deep=True（outline/arc/consistency 规划）：追加深层视图——隐藏人设/全书弧光/底牌契约
       （这些按 role 条件触发，次要/非战斗角色可留空，空值不渲染标签行）；**不做离场收敛**，
       一致性审计/长线设计需要看到退场角色的完整设定与弧光。
     非人物卡忽略（装备/物品走 format_equipment_for_context）。
@@ -539,7 +539,7 @@ def format_character_profiles_from_cards(cards: list, *, deep: bool = False) -> 
             if _text(get("hidden_persona")):
                 lines.append(f"  - 隐藏人设:{get('hidden_persona')}")
             if _text(get("arc_trajectory")):
-                lines.append(f"  - 四卷弧光:{get('arc_trajectory')}")
+                lines.append(f"  - 全书弧光:{get('arc_trajectory')}")
             if _text(get("ability_contract")):
                 lines.append(f"  - 底牌契约:{get('ability_contract')}")
         blocks.append("\n".join(lines))
@@ -594,8 +594,8 @@ CHARACTER_CARDS_REVIEW_PROMPT = """请审核以下 Phase-1「全套核心人物�
 2. **卡司配额**：是否覆盖主角 1 / 核心配角 3-5 / 功能性反派 2-3 / 根源反派 1 / 感情线 1-2？主角是否唯一？有无工具人凑数？
 3. **role 合法**：每张人物卡是否给了 `role`，且是主角/主要配角/功能性反派/根源反派/感情线角色/次要角色之一？
 4. **双层人设（按需）**：该写 `hidden_persona` 的角色（主角/根源反派/关键反转角色）是否写了、其余角色是否**没硬凑**？避免「全员藏秘密/藏铁证」式套路化雷同；写了的两层不冲突、可后期反转。
-5. **能力落体系**：`abilities` / `ability_contract` 是否归属【力量体系】的层级/流派，初始锚点与四卷天花板都落在境界阶梯上，未越界自造？
-6. **四卷弧光 + 底牌契约（按需）**：`arc_trajectory`（四卷心性/立场/认知迭代大势，反派含阶段作用+闭环退场）核心角色是否完整？`ability_contract` 只对**战力相关的关键角色**查完整（初始锚点+四卷天花板+隐藏杀手锏触发/反噬）；非战斗/次要/纯功能角色**不应**硬塞契约。
+5. **能力落体系**：`abilities` / `ability_contract` 是否归属【力量体系】的层级/流派，初始锚点与全书成长天花板都落在境界阶梯上，未越界自造？
+6. **全书弧光 + 底牌契约（按需）**：`arc_trajectory`（全书心性/立场/认知迭代大势，反派含阶段作用+闭环退场）核心角色是否完整？`ability_contract` 只对**战力相关的关键角色**查完整（初始锚点+全书成长天花板+隐藏杀手锏触发/反噬）；非战斗/次要/纯功能角色**不应**硬塞契约。
 7. **关系闭环**：`relations` 是否围绕主角构建、无游离孤点？
 8. **反派分层**：功能性反派与根源反派是否区分，动机根源/阶段作用/闭环退场是否清晰？
 9. **外貌基线**：`appearance` 是否给了体貌基线（身形/气质/年龄段/大致长相，供正文外貌一致），而非只有单个配饰/印记？
@@ -622,9 +622,9 @@ PROMOTABLE_ROLES: tuple[str, ...] = (
 
 
 def _format_volumes_brief(volumes: list) -> str:
-    """把分卷列表渲染成紧凑的「卷N《卷名》: 主线摘要」块，供提升 prompt 定四卷弧光锚点。
+    """把分卷列表渲染成紧凑的「卷N《卷名》: 主线摘要」块，供提升 prompt 定全书弧光锚点。
 
-    volumes 空则返回空串（overall_outline 已含四卷结构，分卷块只是额外锚点，缺省不强求）。
+    volumes 空则返回空串（overall_outline 已含全书阶段结构，分卷块只是额外锚点，缺省不强求）。
     兼容 Volume 实例与 checkpoint roundtrip 后的 dict。
     """
     if not volumes:
@@ -671,7 +671,7 @@ _PROMOTE_CHARACTER_TEMPLATE = """请为一位「原次要角色」补齐【重�
 - **role**：固定填「{target_role}」。
 - **appearance**：体貌基线（身形/气质/年龄段/大致长相，供正文外貌一致）+ 可选 1 个识别特征，≤60字；若现状卡 appearance 太薄则加厚，但不与已有描述冲突。
 - **hidden_persona**：深层隐藏人设——暗线秘密/异常/隐藏能力/立场偏差，与表层 `personality` 不冲突、可后期反转（升为重要角色理应写，别与既定性格打架）。
-- **arc_trajectory**：四卷弧光——卷一→卷四心性/立场/羁绊/认知的迭代大势（只写大势不填情节）；若提升为反派向 role，写阶段作用 + 闭环退场。
+- **arc_trajectory**：全书弧光——开篇→收官心性/立场/羁绊/认知的迭代大势（只写大势不填情节）；若提升为反派向 role，写阶段作用 + 闭环退场。
 - **ability_contract**：{contract_spec}
 
 ## 硬约束
@@ -702,7 +702,7 @@ def promote_character_prompt(state: "NovelState", card, target_role: str) -> str
         else ""
     )
     contract_spec = (
-        "仅当该角色与战力相关才写完整契约（初始锚点 + 四卷天花板 + 隐藏杀手锏触发/反噬，须落【力量体系】）；纯文戏/非战斗角色留空或据现有 abilities 简述。"
+        "仅当该角色与战力相关才写完整契约（初始锚点 + 全书成长天花板 + 隐藏杀手锏触发/反噬，须落【力量体系】）；纯文戏/非战斗角色留空或据现有 abilities 简述。"
         if state.has_power_system
         else "本作无独立力量体系——一般留空，除非该角色确有可成长的关键能力，则据 abilities 简述其成长与底牌。"
     )

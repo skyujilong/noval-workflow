@@ -1,12 +1,12 @@
-// 远期章节规划(chapter_plan) 只读展示——「编辑当前状态」抽屉中的观测入口。
+// 章节规划(chapter_plan) 只读展示——「编辑当前状态」抽屉中的观测入口。
 //
-// 参考伏笔台账(ForeshadowingEditor)的分组卡片形态,但只读:chapter_plan 每
-// STRIDE 章会被 LLM 覆盖重写,人工手改意义不大;这里作为「状态观测窗口」。
+// 参考伏笔台账(ForeshadowingEditor)的分组卡片形态,但只读:chapter_plan 按卷滚动生成、
+// 会被 LLM 按卷覆盖重写,人工手改意义不大;这里作为「状态观测窗口」。
 //
 // 分成两组:
 //   - 🔒 已锁定(chapter ≤ total_chapters_written):历史段,save_chapter_plan
 //     合并时保证不覆盖已写章条目。
-//   - 🆕 新规划:未来章条目,下一次 STRIDE 触发时会被覆盖。
+//   - 🆕 新规划:未来章条目,滚动到下一卷时会被覆盖。
 //
 // 视觉与 ChapterPlanCards.tsx(interrupt 抽屉视图) 保持一致——共用 INTENSITY_META。
 

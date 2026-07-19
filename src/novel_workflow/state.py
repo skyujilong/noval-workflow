@@ -147,8 +147,8 @@ class CharacterCard(EntityCard):
     personality: str = ""              # canon：表层公开人设/性格底色（操作视图）
     abilities: str = ""                # canon：能力底牌一句话摘要（须落【力量体系】，操作视图）
     hidden_persona: str = ""           # canon·深层视图：暗线预埋、可后期反转的隐藏人设
-    arc_trajectory: str = ""           # canon·深层视图：四卷成长弧光；反派写阶段作用+闭环退场
-    ability_contract: str = ""         # canon·深层视图：初始锚点+四卷天花板+隐藏杀手锏（战力校验红线）
+    arc_trajectory: str = ""           # canon·深层视图：全书长线成长弧光（起承转合大势）；反派写阶段作用+闭环退场
+    ability_contract: str = ""         # canon·深层视图：初始锚点+全书成长天花板+隐藏杀手锏（战力校验红线）
     motivation: str = ""               # 动态·覆盖：当前动机/目标
     current_state: str = ""            # 动态·覆盖：当前处境（位置/情绪/状态），吸收原 character_status
     relations: str = ""                # 动态·覆盖：与主角/他人关系，立场翻转（叛变）由此承载

@@ -136,7 +136,7 @@ builder.add_node("prepare_arc_outline", prepare_arc_outline)
 builder.add_node("review_arc_outline", review_subgraph)
 builder.add_node("save_arc_outline", save_arc_outline)
 
-# Phase 2.5 — chapter plan(远端锚点滚动窗口,在 arc_outline 前的中景大纲)
+# Phase 2.5 — chapter plan(以卷为规划单元的中景大纲,在 arc_outline 前给远端锚点)
 builder.add_node("prepare_chapter_plan", prepare_chapter_plan)
 builder.add_node("review_chapter_plan", review_subgraph)
 builder.add_node("save_chapter_plan", save_chapter_plan)

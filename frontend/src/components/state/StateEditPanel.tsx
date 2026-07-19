@@ -282,14 +282,14 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
             />
           </section>
 
-          {/* 远期规划(chapter_plan) 只读观测——不进 dirty/patch,仅让用户看到滚动窗口当前锚点分布。
-              暂不支持编辑:每 STRIDE 章会被 LLM 覆盖重写,手动改易被冲掉,故只做观测窗口。 */}
+          {/* 章节规划(chapter_plan) 只读观测——不进 dirty/patch,仅让用户看到当前卷的锚点分布。
+              暂不支持编辑:滚动生成卷时会按卷覆盖重写,手动改易被冲掉,故只做观测窗口。 */}
           <section className="space-y-2">
             <div className="flex items-baseline justify-between">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                 远期规划 · 章节锚点(chapter_plan)
               </h4>
-              <span className="text-[10px] text-gray-400">只读 · 每 STRIDE 章滚动覆盖</span>
+              <span className="text-[10px] text-gray-400">只读 · 按卷滚动生成</span>
             </div>
             <ChapterPlanReadonly
               items={state.chapter_plan || []}

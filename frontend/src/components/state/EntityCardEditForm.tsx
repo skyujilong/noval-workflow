@@ -24,7 +24,7 @@ const PERSON_FIELDS: Array<{ key: keyof EntityCard; label: string; multiline?: b
   { key: "current_state", label: "处境" },
   { key: "relations", label: "关系" },
   { key: "hidden_persona", label: "隐藏人设", multiline: true },
-  { key: "arc_trajectory", label: "四卷弧光", multiline: true },
+  { key: "arc_trajectory", label: "全书弧光", multiline: true },
   { key: "ability_contract", label: "底牌契约", multiline: true },
 ];
 const ITEM_FIELDS: Array<{ key: keyof EntityCard; label: string; multiline?: boolean }> = [

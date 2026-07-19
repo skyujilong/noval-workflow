@@ -136,7 +136,7 @@ function Card({
           <Row label="关系" value={card.relations} />
           {/* 深层 canon（隐藏人设/弧光/底牌）——deep 视图才落库的长字段 */}
           <Row label="隐藏人设" value={card.hidden_persona} />
-          <Row label="四卷弧光" value={card.arc_trajectory} />
+          <Row label="全书弧光" value={card.arc_trajectory} />
           <Row label="底牌契约" value={card.ability_contract} />
         </>
       )}

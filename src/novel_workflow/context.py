@@ -103,7 +103,7 @@ def build_foundation_context(
             while still injecting full settings.
         deep_character_view: 人物档案渲染深度。False（默认，写正文/常规 context）注入操作
             视图（role/外貌/口吻/性格/能力/动机/处境/关系）；True（outline/arc/consistency
-            规划）追加深层视图（隐藏人设/四卷弧光/底牌契约），供战力基线/长线设计校验。
+            规划）追加深层视图（隐藏人设/全书弧光/底牌契约），供战力基线/长线设计校验。
     """
     parts: list[str] = []
 

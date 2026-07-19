@@ -62,7 +62,7 @@ export interface EntityCard {
   personality?: string;
   abilities?: string;
   hidden_persona?: string; // 深层隐藏人设(canon·深层视图)
-  arc_trajectory?: string; // 四卷成长弧光(canon·深层视图)
+  arc_trajectory?: string; // 全书成长弧光(canon·深层视图)
   ability_contract?: string; // 能力底牌契约(canon·深层视图)
   motivation?: string; // 动态
   current_state?: string; // 当前处境(动态，吸收原 character_status)
@@ -128,7 +128,7 @@ export interface NovelState {
   foreshadowing: ForeshadowingLedger;
   phase_summary: string;
 
-  // Phase 2.5：远期章节规划(chapter_plan 滚动窗口)
+  // Phase 2.5：章节规划(chapter_plan，以卷为规划单元的中景大纲)
   chapter_plan: ChapterPlanItem[];
   chapter_plan_planned_upto: number;
 

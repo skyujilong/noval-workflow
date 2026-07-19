@@ -83,7 +83,7 @@ def _collect_foundation(state: NovelState) -> str:
         if val:
             parts.append(f"## 【{name}】\n{val}")
     cards = getattr(state, "entity_cards", []) or []
-    # 人物档案：从卡库渲染深层视图（含四卷弧光/底牌契约），供交叉核对人物能力是否越出体系
+    # 人物档案：从卡库渲染深层视图（含全书弧光/底牌契约），供交叉核对人物能力是否越出体系
     profiles = format_character_profiles_from_cards(cards, deep=True)
     if profiles:
         parts.append(f"## 【人物档案（卡库真源）】\n{profiles}")
