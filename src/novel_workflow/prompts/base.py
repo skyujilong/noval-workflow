@@ -451,64 +451,92 @@ class PromptPack:
     # ── 动态提示词（通用脚手架 + 风味片段）──────────────────────────────────
 
     def overall_outline_prompt(self, total_word_count: str) -> str:
-        """生成全书四卷式整体顶层大纲 + 全局结局定位。"""
+        """生成全书方向性战略骨架 + 全局结局定位（不预设卷数/卷长——卷由后续按内容滚动生成）。"""
         # word_count_desc 直接用用户原文(如"50万字"),不再额外拼"字"——历史遗留双字 bug 修复
         word_count_desc = total_word_count if total_word_count else "长篇"
         focus = f"\n- 题材聚焦：{self.flavor.overall_outline_focus}" if self.flavor.overall_outline_focus else ""
         return f"""{self.flavor.system_identity}
-任务：搭建本书四卷式整体顶层大纲 + 全局结局定位，只做战略骨架，不填充具体章节、台词、场景细节。
+任务：搭建本书**方向性战略骨架 + 全局结局定位**，只做战略层顶层规划，不填充具体章节、台词、场景细节，也**不预先划分卷数、不锁定每卷章数**（分卷在写作推进中按内容量滚动生成）。
 严格遵守以下硬性创作规则：
-全书固定四段式起承转合，划分为四卷。每卷必须写明：阶段定位、本卷核心事件、主角与核心角色关系变化、卷内人物群像互动大势、阶段性情绪落点、高潮设计、本卷结束时主角/主角团状态变化；全书体量：{word_count_desc}。
+按「起（引入）→承（展开）→转（升级/高潮）→合（收束）」勾勒全书阶段推进的大脉络，各阶段写明：阶段定位、核心事件与矛盾升级、主角与核心角色关系变化、人物群像互动大势、阶段性情绪落点、高潮设计、阶段结束时主角/主角团状态变化。**这些阶段是叙事节拍，不是硬性卷划分——不要写「第一卷/第二卷」式的固定卷号切分**。全书体量：{word_count_desc}。
 双线并行设计：一条明主线为外部事件/任务/冒险推进线，一条隐藏暗线为角色关系/信任/身份揭秘线，暗线最终与主线交汇完成情感与逻辑闭环。
 人物规则：仅敲定主角+核心配角群的人物关系演变、立场变化、成长弧光大轨迹，不锁定具体相遇时机、对话内容、互动桥段、搞笑场景、情感爆发台词。保留角色动态调整空间。
 势力/规则格局：只梳理世界观规则、组织/势力关系的大势变化，不锁定单次冲突胜负、临时规则、新增小团体。
 强制留白清单，以下细节一律不写、不预设、不规划：具体章节剧情、具体台词与吐槽、角色内心独白、搞笑桥段、日常场景细节、单场战斗过程、情感互动细节、一次性的突发事件结果、临时新增角色/势力的设定。所有微观内容留给后续细分小大纲。
 结局规范：仅锁定结局情感基调、主角与核心角色关系终态、全书核心立意；具体收尾场景、角色最终细碎归宿、收尾台词全部留白。
-整体硬性标准：四卷节奏层层递进，主角视角清晰，角色群像关系闭环，逻辑自洽，框架具备强延展性。{focus}
+整体硬性标准：阶段节奏层层递进，主角视角清晰，角色群像关系闭环，逻辑自洽，框架具备强延展性、可支撑长篇连载滚动展开。{focus}
 {_FOUNDATION_RIGOR}
-输出要求：直接输出纯大纲正文，无需开场白、解释、标题，四卷内容分段清晰；四卷骨架总字数约 2500-3500 字（与后续审核口径一致），过短则骨架信息不足、过长则侵占细分大纲的留白空间。"""
+输出要求：直接输出纯大纲正文，无需开场白、解释、标题，各阶段分段清晰；战略骨架总字数约 2500-3500 字（与后续审核口径一致），过短则骨架信息不足、过长则侵占细分大纲的留白空间。"""
 
     def volumes_prompt(self, overall_outline: str) -> str:
-        """从 overall_outline 抽取结构化分卷列表（Volume）——严格 JSON 数组。
+        """规划**第一卷**——从整书大纲切出卷 1，返回严格 JSON 对象（单卷，滚动生成卷架构）。
 
-        与 overall_outline_prompt 的分工：那里出 markdown 四卷骨架大纲；这里把它转成
-        结构化 JSON 供后续 volume_position_card / volume_boundary_gate 消费。
-
-        弹性 range 语义（关键，与 volume_utils / Volume dataclass 一致）：
-          - chapter_start = 本卷起始「章号」（1-based，锁定）
-          - target_min / target_max = 本卷「章数」（数量，软约束），不是绝对章号
-          - 拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]
-        Step 01 已跑通 3/3 通过率；字段/示例/校验规则严格照抄验证版。
+        滚动生成卷：开书只规划卷 1；后续卷在写作推进到本卷尾声时由 prepare_volumes 滚动追加。
+        契约（关键，与 nodes/volumes.save_volumes 对齐）：
+          - LLM 只出 4 个内容字段 title/summary/setup_for_next/chapters
+          - index/chapter_start/planned_end/status 由后端权威赋值，LLM 不出绝对章号
+          - chapters = 本卷「章数」（数量），松护栏 [15,50]，人工可在 review 抽屉突破
         """
-        return f"""你是网文分卷结构化抽取助手。任务：从下面这份「整体大纲」中抽取分卷结构，返回严格 JSON 数组。
+        return f"""你是网文分卷结构化规划助手。任务：为本书规划**第一卷**，返回严格 JSON 对象（只规划这一卷）。
 
-# 输入
+# 输入：整体大纲（全书战略方向）
 {overall_outline}
 
 # 硬约束
-1. 输出**纯 JSON 数组**，不要 markdown 代码围栏（```），不要任何解释文字，不要前后空行。
-2. 每个数组元素必须包含且仅包含 7 个字段：
-   - index: int（1-based，第几卷）
-   - title: str（卷名，如「第一卷 · 少年入宗」；若原文有卷名照抄，否则简短概括不超 20 字）
+1. 输出**纯 JSON 对象**（以 {{ 开头、}} 结尾），不要 markdown 代码围栏（```），不要任何解释文字，不要前后空行。
+2. 对象必须包含且仅包含 4 个字段：
+   - title: str（卷名，如「第一卷 · 少年入宗」，≤20 字）
    - summary: str（本卷主线目标 + 情绪基调 + 收尾状态，≤80 字）
-   - setup_for_next: str（卷尾要为下一卷埋的钩子/线索；最后一卷可空字符串 ""）
-   - chapter_start: int（本卷起始**章号**，1-based）
-   - target_min: int（本卷目标**章数**下限，例如原文"约 25 章"→ target_min=22）
-   - target_max: int（本卷目标**章数**上限，例如原文"约 25 章"→ target_max=28，保守放 20%）
-3. chapter_start 必须顺次拼接：第一卷 chapter_start=1；之后每卷 chapter_start = 上一卷 chapter_start + 上一卷 target_max。
-4. target_min ≤ target_max，都必须 > 0；target_min/target_max 是**章数**（数量），不是章号。
-5. 若原文已明确写「共 X 卷」或「第 X 卷」的分卷，严格按其分（不合并、不拆分、不重排）。
-6. 若原文没有明确分卷且没写「N 卷」，默认 4 卷。
+   - setup_for_next: str（卷尾要为下一卷埋的钩子/悬念/角色转折，具体、非套话）
+   - chapters: int（本卷**章数**，按本卷承载的内容量自行判断；松区间 15-50 章，内容确实需要可略超）
+3. **卷是一个完整的小故事**：有清晰的起（引入舞台/人物/目标）→承（展开与铺垫）→转（本卷高潮/关键转折）→合（收束本卷 + 埋下一卷钩）。chapters 服务于把这个小故事讲完整，不要为凑数注水、也不要硬砍到讲不完。
+4. **只规划第一卷**，不要输出后续卷、不要输出数组——后续卷会在写作推进到本卷尾声时再滚动规划。
+5. 不要输出 index / chapter_start / planned_end / status / actual_end 等字段，它们由系统权威赋值。
 
 # 输出样例（仅示格式，不要照抄内容）
-[
-  {{"index": 1, "title": "第一卷 · 破题", "summary": "主角从平凡进入江湖，初识伙伴与敌人，卷末踏入下一阶段", "setup_for_next": "母亲身份真相埋点", "chapter_start": 1, "target_min": 22, "target_max": 28}},
-  {{"index": 2, "title": "第二卷 · 内争", "summary": "主角卷入宗门斗争，母亲身份揭开", "setup_for_next": "血月教盯上主角", "chapter_start": 29, "target_min": 35, "target_max": 42}}
-]
+{{"title": "第一卷 · 破题", "summary": "主角从平凡卷入江湖，初识伙伴与劲敌，卷末踏入更大舞台", "setup_for_next": "母亲遗物中的半张地图指向禁地", "chapters": 28}}
 
-说明：卷 1 chapter_start=1，target_max=28 表示第 1-28 章占位给卷 1；卷 2 chapter_start = 1 + 28 = 29。
+现在开始，直接输出 JSON 对象："""
 
-现在开始，直接输出 JSON 数组："""
+    def volumes_prompt_rolling(
+        self,
+        overall_outline: str,
+        prior_volumes_brief: str,
+        total_chapters_written: int,
+        next_index: int,
+        next_chapter_start: int,
+        prev_setup_for_next: str,
+    ) -> str:
+        """滚动规划**下一卷**（第 next_index 卷）——承接上一卷卷尾钩，返回严格 JSON 对象（单卷）。
+
+        与首卷契约相同（4 个内容字段 + 后端权威赋值绝对章号），只是输入换成「已写进度 + 已有卷
+        节选 + 上一卷卷尾钩」，要求新卷自然承接、推进整体大纲的下一阶段、不重复已写内容。
+        """
+        prev_hook = prev_setup_for_next.strip() or "（上一卷未显式埋钩，请自行从整体大纲下一阶段接续）"
+        return f"""你是网文分卷结构化规划助手。本书正在连载，现需为**第 {next_index} 卷**做规划，返回严格 JSON 对象（只规划这一卷）。
+
+# 整体大纲（全书战略方向）
+{overall_outline}
+
+# 已规划/已写的卷（节选）
+{prior_volumes_brief}
+
+# 当前进度
+- 全书已写完 {total_chapters_written} 章
+- 上一卷卷尾埋的钩：{prev_hook}
+- 第 {next_index} 卷将从第 {next_chapter_start} 章开始（系统已锁定，你无需输出章号）
+
+# 硬约束
+1. 输出**纯 JSON 对象**（以 {{ 开头、}} 结尾），不要 markdown 围栏，不要解释文字。
+2. 对象必须包含且仅包含 4 个字段：title / summary / setup_for_next / chapters（含义同首卷契约）。
+3. 本卷必须**自然承接上一卷卷尾的钩子/悬念**，推进整体大纲的下一阶段，**不重复已写内容**、不倒退。
+4. **卷是一个完整的小故事**：起承转合闭环 + 卷末埋下一卷钩（若为全书收官卷，setup_for_next 可说明「本作终卷」）。chapters 按本卷内容量定，松区间 15-50 章。
+5. **只规划这一卷**，不要输出多卷、不要输出数组；不要输出 index/chapter_start/planned_end/status 等字段（系统权威赋值）。
+
+# 输出样例（仅示格式，不要照抄内容）
+{{"title": "第 {next_index} 卷 · 风起", "summary": "承接上一卷的悬念，主角踏入新舞台，卷末揭开一层真相", "setup_for_next": "盟友的真实身份浮出水面", "chapters": 32}}
+
+现在开始，直接输出 JSON 对象："""
 
     def titles_prompt(self, all_titles: list[str], chapter_context: str = "", arc_outline: str = "") -> str:
         """生成下 BATCH_SIZE 章的章节标题。

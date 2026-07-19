@@ -35,7 +35,7 @@ export function VolumesEditor({ value, error, disabled, onChange }: Props) {
         rows={14}
         spellCheck={false}
         className="font-mono text-xs"
-        placeholder='[{"index":1,"title":"第一卷·少年入宗","summary":"…","setup_for_next":"…","chapter_start":1,"target_min":22,"target_max":28,"actual_end":null,"status":"in_progress"}]'
+        placeholder='[{"index":1,"title":"第一卷·少年入宗","summary":"…","setup_for_next":"…","chapter_start":1,"planned_end":28,"actual_end":null,"status":"in_progress"}]'
       />
       {error ? (
         <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-600">

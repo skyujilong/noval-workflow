@@ -24,6 +24,7 @@ from noval_workflow.nodes.chapter_plan import (
 )
 from noval_workflow.nodes.volumes import (
     prepare_volumes,
+    route_after_save_volumes,
     save_volumes,
 )
 from noval_workflow.nodes.volume_gate import volume_boundary_gate
@@ -236,11 +237,21 @@ builder.add_edge("save_core_conflicts", "prepare_overall_outline")
 
 builder.add_edge("prepare_overall_outline", "review_overall_outline")
 builder.add_edge("review_overall_outline", "save_overall_outline")
-# Phase 1.5 — 分卷规划：save_overall_outline → prepare_volumes → review → save → 继续人物档案
+# Phase 1.5 / 滚动 — 分卷规划：save_overall_outline → prepare_volumes → review → save
+# save_volumes 后二分（route_after_save_volumes）：
+#   · 首次分卷（写作未开始，written==0）→ 继续设定链 prepare_character_cards
+#   · 滚动分卷（写作中）→ 展开新卷 chapter_plan（prepare_chapter_plan）
 builder.add_edge("save_overall_outline", "prepare_volumes")
 builder.add_edge("prepare_volumes", "review_volumes")
 builder.add_edge("review_volumes", "save_volumes")
-builder.add_edge("save_volumes", "prepare_character_cards")
+builder.add_conditional_edges(
+    "save_volumes",
+    route_after_save_volumes,
+    {
+        "prepare_character_cards": "prepare_character_cards",
+        "prepare_chapter_plan": "prepare_chapter_plan",
+    },
+)
 
 builder.add_edge("prepare_character_cards", "review_character_cards")
 builder.add_edge("review_character_cards", "save_character_cards")

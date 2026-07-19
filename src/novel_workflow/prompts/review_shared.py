@@ -92,24 +92,23 @@ OVERALL_OUTLINE_REVIEW_PROMPT = """请审核以下【整体大纲与结局】：
 
 
 # ── 分卷规划(volumes)审核 ─────────────────────────────────────────────────────
-# 弹性 range 语义（与 state.Volume / volume_utils.py / nodes/volumes.py 严格对齐）：
-#   - chapter_start = 本卷起始章号(1-based, 锁定)
-#   - target_min / target_max = 本卷「章数」(数量, 软约束)，不是绝对章号
-#   - 拼接规则: chapter_start[i+1] = chapter_start[i] + target_max[i]
-#   - actual_end 只有触发 VOLUME_BOUNDARY_GATE 用户点「在此收卷」才写入，抽取时不填/为 null
-# 审核关注结构合法 + range 合理 + 与 overall_outline 覆盖对齐，不越权改剧情走向（那是 overall_outline 的职责）。
-VOLUMES_REVIEW_PROMPT = """请审核以下【分卷规划】(严格 JSON 数组)：
+# 滚动生成卷架构（与 state.Volume / volume_utils.py / nodes/volumes.py 严格对齐）：
+#   - 一次只规划**一卷**，草稿是单个 JSON 对象（不是数组），LLM 只出 4 个内容字段
+#     title / summary / setup_for_next / chapters（本卷章数）
+#   - index / chapter_start / planned_end / status 由 save_volumes 权威赋值，审核不管绝对章号
+#   - chapters 松护栏 [15,50]（LLM 夹、人可破），审核关注内容质量而非章号拼接
+# 审核关注：结构合法 + 本卷是「完整小故事」+ 与 overall_outline 对齐 + 承接上一卷，不越权改剧情走向。
+VOLUMES_REVIEW_PROMPT = """请审核以下【分卷规划】(单卷，严格 JSON 对象)：
 
 {draft}
 
 审核要点：
-1. 【结构合法】是否为合法 JSON 数组、无 markdown 围栏、无前置解释？每条对象是否严格包含且仅包含 7 个字段 `index / title / summary / setup_for_next / chapter_start / target_min / target_max`？字段类型是否正确(index/chapter_start/target_min/target_max=int，其余=str)？
-2. 【index 顺次】是否 1-based 严格顺次(1,2,3,...)、无跳号无重复？
-3. 【章号拼接】是否满足 `chapter_start[i+1] = chapter_start[i] + target_max[i]`？第一卷 chapter_start 是否等于 1？
-4. 【range 合理】每卷 `target_min > 0` 且 `target_max >= target_min`？target_min / target_max 差值是否合理(通常 3-10 章弹性区间，避免相等=硬边界或差 >20 章=过宽失去规划意义)？
-5. 【与整体大纲对齐】各卷 title / summary / setup_for_next 是否与 overall_outline 中对应阶段(起承转合)骨架一致，无遗漏、无凭空增卷、无删卷？总章数(∑ target_max) 是否与整体章数预期同数量级？
-6. 【卷尾 setup】除最后一卷外，`setup_for_next` 是否明确说明为下一卷埋的钩子/悬念/角色转折，而非泛泛"承接下一卷"套话？最后一卷 setup_for_next 是否留空或说明"本作终卷,无下一卷"？
-7. 【summary 质量】每卷 `summary` 是否点出本卷主线目标 + 情绪基调，避免"讲述主角冒险"这类无信息量套话？
+1. 【结构合法】是否为合法 JSON 对象（以 {{ 开头）、无 markdown 围栏、无前置解释？是否严格包含且仅包含 4 个字段 `title / summary / setup_for_next / chapters`（不应出现 index/chapter_start/planned_end 等，那些由系统权威赋值）？字段类型是否正确(chapters=正整数，其余=str)？
+2. 【卷是完整小故事】本卷是否具备清晰的起（引入）→承（展开）→转（高潮/关键转折）→合（收束+埋下一卷钩）？`summary` 是否点出本卷主线目标 + 情绪基调 + 收尾状态，而非"讲述主角冒险"这类无信息量套话？
+3. 【章数合理】`chapters` 是否与本卷承载的内容量匹配？松区间建议 15-50 章：明显过短（讲不完一个完整小故事）或明显过长（一卷塞进两三个阶段、注水）应指出；落在合理区间即视为通过（人工可突破，不必强求）。
+4. 【与整体大纲对齐】title / summary / setup_for_next 是否落在 overall_outline 的对应阶段方向上，无偏离世界观/势力/人设、无提前引爆后期核心悬念？
+5. 【承接上文（仅滚动卷）】若系统提示中给了「上一卷卷尾钩 / 已写进度」，本卷是否自然承接该钩、推进下一阶段、不重复已写内容、不倒退？
+6. 【卷尾 setup】`setup_for_next` 是否明确写出为下一卷埋的具体钩子/悬念/角色转折，而非泛泛"承接下一卷"套话？若为全书收官卷，是否说明"本作终卷"？
 
 如内容合格，只输出：无问题
 否则逐条指出问题并给出具体修改建议。"""

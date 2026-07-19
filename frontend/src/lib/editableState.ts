@@ -309,26 +309,27 @@ export function entityCardsJsonEqual(a: string, b: string): boolean {
 
 // ── 分卷规划（volumes，结构化 JSON 源码编辑）──────────────────────────────────
 //
-// volumes 是 list[Volume]（≤5 卷小规模数据），字段固定 9 个 + 弹性 range 硬约束
-// （chapter_start 顺次拼接、target_min<=target_max、actual_end 可 null）。因数据量小、
-// 校验规则明确，同样走「JSON 源码 + 解析校验」路径，与 entity_cards 同构。校验严格对齐
-// 后端 save_volumes（src/novel_workflow/nodes/volumes.py）——任一不合格禁止保存，避免脏
-// 数据经 update_state 覆盖后在 volume_boundary_gate / volume_position_card 处炸。
+// volumes 是 list[Volume]（滚动生成卷架构），字段固定 + 章号硬约束（chapter_start 顺次拼接
+// = 上一卷 planned_end + 1、planned_end >= chapter_start、actual_end 可 null）。因数据量小、
+// 校验规则明确，走「JSON 源码 + 解析校验」路径，与 entity_cards 同构。校验对齐后端 Volume——
+// 任一不合格禁止保存，避免脏数据经 update_state 覆盖后在 volume_position_card 处炸。
 //
-// 允许字段：index/title/summary/setup_for_next/chapter_start/target_min/target_max/actual_end/status
-// 手改安全性：volumes 覆盖语义（无 reducer），除非命中 VOLUME_BOUNDARY_GATE 分支才被程序覆盖。
+// 允许字段：index/title/summary/setup_for_next/chapter_start/planned_end/actual_end/status
+// （target_min/target_max 过渡期仍接受但不强校验，Step 5 删）。
+// 手改安全性：volumes 覆盖语义（无 reducer），除非滚动生成卷分支才被程序覆盖。
 
 const VOLUME_STATUS_VALUES = ["planning", "in_progress", "closed"] as const;
 const VOLUME_STRING_FIELDS = ["title", "summary", "setup_for_next"] as const;
-const VOLUME_INT_FIELDS = ["index", "chapter_start", "target_min", "target_max"] as const;
+const VOLUME_INT_FIELDS = ["index", "chapter_start", "planned_end"] as const;
 const VOLUME_ALLOWED_KEYS = new Set<string>([
   "index",
   "title",
   "summary",
   "setup_for_next",
   "chapter_start",
-  "target_min",
-  "target_max",
+  "planned_end",
+  "target_min", // 过渡期遗留，接受但不强校验（Step 5 删）
+  "target_max", // 过渡期遗留
   "actual_end",
   "status",
 ]);
@@ -347,12 +348,12 @@ export interface VolumesParse {
 
 /**
  * 解析并校验分卷 JSON 源码。空串视为「清空 volumes」（合法，返回空数组=禁用分卷特性）。
- * 严格对齐后端 Volume dataclass + save_volumes 校验：
+ * 对齐后端 Volume（滚动生成卷架构）：
  *   - 顶层必须是数组
- *   - 每项字段严格在白名单内（额外字段直接拒绝，对齐 Volume(**item) 的 TypeError）
+ *   - 每项字段严格在白名单内（额外字段直接拒绝）
  *   - index 从 1 严格顺次
- *   - chapter_start 顺次拼接：chapter_start[i+1] = chapter_start[i] + target_max[i]
- *   - target_min/target_max > 0，target_min <= target_max
+ *   - planned_end >= chapter_start（本卷至少 1 章）
+ *   - chapter_start 顺次拼接：chapter_start[i+1] = 上一卷 planned_end + 1
  *   - status 必须是 planning/in_progress/closed
  *   - actual_end 允许 null 或正整数
  */
@@ -395,8 +396,10 @@ export function parseVolumesJson(text: string): VolumesParse {
     }
     const index = rec.index as number;
     const chapter_start = rec.chapter_start as number;
-    const target_min = rec.target_min as number;
-    const target_max = rec.target_max as number;
+    const planned_end = rec.planned_end as number;
+    // 过渡期遗留字段：接受但不强校验（滚动架构下恒为 0）
+    const target_min = typeof rec.target_min === "number" ? (rec.target_min as number) : 0;
+    const target_max = typeof rec.target_max === "number" ? (rec.target_max as number) : 0;
 
     // string 字段：必填（可空串）、必须是字符串
     for (const f of VOLUME_STRING_FIELDS) {
@@ -423,21 +426,21 @@ export function parseVolumesJson(text: string): VolumesParse {
       return { ok: false, error: `${at} status 必须是 ${VOLUME_STATUS_VALUES.join("/")} 之一` };
     }
 
-    // 拼接规则 + range 合法性
+    // 拼接规则 + 章号合法性（planned_end 权威）
     if (index !== i + 1) {
       return { ok: false, error: `${at} index=${index}，应为 ${i + 1}（1-based 严格顺次）` };
     }
     if (chapter_start !== nextExpectedStart) {
       return {
         ok: false,
-        error: `${at} chapter_start=${chapter_start}，应为 ${nextExpectedStart}（拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]）`,
+        error: `${at} chapter_start=${chapter_start}，应为 ${nextExpectedStart}（拼接规则：chapter_start[i+1] = 上一卷 planned_end + 1）`,
       };
     }
-    if (target_min <= 0 || target_max <= 0) {
-      return { ok: false, error: `${at} target_min/target_max 必须 > 0` };
-    }
-    if (target_min > target_max) {
-      return { ok: false, error: `${at} target_min=${target_min} > target_max=${target_max}` };
+    if (planned_end < chapter_start) {
+      return {
+        ok: false,
+        error: `${at} planned_end=${planned_end} 必须 ≥ chapter_start=${chapter_start}（本卷至少 1 章）`,
+      };
     }
 
     volumes.push({
@@ -446,12 +449,13 @@ export function parseVolumesJson(text: string): VolumesParse {
       summary,
       setup_for_next,
       chapter_start,
+      planned_end,
       target_min,
       target_max,
       actual_end,
       status: status as Volume["status"],
     });
-    nextExpectedStart = chapter_start + target_max;
+    nextExpectedStart = planned_end + 1;
   }
   return { ok: true, value: volumes };
 }

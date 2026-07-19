@@ -1,8 +1,8 @@
 // 分卷规划(volumes) 只读展示——「编辑当前状态」抽屉里的观测入口(与可编辑 JSON 编辑器 VolumesEditor 配套)。
 //
-// 与 ChapterPlanReadonly / EntityCardsReadonly 同款范式:关键字段横排/纵排展示,状态徽章 + range 徽章。
-// 弹性 range 语义:target_min/target_max 是**章数**,窗口 = [chapter_start, chapter_start + target_max - 1];
-// actual_end 只有 VOLUME_BOUNDARY_GATE 用户点「在此收卷」后写入,未写入时不显示。
+// 与 ChapterPlanReadonly / EntityCardsReadonly 同款范式:关键字段横排/纵排展示,状态徽章 + 章号窗口徽章。
+// 滚动生成卷语义:planned_end 是本卷末章号(绝对章号),窗口 = [chapter_start, planned_end];
+// actual_end 在滚动到下一卷时由上一卷收口写入,未写入时不显示。
 
 import type { Volume } from "../../lib/types";
 
@@ -35,7 +35,9 @@ export function VolumesReadonly({ volumes }: Props) {
   return (
     <div className="space-y-2">
       {volumes.map((v) => {
-        const winEnd = v.chapter_start + v.target_max - 1;
+        // planned_end 权威末章号（过渡期老数据回退 target_max 换算）
+        const winEnd = v.planned_end > 0 ? v.planned_end : v.chapter_start + v.target_max - 1;
+        const planLen = winEnd - v.chapter_start + 1;
         const meta = statusMeta(v.status);
         return (
           <div
@@ -51,10 +53,7 @@ export function VolumesReadonly({ volumes }: Props) {
                 {meta.label}
               </span>
               <span className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
-                第 {v.chapter_start} 章起 · 目标 {v.target_min}-{v.target_max} 章
-              </span>
-              <span className="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                窗口 [{v.chapter_start}, {winEnd}]
+                第 {v.chapter_start}-{winEnd} 章 · 共 {planLen} 章
               </span>
               {v.actual_end != null && (
                 <span className="rounded border border-green-300 bg-green-50 px-1.5 py-0.5 text-[10px] text-green-700">

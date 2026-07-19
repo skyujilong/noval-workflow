@@ -22,10 +22,20 @@ interface Props {
   state: NovelState;
 }
 
-/** 当前卷显示的「已 N/(target_min~target_max) 章」中的 N，
- * 语义：total_chapters_written 在本卷起始章之后已完成的章数。 */
+/** 当前卷显示的「已 N/共M 章」中的 N，语义：total_chapters_written 在本卷起始章之后已完成的章数。 */
 function chaptersDoneInVolume(volume: Volume, totalWritten: number): number {
   return Math.max(0, totalWritten - volume.chapter_start + 1);
+}
+
+/** 本卷规划总章数 = planned_end - chapter_start + 1（过渡期老数据回退 target_max）。 */
+function plannedLength(volume: Volume): number {
+  if (volume.planned_end > 0) return volume.planned_end - volume.chapter_start + 1;
+  return volume.target_max > 0 ? volume.target_max : 0;
+}
+
+/** 本卷末章号（绝对章号）= planned_end（过渡期老数据回退 chapter_start + target_max - 1）。 */
+function plannedEndOf(volume: Volume): number {
+  return volume.planned_end > 0 ? volume.planned_end : volume.chapter_start + volume.target_max - 1;
 }
 
 /** 已收卷的「实际卷长」= actual_end - chapter_start + 1。 */
@@ -58,13 +68,14 @@ function VolumeChip({
   const isCurrent = volume.status === "in_progress";
   const isClosed = volume.status === "closed";
 
-  // 紧凑进度文案（章号区间挪进详情弹窗）：进行中「N/min~max」；已收卷「✓ N章」；未开启「min~max」。
+  // 紧凑进度文案（章号区间挪进详情弹窗）：进行中「N/共M」；已收卷「✓ N章」；未开启「共M章」。
   const doneN = chaptersDoneInVolume(volume, totalWritten);
+  const planLen = plannedLength(volume);
   const progressLabel = isCurrent
-    ? `${doneN}/${volume.target_min}~${volume.target_max}`
+    ? `${doneN}/${planLen}`
     : isClosed
       ? `✓ ${actualLength(volume)}章`
-      : `${volume.target_min}~${volume.target_max}`;
+      : `共${planLen}章`;
 
   return (
     <button
@@ -99,7 +110,7 @@ function VolumeDetailDialog({
   onClose: () => void;
 }) {
   if (!volume) return null;
-  const winEnd = volume.chapter_start + volume.target_max - 1;
+  const winEnd = plannedEndOf(volume);
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg">
@@ -109,8 +120,7 @@ function VolumeDetailDialog({
             {volume.title ? `：${volume.title}` : ""}
           </DialogTitle>
           <DialogDescription>
-            第 {volume.chapter_start} 章起 · 目标 {volume.target_min}-{volume.target_max} 章 · 窗口 [
-            {volume.chapter_start}, {winEnd}]
+            第 {volume.chapter_start}-{winEnd} 章 · 共 {plannedLength(volume)} 章
             {volume.actual_end != null && ` · 实际收卷第 ${volume.actual_end} 章`}
           </DialogDescription>
         </DialogHeader>

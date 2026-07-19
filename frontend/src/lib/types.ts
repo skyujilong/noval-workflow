@@ -25,11 +25,11 @@ export interface ChapterPlanItem {
 
 /** 分卷条目（镜像 state.py::Volume）。横向大结构中间层——overall_outline 之下、chapter_plan 之上。
  *
- * 弹性 range 语义（与后端一致）：
- *  - chapter_start 是本卷**起始章号**（1-based，锁定）
- *  - target_min / target_max 是本卷**章数**（数量，软约束），不是绝对章号
- *  - 卷内绝对章号窗口 = [chapter_start, chapter_start + target_max - 1]
- *  - actual_end 只有在 VOLUME_BOUNDARY_GATE 用户点「在此收卷」后才写入绝对章号
+ * 滚动生成卷语义（与后端一致）：
+ *  - chapter_start 是本卷**起始章号**（1-based，由后端 save_volumes 权威锁定）
+ *  - planned_end 是本卷**末章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]，
+ *    本卷章数 = planned_end - chapter_start + 1
+ *  - actual_end：滚动到下一卷时上一卷收口写入（= planned_end）；进行中卷为 null
  *  - status: planning(未开启) | in_progress(进行中) | closed(已收卷)
  */
 export interface Volume {
@@ -38,11 +38,11 @@ export interface Volume {
   summary: string;
   setup_for_next: string;
   chapter_start: number;
-  // planned_end：本卷规划**末章号**（绝对章号，滚动生成卷架构的权威边界）。
-  // chapters：本卷章数（planned_end = chapter_start + chapters - 1）。
-  // 过渡期先补为可选，Step 2 契约切换时转必填、删 target_*。
-  planned_end?: number;
+  // planned_end：本卷规划末章号（绝对章号，滚动生成卷架构的权威边界）。
+  planned_end: number;
+  // chapters：本卷章数——仅 volumes review 草稿（单卷对象）的可编辑字段；存量卷用 planned_end 导出，无此字段。
   chapters?: number;
+  // 【过渡期遗留，Step 5 删】旧「章数软约束」，滚动架构下恒为 0，仅供 volume_boundary_gate/editableState 兼容。
   target_min: number;
   target_max: number;
   actual_end: number | null;

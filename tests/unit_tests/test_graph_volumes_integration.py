@@ -29,13 +29,15 @@ def test_graph_has_volume_nodes():
 
 
 def test_graph_wires_volumes_chain_after_overall_outline():
-    """save_overall_outline 之后的下一站是 prepare_volumes（不是 prepare_character_cards）。"""
+    """save_overall_outline 之后的下一站是 prepare_volumes；save_volumes 后二分（首次/滚动）。"""
     edges = graph.get_graph().edges
     downstream = {(e.source, e.target) for e in edges}
     assert ("save_overall_outline", "prepare_volumes") in downstream
     assert ("prepare_volumes", "review_volumes") in downstream
     assert ("review_volumes", "save_volumes") in downstream
+    # save_volumes 现为条件路由：首次→人物卡；滚动→展开新卷 chapter_plan
     assert ("save_volumes", "prepare_character_cards") in downstream
+    assert ("save_volumes", "prepare_chapter_plan") in downstream
     # 原直连边应已断
     assert ("save_overall_outline", "prepare_character_cards") not in downstream
 

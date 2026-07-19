@@ -1,24 +1,28 @@
-// volumes 专用可编辑审核表单——`review_type=volumes` 时替代 HumanReviewForm 里的只读卡片，
-// 每卷可就地编辑 title/summary/setup_for_next/target_min/target_max，chapter_start 前卷推算只读。
+// volumes 专用可编辑审核表单——`review_type=volumes` 时替代只读卡片。滚动生成卷架构下
+// 一次只规划**一卷**（开书=卷1 / 滚动=下一卷），草稿是单个 JSON 对象，只含 4 个内容字段
+// title/summary/setup_for_next/chapters（本卷章数）。index/chapter_start/planned_end/status
+// 由后端 save_volumes 权威赋值，前端不碰绝对章号。
 //
 // 数据通路：
-//   1. 从 payload.current_draft 解析 JSON → 编辑态 Volume[]
-//   2. 用户编辑；chapter_start 随前卷 target_max 变化自动重算（拼接规则：start[i+1]=start[i]+target_max[i]）
-//   3. 校验合法（严格对齐后端 save_volumes：index 顺次 / range 合法 / status 枚举）
-//   4a. 「通过」→ updateThreadState 覆写 current_draft 为编辑后的 JSON → onSubmit(approve resume)
-//   4b. 「提出修改意见」→ 走原 HumanReviewForm 语义（feedback 文本 + thinking）
+//   1. 从 payload.current_draft 解析单卷对象 → 编辑态 VolumeDraft（chapters 载入即夹到松护栏）
+//   2. 用户编辑 title/summary/setup_for_next/chapters；chapters 可突破 [15,50]（LLM 夹、人可破）
+//   3. 「通过」→ updateThreadState 覆写 current_draft 为编辑后 JSON（带 human_confirmed 标记，
+//       save_volumes 据此不再夹章数）→ onSubmit(approve resume)
+//   4. 「提出修改意见」→ 走原 HumanReviewForm 语义（feedback 文本 + thinking）
 //
-// 手改安全性：状态是 last-value-wins，无 reducer；save_volumes 会解析 current_draft 直接落库到
-// state.volumes。走 update_state 覆盖 current_draft 与直接放入 resume 不同（后者需要后端认识
-// dict 型 resume 才能取代 JSON 字符串——目前 save_volumes 是从 current_draft 解析的），
-// 与「编辑当前状态」抽屉的模式一致，见 useStateEditor.ts。
+// 手改安全性：状态 last-value-wins，无 reducer；save_volumes 从 current_draft 解析后权威落库到
+// state.volumes（覆盖语义）。走 update_state 覆写 current_draft 与「编辑当前状态」抽屉同款模式。
 
 import { useEffect, useMemo, useState } from "react";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
 import { updateThreadState } from "../../lib/langgraph";
-import type { Volume } from "../../lib/types";
 import { ThinkingSwitch } from "./ThinkingSwitch";
+
+// 章数松护栏（镜像后端 config.VOLUME_MIN/MAX_CHAPTERS 默认值 env NOVEL_VOLUME_MIN/MAX_CHAPTERS）。
+// 前端仅用于「载入时夹默认值 + 越界软警告」；后端才是真护栏（LLM 自主输出无 human_confirmed 时夹）。
+const VOLUME_MIN_CHAPTERS = 15;
+const VOLUME_MAX_CHAPTERS = 50;
 
 interface Props {
   payload: HumanReviewPayload;
@@ -27,234 +31,63 @@ interface Props {
   threadId: string;
 }
 
-/** 空卷模板——用于「新增」按钮。 */
-function emptyVolume(index: number, chapter_start: number): Volume {
-  return {
-    index,
-    title: "",
-    summary: "",
-    setup_for_next: "",
-    chapter_start,
-    target_min: 20,
-    target_max: 25,
-    actual_end: null,
-    status: index === 1 ? "in_progress" : "planning",
-  };
+/** 单卷草稿（LLM/人工编辑的 4 个内容字段）。 */
+interface VolumeDraft {
+  title: string;
+  summary: string;
+  setup_for_next: string;
+  chapters: number;
 }
 
-/** 宽松解析：允许 markdown 围栏、允许前后冗余文本、只提取首个 [...] 数组。 */
-function tryParseVolumes(raw: string): Volume[] | null {
+const clampChapters = (n: number): number =>
+  Math.min(VOLUME_MAX_CHAPTERS, Math.max(VOLUME_MIN_CHAPTERS, n));
+
+/** 宽松解析单卷对象：允许 markdown 围栏、前后冗余文本，只提取首个 {...}。chapters 载入即夹护栏。 */
+function tryParseVolumeDraft(raw: string): VolumeDraft | null {
   if (!raw || !raw.trim()) return null;
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = fenced ? fenced[1].trim() : trimmed;
-  const start = body.indexOf("[");
-  const end = body.lastIndexOf("]");
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) return null;
   try {
-    const parsed = JSON.parse(body.slice(start, end + 1));
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    // 强制补齐字段（LLM 输出可能缺 actual_end / status 等；后端 save_volumes 是严格的）
-    return parsed.map((raw: unknown, i: number): Volume => {
-      const o = (raw ?? {}) as Record<string, unknown>;
-      const status = typeof o.status === "string" ? o.status : i === 0 ? "in_progress" : "planning";
-      return {
-        index: typeof o.index === "number" ? o.index : i + 1,
-        title: typeof o.title === "string" ? o.title : "",
-        summary: typeof o.summary === "string" ? o.summary : "",
-        setup_for_next: typeof o.setup_for_next === "string" ? o.setup_for_next : "",
-        chapter_start: typeof o.chapter_start === "number" ? o.chapter_start : 1,
-        target_min: typeof o.target_min === "number" ? o.target_min : 0,
-        target_max: typeof o.target_max === "number" ? o.target_max : 0,
-        actual_end:
-          o.actual_end == null
-            ? null
-            : typeof o.actual_end === "number"
-              ? o.actual_end
-              : null,
-        status: (status === "planning" || status === "in_progress" || status === "closed"
-          ? status
-          : "planning") as Volume["status"],
-      };
-    });
+    const o = JSON.parse(body.slice(start, end + 1)) as Record<string, unknown>;
+    if (typeof o !== "object" || o === null) return null;
+    const rawChapters = typeof o.chapters === "number" ? Math.round(o.chapters) : NaN;
+    return {
+      title: typeof o.title === "string" ? o.title : "",
+      summary: typeof o.summary === "string" ? o.summary : "",
+      setup_for_next: typeof o.setup_for_next === "string" ? o.setup_for_next : "",
+      // 载入即夹到松护栏，让 rubber-stamp（不改直接通过）也落在合理区间；人工可在下方 input 再突破。
+      chapters: Number.isFinite(rawChapters) ? clampChapters(rawChapters) : VOLUME_MIN_CHAPTERS,
+    };
   } catch {
     return null;
   }
 }
 
-/** 按当前编辑值重算所有卷的 chapter_start（前卷 target_max 变化联动）。已收卷（actual_end != null）
- * 章号锁定不动。保持 index 顺次（1-based）。 */
-function recomputeChapterStart(volumes: Volume[]): Volume[] {
-  const out: Volume[] = [];
-  let nextStart = 1;
-  volumes.forEach((v, i) => {
-    const start = v.actual_end != null ? v.chapter_start : nextStart;
-    out.push({ ...v, index: i + 1, chapter_start: start });
-    nextStart = start + v.target_max;
-  });
-  return out;
-}
-
-/** 校验：与后端 save_volumes 对齐——index 顺次、chapter_start 拼接、range 合法。 */
-function validate(volumes: Volume[]): string[] {
+/** 校验（阻断「通过」）：title 非空 + chapters 正整数。越界 [15,50] 只软警告不阻断（人可破）。 */
+function validate(d: VolumeDraft | null): string[] {
+  if (!d) return ["未解析到有效的单卷 JSON（可提修改意见让 AI 重生成）"];
   const issues: string[] = [];
-  if (volumes.length === 0) {
-    issues.push("至少需要 1 卷");
-    return issues;
-  }
-  let expectedStart = 1;
-  for (let i = 0; i < volumes.length; i++) {
-    const v = volumes[i];
-    const label = `第 ${i + 1} 卷`;
-    if (!v.title.trim()) issues.push(`${label} 缺 title`);
-    if (v.target_min <= 0 || v.target_max <= 0)
-      issues.push(`${label} target_min/target_max 必须 > 0`);
-    if (v.target_min > v.target_max)
-      issues.push(`${label} target_min=${v.target_min} > target_max=${v.target_max}`);
-    if (v.actual_end == null && v.chapter_start !== expectedStart)
-      issues.push(`${label} chapter_start=${v.chapter_start}，应为 ${expectedStart}（拼接规则）`);
-    if (v.index !== i + 1) issues.push(`${label} index=${v.index}，应为 ${i + 1}`);
-    expectedStart = v.chapter_start + v.target_max;
-  }
+  if (!d.title.trim()) issues.push("缺 卷名(title)");
+  if (!Number.isInteger(d.chapters) || d.chapters <= 0) issues.push("本卷章数必须是正整数");
   return issues;
 }
 
-function StatusBadge({ status }: { status: Volume["status"] }) {
-  const map: Record<Volume["status"], { label: string; cls: string }> = {
-    planning: { label: "未开启", cls: "border-gray-200 bg-gray-50 text-gray-500" },
-    in_progress: { label: "进行中", cls: "border-blue-300 bg-blue-50 text-blue-700" },
-    closed: { label: "已收卷 ✓", cls: "border-green-300 bg-green-50 text-green-700" },
-  };
-  const meta = map[status] ?? { label: status, cls: "border-red-300 bg-red-50 text-red-700" };
-  return <span className={`rounded border px-1.5 py-0.5 text-[10px] ${meta.cls}`}>{meta.label}</span>;
-}
-
-interface VolumeEditorCardProps {
-  volume: Volume;
-  isLast: boolean;
-  disabled: boolean;
-  onChange: (patch: Partial<Volume>) => void;
-  onRemove: () => void;
-}
-
-function VolumeEditorCard({ volume, isLast, disabled, onChange, onRemove }: VolumeEditorCardProps) {
-  const winEnd = volume.chapter_start + volume.target_max - 1;
-  const locked = volume.actual_end != null; // 已收卷：不允许改章号/range/状态（保护历史）
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
-        <div className="text-sm font-semibold text-gray-800">卷 {volume.index}</div>
-        <span className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-600">
-          第 {volume.chapter_start} 章起 · 目标 {volume.target_min}-{volume.target_max} 章 · 窗口 [
-          {volume.chapter_start}, {winEnd}]
-        </span>
-        <StatusBadge status={volume.status} />
-        {locked && (
-          <span className="rounded border border-green-300 bg-green-50 px-1.5 py-0.5 text-[10px] text-green-700">
-            实际收卷第 {volume.actual_end} 章（已锁定）
-          </span>
-        )}
-        <div className="ml-auto">
-          <button
-            type="button"
-            onClick={onRemove}
-            disabled={disabled}
-            className="text-xs text-gray-400 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40"
-            title="删除本卷"
-          >
-            删除
-          </button>
-        </div>
-      </div>
-      <div className="space-y-3 px-3 py-3">
-        <div>
-          <label className="mb-0.5 block text-xs font-medium text-gray-500">卷名 (title)</label>
-          <input
-            type="text"
-            value={volume.title}
-            onChange={(e) => onChange({ title: e.target.value })}
-            disabled={disabled}
-            placeholder="第 X 卷 · XXX"
-            className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-          />
-        </div>
-        <div>
-          <label className="mb-0.5 block text-xs font-medium text-gray-500">
-            本卷主线 (summary，≤80 字)
-          </label>
-          <textarea
-            value={volume.summary}
-            onChange={(e) => onChange({ summary: e.target.value })}
-            disabled={disabled}
-            rows={2}
-            placeholder="本卷主线目标 & 情绪基调"
-            className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-          />
-        </div>
-        <div>
-          <label className="mb-0.5 block text-xs font-medium text-gray-500">
-            卷尾 setup {isLast ? "（终卷可空）" : "（≤60 字，为下一卷埋钩）"}
-          </label>
-          <textarea
-            value={volume.setup_for_next}
-            onChange={(e) => onChange({ setup_for_next: e.target.value })}
-            disabled={disabled}
-            rows={2}
-            placeholder={isLast ? "（终卷可空）" : "卷尾要为下一卷埋的钩"}
-            className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-          />
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <div>
-            <label className="mb-0.5 block text-xs font-medium text-gray-500">
-              chapter_start<span className="text-[10px] text-gray-300">（只读）</span>
-            </label>
-            <input
-              type="number"
-              value={volume.chapter_start}
-              readOnly
-              className="w-full rounded border border-gray-200 bg-gray-50 px-2 py-1 text-sm text-gray-500"
-            />
-          </div>
-          <div>
-            <label className="mb-0.5 block text-xs font-medium text-gray-500">target_min</label>
-            <input
-              type="number"
-              min={1}
-              value={volume.target_min}
-              onChange={(e) => onChange({ target_min: parseInt(e.target.value) || 0 })}
-              disabled={disabled || locked}
-              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-            />
-          </div>
-          <div>
-            <label className="mb-0.5 block text-xs font-medium text-gray-500">target_max</label>
-            <input
-              type="number"
-              min={1}
-              value={volume.target_max}
-              onChange={(e) => onChange({ target_max: parseInt(e.target.value) || 0 })}
-              disabled={disabled || locked}
-              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
-            />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Props) {
-  const draft = payload.current_draft ?? "";
   const aiFeedback = payload.review_feedback ?? "";
   const history = payload.review_history ?? [];
   const llmReviewCount = payload.llm_review_count ?? 0;
   const round = Math.floor((history.length || 0) / 2);
 
-  // 初始化：从 draft 解析 → 每卷补齐字段
-  const initialVolumes = useMemo(() => tryParseVolumes(draft) ?? [], [draft]);
+  const initialDraft = useMemo(
+    () => tryParseVolumeDraft(payload.current_draft ?? ""),
+    [payload.current_draft],
+  );
 
-  const [volumes, setVolumes] = useState<Volume[]>(initialVolumes);
+  const [draft, setDraft] = useState<VolumeDraft | null>(initialDraft);
   const [mode, setMode] = useState<"approve" | "revise">("approve");
   const [feedback, setFeedback] = useState("");
   const [thinkingOn, setThinkingOn] = useState(payload.default_thinking !== "disabled");
@@ -268,46 +101,36 @@ export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Pro
     setMode("approve");
     setFeedback("");
     setThinkingOn(payload.default_thinking !== "disabled");
-    setVolumes(tryParseVolumes(payload.current_draft ?? "") ?? []);
+    setDraft(tryParseVolumeDraft(payload.current_draft ?? ""));
   }, [payload, disabled]);
 
-  const issues = useMemo(() => validate(volumes), [volumes]);
+  const issues = useMemo(() => validate(draft), [draft]);
+  const outOfRange =
+    draft != null && (draft.chapters < VOLUME_MIN_CHAPTERS || draft.chapters > VOLUME_MAX_CHAPTERS);
 
-  // 编辑某卷字段。若改 target_max 需重算后续卷 chapter_start（拼接规则）。
-  const patchVolume = (i: number, patch: Partial<Volume>) => {
-    setVolumes((prev) => {
-      const next = prev.map((v, idx) => (idx === i ? { ...v, ...patch } : v));
-      // target_max 变化需要重算 chapter_start
-      if ("target_max" in patch) return recomputeChapterStart(next);
-      return next;
-    });
-  };
-
-  const removeVolume = (i: number) => {
-    setVolumes((prev) => recomputeChapterStart(prev.filter((_, idx) => idx !== i)));
-  };
-
-  const addVolume = () => {
-    setVolumes((prev) => {
-      const last = prev[prev.length - 1];
-      const nextStart = last ? last.chapter_start + last.target_max : 1;
-      const nextIndex = prev.length + 1;
-      return [...prev, emptyVolume(nextIndex, nextStart)];
-    });
-  };
+  const patch = (p: Partial<VolumeDraft>) => setDraft((prev) => (prev ? { ...prev, ...p } : prev));
 
   const handleSubmit = async () => {
-    if (mode === "approve" && issues.length > 0) return; // 通过前必须合规
+    if (mode === "approve" && (issues.length > 0 || !draft)) return;
     setSubmitting(true);
     setSaveError(null);
 
-    if (mode === "approve") {
-      // 覆写 current_draft 为编辑后的 JSON（保持字符串形态，后端 save_volumes 从中解析）。
-      // 用 update_state 更新，不影响 interrupt（LangGraph 会清 interrupts 两源但 next 保留，
-      // resume 仍然生效——与「编辑当前状态」抽屉同款模式）。
+    if (mode === "approve" && draft) {
+      // 覆写 current_draft 为编辑后的单卷对象 JSON（带 human_confirmed 标记：save_volumes 据此
+      // 视为人工终裁、不再夹章数）。保持字符串形态，后端从中解析。
       try {
         await updateThreadState(threadId, {
-          current_draft: JSON.stringify(volumes, null, 2),
+          current_draft: JSON.stringify(
+            {
+              title: draft.title,
+              summary: draft.summary,
+              setup_for_next: draft.setup_for_next,
+              chapters: draft.chapters,
+              human_confirmed: true,
+            },
+            null,
+            2,
+          ),
         });
       } catch (e) {
         setSubmitting(false);
@@ -320,13 +143,13 @@ export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Pro
   };
 
   const isDisabled = disabled || submitting;
-  const canApprove = mode === "approve" && issues.length === 0;
+  const canApprove = mode === "approve" && issues.length === 0 && draft != null;
   const canRevise = mode === "revise" && feedback.trim().length > 0;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-800">人工审核 · 分卷规划</h3>
+        <h3 className="text-lg font-semibold text-gray-800">人工审核 · 分卷规划（单卷）</h3>
         {round > 0 && (
           <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
             第 {round} 轮迭代（AI 自审 {llmReviewCount} 次）
@@ -347,25 +170,6 @@ export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Pro
         </div>
       )}
 
-      {/* 顶部摘要 + 校验问题 */}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-        <span className="rounded bg-gray-100 px-2 py-0.5">共 {volumes.length} 卷</span>
-        {volumes.length > 0 && (
-          <>
-            <span className="rounded border border-gray-200 bg-white px-2 py-0.5 text-gray-600">
-              总章数 {volumes.reduce((s, v) => s + v.target_max, 0)}
-            </span>
-            <span className="rounded border border-gray-200 bg-white px-2 py-0.5 text-gray-600">
-              整书窗口 [1, {volumes[volumes.length - 1].chapter_start + volumes[volumes.length - 1].target_max - 1}]
-            </span>
-          </>
-        )}
-        {issues.length > 0 && (
-          <span className="rounded border border-red-300 bg-red-50 px-2 py-0.5 text-red-700">
-            ⚠ {issues.length} 项校验问题
-          </span>
-        )}
-      </div>
       {issues.length > 0 && (
         <ul className="space-y-0.5 rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
           {issues.map((msg, i) => (
@@ -374,32 +178,76 @@ export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Pro
         </ul>
       )}
 
-      {/* 可编辑卡片列表 */}
-      <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
-        {volumes.length === 0 && (
-          <div className="rounded border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-xs text-gray-400">
-            （未解析到有效卷；可点「新增一卷」手工构造）
+      {/* 单卷编辑卡片 */}
+      {draft ? (
+        <div className="space-y-3 rounded-lg border border-gray-200 bg-white px-3 py-3 shadow-sm">
+          <div>
+            <label className="mb-0.5 block text-xs font-medium text-gray-500">卷名 (title)</label>
+            <input
+              type="text"
+              value={draft.title}
+              onChange={(e) => patch({ title: e.target.value })}
+              disabled={isDisabled}
+              placeholder="第 X 卷 · XXX"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+            />
           </div>
-        )}
-        {volumes.map((v, i) => (
-          <VolumeEditorCard
-            key={i}
-            volume={v}
-            isLast={i === volumes.length - 1}
-            disabled={isDisabled}
-            onChange={(patch) => patchVolume(i, patch)}
-            onRemove={() => removeVolume(i)}
-          />
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={addVolume}
-        disabled={isDisabled}
-        className="w-full rounded border border-dashed border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        + 新增一卷
-      </button>
+          <div>
+            <label className="mb-0.5 block text-xs font-medium text-gray-500">
+              本卷主线 (summary，≤80 字)
+            </label>
+            <textarea
+              value={draft.summary}
+              onChange={(e) => patch({ summary: e.target.value })}
+              disabled={isDisabled}
+              rows={2}
+              placeholder="本卷主线目标 + 情绪基调 + 收尾状态"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+            />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-xs font-medium text-gray-500">
+              卷尾 setup（为下一卷埋钩；终卷可空）
+            </label>
+            <textarea
+              value={draft.setup_for_next}
+              onChange={(e) => patch({ setup_for_next: e.target.value })}
+              disabled={isDisabled}
+              rows={2}
+              placeholder="卷尾要为下一卷埋的钩子/悬念/角色转折"
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+            />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-xs font-medium text-gray-500">
+              本卷章数 (chapters)
+              <span className="ml-1 text-[10px] text-gray-400">
+                松护栏 {VOLUME_MIN_CHAPTERS}-{VOLUME_MAX_CHAPTERS}，可突破
+              </span>
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={draft.chapters}
+              onChange={(e) => patch({ chapters: parseInt(e.target.value) || 0 })}
+              disabled={isDisabled}
+              className="w-32 rounded border border-gray-300 px-2 py-1 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100"
+            />
+            {outOfRange && (
+              <span className="ml-2 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                ⚠ 超出松护栏 {VOLUME_MIN_CHAPTERS}-{VOLUME_MAX_CHAPTERS}（人工突破，将予以尊重）
+              </span>
+            )}
+            <p className="mt-1 text-[10px] text-gray-400">
+              起始章号 / 末章号 / 卷号由系统按上一卷末章权威顺延，此处只定本卷章数。
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded border border-dashed border-amber-300 bg-amber-50 px-3 py-4 text-center text-xs text-amber-700">
+          未解析到有效的单卷 JSON 对象。请走「提出修改意见」让 AI 重新输出合规 JSON。
+        </div>
+      )}
 
       {/* 操作区 */}
       <div className="space-y-3 border-t pt-3">
@@ -438,7 +286,7 @@ export function VolumesReviewForm({ payload, onSubmit, disabled, threadId }: Pro
               value={feedback}
               onChange={(e) => setFeedback(e.target.value)}
               disabled={isDisabled}
-              placeholder="输入修改意见，AI 会据此重新生成分卷规划…"
+              placeholder="输入修改意见，AI 会据此重新生成本卷规划…"
               rows={4}
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed"
             />
