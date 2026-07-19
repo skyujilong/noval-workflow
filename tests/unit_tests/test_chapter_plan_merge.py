@@ -84,3 +84,24 @@ def test_plan_end_none_is_backward_compatible():
 
     assert [it.chapter for it in merged] == list(range(1, 51))
     assert len(merged) == 50
+
+
+def test_rolling_volume_expand_preserves_prior_volume_tail():
+    """滚动展开新卷:卷1 已规划 [1,30](含未写尾巴 21-30),锁定边界=30,新卷规划 [31,40]。
+    → 合并保住卷1 全部 1-30(逐字不变) + 追加新卷 31-40,不丢中间未写的 21-30。
+    """
+    # 卷1 的完整 chapter_plan(1..30),其中 21-30 尚未写但已规划
+    existing = [_item(c, purpose=f"卷1真值-{c}") for c in range(1, 31)]
+    # 新卷 chapter_plan(31..40)
+    new_items = [_item(c, purpose="卷2新规划") for c in range(31, 41)]
+
+    # lock_boundary=30(=新卷 chapter_start-1),plan_end=40(新卷 planned_end)
+    merged = merge_chapter_plan(existing, new_items, done=30, plan_end=40)
+
+    assert [it.chapter for it in merged] == list(range(1, 41))  # 1..40 无缺口
+    # 卷1 的 21-30(未写尾巴)逐字保住,没被丢
+    for it in merged:
+        if it.chapter <= 30:
+            assert it.purpose == f"卷1真值-{it.chapter}"
+        else:
+            assert it.purpose == "卷2新规划"

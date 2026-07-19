@@ -925,7 +925,10 @@ def format_chapter_plan_state_snapshot(state: "NovelState") -> str:
 def format_chapter_plan_locked_section(
     state: "NovelState", locked_entries: "list[ChapterPlanItem]"
 ) -> str:
-    """把「已锁定的历史章节规划条目」渲染为提示词段;无历史时返回空串。"""
+    """把「已锁定的历史章节规划条目」渲染为提示词段;无历史时返回空串。
+
+    章号范围按实际传入的 locked_entries 取(可能是本卷之前的一段窗口,非整段 1~已写)。
+    """
     if not locked_entries:
         return ""
     import json
@@ -936,9 +939,11 @@ def format_chapter_plan_locked_section(
         ensure_ascii=False,
         indent=2,
     )
+    first_ch = locked_entries[0].chapter
+    last_ch = locked_entries[-1].chapter
     return (
-        "\n\n【已锁定的历史章节规划条目（章号 1 ~ "
-        f"{state.total_chapters_written}，供承接参考，严禁修改或重复输出这些章号）】\n"
+        f"\n\n【已锁定的历史章节规划条目（章号 {first_ch} ~ {last_ch}，"
+        "供承接参考，严禁修改或重复输出这些章号）】\n"
         f"{locked_json}"
     )
 
@@ -1124,12 +1129,12 @@ def render_chapter_plan_prompt(
 
     genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
 
-    return f"""请为本作品规划一份 {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{budget_section}{written_section}{locked_section}{status_section}
+    return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{budget_section}{written_section}{locked_section}{status_section}
 
-# 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出 {count} 章的滚动路线图。
+# 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出**当前整卷** {count} 章的路线图。
 
 ## 本次任务范围
-只输出章号 {start_chapter} - {end_chapter}（闭区间，共 {count} 条）的新条目，**严禁**输出其他章号，**严禁**重复输出「已锁定的历史条目」中的章号。**严格停在第 {end_chapter} 章**——超出 {end_chapter} 的条目会被系统直接丢弃（本层是滚动窗口，后续章节由下一个窗口重规划），多写纯属浪费 token。
+只输出章号 {start_chapter} - {end_chapter}（闭区间，共 {count} 条）的新条目，**严禁**输出其他章号，**严禁**重复输出「已锁定的历史条目」中的章号。**严格停在第 {end_chapter} 章**——超出 {end_chapter} 的条目会被系统直接丢弃（本次规划覆盖当前整卷 [第 {start_chapter} 章, 第 {end_chapter} 章]，后续卷由下一轮滚动卷规划展开），多写纯属浪费 token。
 
 ## 输出契约（严格 JSON，无任何附加文本）
 1. 直接输出一个 JSON 数组，第一个字符是 `[`，最后一个字符是 `]`。
