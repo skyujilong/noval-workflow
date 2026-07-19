@@ -34,8 +34,13 @@ def volume_of_chapter(chapter_num: int, volumes: list["Volume"]) -> "Volume | No
         if v.actual_end is not None and v.chapter_start <= chapter_num <= v.actual_end:
             return v
 
-    # 进行中/未开启卷：找 chapter_start <= chapter_num 的最靠后卷，用 planned_end 作上限
-    candidates = [v for v in volumes if v.actual_end is None and v.chapter_start <= chapter_num]
+    # 进行中卷：找 chapter_start <= chapter_num 的最靠后卷，用 planned_end 作上限。
+    # planned_end>0 过滤掉「前瞻草稿卷」(planning，章号未锁 chapter_start=planned_end=0)——
+    # 草稿卷不参与章号映射，否则其 chapter_start=0 会恒满足下界、污染判定。
+    candidates = [
+        v for v in volumes
+        if v.actual_end is None and v.planned_end > 0 and v.chapter_start <= chapter_num
+    ]
     if not candidates:
         return None
     latest = max(candidates, key=lambda v: v.chapter_start)

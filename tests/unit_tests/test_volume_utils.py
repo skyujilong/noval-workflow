@@ -190,3 +190,29 @@ def test_volume_position_card_no_in_progress_falls_back():
     state = NovelState(volumes=vs, total_chapters_written=30)
     card = volume_position_card(state)
     assert "第 2 卷" in card  # 下一章 31 属于卷 2
+
+
+# ── 前瞻草稿卷（planning + 章号 0，未锁章号）不参与章号映射 ──────────────────────
+
+def _activated_plus_draft() -> list[Volume]:
+    """卷前瞻队列典型布局：卷1 激活 [1,30]，卷2/卷3 为草稿（chapter_start=planned_end=0）。"""
+    return [
+        Volume(index=1, title="卷1", chapter_start=1, planned_end=30, status="in_progress"),
+        Volume(index=2, title="卷2草稿", chapter_start=0, planned_end=0, status="planning"),
+        Volume(index=3, title="卷3草稿", chapter_start=0, planned_end=0, status="planning"),
+    ]
+
+
+def test_volume_of_chapter_skips_draft_lookahead_volume():
+    """草稿卷(chapter_start=planned_end=0)不参与章号映射：越过激活卷即 None（等草稿转正）。"""
+    vs = _activated_plus_draft()
+    assert volume_of_chapter(15, vs).index == 1   # 命中激活卷
+    assert volume_of_chapter(30, vs).index == 1   # 激活卷末章
+    assert volume_of_chapter(31, vs) is None      # 越过激活卷；草稿卷未锁章号、不接盘
+
+
+def test_current_volume_ignores_draft_lookahead_volume():
+    """current_volume 走 volume_of_chapter：草稿卷不抢当前卷，越界返回 None。"""
+    vs = _activated_plus_draft()
+    assert current_volume(vs, 10).index == 1   # 下一章 11 ∈ 激活卷 [1,30]
+    assert current_volume(vs, 30) is None      # 下一章 31 越过激活卷，草稿未锁章号 → None

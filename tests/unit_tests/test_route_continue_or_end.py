@@ -51,3 +51,16 @@ def test_route_arc_when_near_end_but_has_next():
     state = NovelState(continue_writing=True, volumes=vols, total_chapters_written=done)
     # 下一章仍在卷1 [1,30] 内 → cur=卷1；但卷2 已存在 → has_next → 不滚动
     assert route_continue_or_end(state) == "prepare_arc_outline"
+
+
+def test_route_prepare_volumes_ignores_draft_lookahead():
+    """前瞻草稿卷(planning，planned_end=0)不算 has_next → 触及激活卷末章仍触发滚动。"""
+    done = 30 - BATCH_SIZE  # done + BATCH == 30 == 激活卷末章
+    vols = [
+        _vol(1, 1, 30),                        # 激活卷
+        _vol(2, 0, 0, status="planning"),      # 草稿卷（未锁章号，不算已激活下一卷）
+        _vol(3, 0, 0, status="planning"),
+    ]
+    state = NovelState(continue_writing=True, volumes=vols, total_chapters_written=done)
+    # cur=卷1；草稿卷 planned_end=0 不满足 has_next 限定 → 无已激活下一卷 → 滚动
+    assert route_continue_or_end(state) == "prepare_volumes"

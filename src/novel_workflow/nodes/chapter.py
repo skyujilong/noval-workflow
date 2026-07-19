@@ -263,7 +263,9 @@ def route_continue_or_end(state: NovelState) -> str:
     if cur is None:
         return "prepare_arc_outline"
 
-    has_next = any(v.index > cur.index for v in state.volumes)
+    # 只看「已激活的下一卷」(planned_end>0)——前瞻草稿卷(planning，planned_end=0)index 虽更大，
+    # 但未真正排产，不能算 has_next，否则草稿卷会让 has_next 恒真、滚动永不触发。
+    has_next = any(v.planned_end > 0 and v.index > cur.index for v in state.volumes)
     vol_end = cur.actual_end if cur.actual_end is not None else cur.planned_end
     if (not has_next) and vol_end > 0 and (done + BATCH_SIZE >= vol_end):
         return "prepare_volumes"

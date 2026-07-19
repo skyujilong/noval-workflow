@@ -95,15 +95,17 @@ def merge_chapter_plan(
 def _plan_range(state: NovelState) -> tuple[int, int]:
     """本次 chapter_plan 要规划的章号范围 [start, end]——以「卷」为单元。
 
-    规划对象 = 当前(最大 index)卷:开书首卷,或滚动刚生成的新卷。
+    规划对象 = 已激活卷(planned_end>0)里最大 index 的那卷:开书首卷,或滚动刚转正的新激活卷。
       start = max(卷 chapter_start, 已写 + 1)  —— 卷内已写部分锁定,只规划未写段的卷范围
       end   = 卷 planned_end                    —— 规划到卷末(而非旧的固定 WINDOW 窗口)
-    无 volumes / planned_end 异常 → 回退 [已写+1, 已写+1],不返回非法区间(end < start)。
+    必须过滤掉前瞻草稿卷(planning，planned_end=0):它们 index 更大但未锁章号,不是本次规划对象,
+    误取会规划到空区间 [start, 0]。无激活卷 / planned_end 异常 → 回退 [已写+1, 已写+1],不返回非法区间。
     """
     done = state.total_chapters_written
-    if not state.volumes:
+    activated = [v for v in state.volumes if v.planned_end > 0]
+    if not activated:
         return done + 1, done + 1
-    cur = max(state.volumes, key=lambda v: v.index)
+    cur = max(activated, key=lambda v: v.index)
     start = max(cur.chapter_start, done + 1)
     end = max(cur.planned_end, start)  # planned_end 异常(< start)时兜底为单章,避免非法区间
     return start, end

@@ -61,6 +61,14 @@ if VOLUME_MIN_CHAPTERS > VOLUME_MAX_CHAPTERS:
     VOLUME_MIN_CHAPTERS, VOLUME_MAX_CHAPTERS = VOLUME_MAX_CHAPTERS, VOLUME_MIN_CHAPTERS
 
 
+# ── 卷前瞻队列深度 ────────────────────────────────────────────────────────────
+#
+# 每次规划「1 个激活卷（要立即展开）+ N 个前瞻草稿卷」，N = 本值。草稿卷只出方向骨架
+# （title/summary/setup_for_next）、不锁章号（chapter_start=planned_end=0, status=planning），
+# 给当前卷规划提供中期地图；轮到时才由 save_volumes 权威锁章号转正激活。默认 2（一次输出 3 卷）。
+VOLUME_LOOKAHEAD: int = _read_positive_int("NOVEL_VOLUME_LOOKAHEAD", 2)
+
+
 # ── 章末精简(伏笔台账 + 实体卡库)节流步长 ─────────────────────────────────────
 #
 # 精简 = LLM 分析整库 + 人工/自动勾选删库。默认每章都触发,代价高(每章一次 LLM 调用

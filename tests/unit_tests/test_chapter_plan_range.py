@@ -57,3 +57,30 @@ def test_plan_range_planned_end_abnormal_falls_back_to_single_chapter():
         volumes=[Volume(index=1, title="卷1", chapter_start=1, planned_end=0, status="in_progress")],
     )
     assert _plan_range(state) == (1, 1)
+
+
+def test_plan_range_skips_draft_lookahead_on_open():
+    """开书首卷 + 前瞻草稿卷：规划激活卷 [1,30]，不误取 index 更大的草稿卷(planned_end=0)。"""
+    state = NovelState(
+        total_chapters_written=0,
+        volumes=[
+            Volume(index=1, title="卷1", chapter_start=1, planned_end=30, status="in_progress"),
+            Volume(index=2, title="卷2草稿", chapter_start=0, planned_end=0, status="planning"),
+            Volume(index=3, title="卷3草稿", chapter_start=0, planned_end=0, status="planning"),
+        ],
+    )
+    assert _plan_range(state) == (1, 30)
+
+
+def test_plan_range_skips_draft_lookahead_on_roll():
+    """滚动后：卷1 收口、卷2 激活 [31,60]、卷3/4 草稿。规划激活卷2，不误取草稿卷。"""
+    state = NovelState(
+        total_chapters_written=25,
+        volumes=[
+            Volume(index=1, title="卷1", chapter_start=1, planned_end=30, actual_end=30, status="closed"),
+            Volume(index=2, title="卷2", chapter_start=31, planned_end=60, status="in_progress"),
+            Volume(index=3, title="卷3草稿", chapter_start=0, planned_end=0, status="planning"),
+            Volume(index=4, title="卷4草稿", chapter_start=0, planned_end=0, status="planning"),
+        ],
+    )
+    assert _plan_range(state) == (31, 60)
