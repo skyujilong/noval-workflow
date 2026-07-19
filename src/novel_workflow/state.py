@@ -27,7 +27,7 @@ class ChapterPlanItem:
 
 @dataclass
 class Volume:
-    """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上（滚动生成卷架构）。
+    """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上（滚动生成卷 + 前瞻队列）。
 
     章号语义（关键，一律由 save_volumes 权威赋值，不信 LLM 的绝对章号）：
       - chapter_start 是本卷**起始章号**（1-based，权威锁定 = 上一卷 planned_end + 1）
@@ -39,8 +39,10 @@ class Volume:
       - 已收卷（actual_end != None）：chapter ∈ [chapter_start, actual_end]
       - 进行中卷（actual_end == None）：chapter ∈ [chapter_start, planned_end]
 
-    序列化/容错：LangGraph checkpoint 序列化时 dataclass 自动转 dict；save_volumes 从 LLM 单卷
-    对象取内容字段、其余权威赋值；nodes 层用 _coerce_volume 归一（过滤未知键，兼容老快照）。
+    前瞻队列：status=planning 且 chapter_start=planned_end=0 的卷是「前瞻草稿卷」（只有方向骨架
+    title/summary/setup_for_next，未锁章号），轮到激活时 save_volumes 才权威锁章号转正；判「已激活」用 planned_end>0。
+    序列化/容错：LangGraph checkpoint 序列化时 dataclass 自动转 dict；save_volumes 从 LLM 多卷草稿
+    取内容字段、其余权威赋值；nodes 层用 _coerce_volume 归一（过滤未知键，兼容老快照）。
     """
     index: int                     # 第几卷（1-based）
     title: str                     # 卷名，如「第一卷 · 少年入宗」
@@ -49,7 +51,7 @@ class Volume:
     chapter_start: int = 1         # 起始**章号**（1-based，权威锁定）
     planned_end: int = 0           # 末**章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]
     actual_end: int | None = None  # 实际收卷**章号**（= planned_end），None = 仍在进行中
-    status: str = "planning"       # planning | in_progress | closed
+    status: str = "planning"       # planning(前瞻草稿·未锁章号) | in_progress | closed
 
 
 class EntityType(str, Enum):
