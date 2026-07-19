@@ -1,9 +1,9 @@
-"""图装配 + prompt 注入集成测试。
+"""图装配 + prompt 注入集成测试（滚动生成卷架构）。
 
 验证：
-1. Step 06 装配后新增节点 (prepare_volumes/review_volumes/save_volumes/volume_boundary_gate) 在图上
-2. save_overall_outline → prepare_volumes → review → save → prepare_character_cards 链路
-3. save_config / ask_continue 分支路由到 volume_boundary_gate → prepare_chapter_plan
+1. 分卷节点 (prepare_volumes/review_volumes/save_volumes) 在图上；闸门 volume_boundary_gate 已删
+2. save_overall_outline → prepare_volumes → review → save 链路 + save_volumes 后二分（首次/滚动）
+3. save_config 直连 prepare_chapter_plan（首卷展开）；ask_continue 可路由到 prepare_volumes（滚动新卷）
 4. 三处 prompt (chapter_plan / arc_outline / chapter) 在 volumes 非空时含【当前卷位置】，
    volumes 为空时不含（向后兼容）。
 """
@@ -20,12 +20,12 @@ from noval_workflow.state import NovelState, Volume
 
 
 def test_graph_has_volume_nodes():
-    """新增 4 个节点必须挂进图。"""
+    """分卷 3 个节点必须挂进图；闸门 volume_boundary_gate 已删。"""
     nodes = set(graph.get_graph().nodes)
     assert "prepare_volumes" in nodes
     assert "review_volumes" in nodes
     assert "save_volumes" in nodes
-    assert "volume_boundary_gate" in nodes
+    assert "volume_boundary_gate" not in nodes
 
 
 def test_graph_wires_volumes_chain_after_overall_outline():
@@ -42,11 +42,21 @@ def test_graph_wires_volumes_chain_after_overall_outline():
     assert ("save_overall_outline", "prepare_character_cards") not in downstream
 
 
-def test_graph_gate_before_chapter_plan():
-    """volume_boundary_gate → prepare_chapter_plan（透传边）。"""
+def test_graph_save_config_direct_to_chapter_plan():
+    """save_config 直连 prepare_chapter_plan（首卷展开），不再经闸门。"""
     edges = graph.get_graph().edges
     downstream = {(e.source, e.target) for e in edges}
-    assert ("volume_boundary_gate", "prepare_chapter_plan") in downstream
+    assert ("save_config", "prepare_chapter_plan") in downstream
+
+
+def test_graph_ask_continue_routes_to_prepare_volumes():
+    """ask_continue 三分路由含 prepare_volumes（滚动新卷）与 prepare_arc_outline（直接下一批）。"""
+    edges = graph.get_graph().edges
+    downstream = {(e.source, e.target) for e in edges}
+    assert ("ask_continue", "prepare_volumes") in downstream
+    assert ("ask_continue", "prepare_arc_outline") in downstream
+    # 闸门去除后不再有 ask_continue → volume_boundary_gate
+    assert ("ask_continue", "volume_boundary_gate") not in downstream
 
 
 # ── prompt 注入 ─────────────────────────────────────────────────────────────

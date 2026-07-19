@@ -27,7 +27,6 @@ from noval_workflow.nodes.volumes import (
     route_after_save_volumes,
     save_volumes,
 )
-from noval_workflow.nodes.volume_gate import volume_boundary_gate
 from noval_workflow.nodes.foundation import (
     prepare_character_cards,
     prepare_core_conflicts,
@@ -125,9 +124,6 @@ builder.add_node("save_config", save_config)
 builder.add_node("prepare_volumes", prepare_volumes)
 builder.add_node("review_volumes", review_subgraph)
 builder.add_node("save_volumes", save_volumes)
-
-# Phase 2.5 — 分卷边界闸门（chapter_plan 前：检查前瞻窗口是否穿越卷 target 边界）
-builder.add_node("volume_boundary_gate", volume_boundary_gate)
 
 # Phase 1 → 冻结前的设定一致性总审闸门（脑爆链与常规链在此汇合后统一覆盖）
 builder.add_node("audit_consistency", audit_consistency)
@@ -288,27 +284,8 @@ builder.add_conditional_edges(
 )
 
 
-def _route_after_save_config(_state) -> str:
-    """save_config 冻结设定后:ENABLED=True 走 volume_boundary_gate → chapter_plan 首次生成,否则直接进 arc_outline(旧行为)。
-
-    分卷闸门 volume_boundary_gate 会在无 volumes / 未穿越时透传（return {}），有穿越时
-    interrupt 让用户三选一决策，然后再进 prepare_chapter_plan。
-    """
-    from noval_workflow.config import CHAPTER_PLAN_ENABLED
-    return "volume_boundary_gate" if CHAPTER_PLAN_ENABLED else "prepare_arc_outline"
-
-
-builder.add_conditional_edges(
-    "save_config",
-    _route_after_save_config,
-    {
-        "volume_boundary_gate": "volume_boundary_gate",
-        "prepare_arc_outline": "prepare_arc_outline",
-    },
-)
-
-# Phase 2.5 — 分卷边界闸门 → 章节规划：gate 透传或用户决策后必进 prepare_chapter_plan
-builder.add_edge("volume_boundary_gate", "prepare_chapter_plan")
+# save_config 冻结设定后 → 首卷 chapter_plan 展开（滚动生成卷架构:开书已生成卷 1,直接展开）
+builder.add_edge("save_config", "prepare_chapter_plan")
 
 # Phase 2.5 — chapter plan chain(首次进入 → 生成 → 审核 → 落库 → arc_outline)
 builder.add_edge("prepare_chapter_plan", "review_chapter_plan")
@@ -347,7 +324,8 @@ builder.add_conditional_edges(
     route_continue_or_end,
     {
         "prepare_arc_outline": "prepare_arc_outline",
-        "volume_boundary_gate": "volume_boundary_gate",
+        # 触及当前卷末章且无下一卷 → 先滚动规划下一卷(→ save_volumes →展开新卷 chapter_plan)
+        "prepare_volumes": "prepare_volumes",
         END: END,
     },
 )

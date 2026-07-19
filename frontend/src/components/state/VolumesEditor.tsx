@@ -5,7 +5,7 @@
 // 非法时父层(useStateEditor.volumesError) 禁止保存。解析成功即用 VolumesReadonly 预览
 // 「保存后长什么样」,让用户直观确认落地形态。
 //
-// 手改安全性:volumes 覆盖语义(无 reducer),除非命中 VOLUME_BOUNDARY_GATE 分支才被程序更新;
+// 手改安全性:volumes 覆盖语义(无 reducer),除非滚动生成卷(save_volumes)才被程序更新;
 // 普通节点执行不触碰,故手改安全。
 
 import { Textarea } from "@/components/ui/textarea";

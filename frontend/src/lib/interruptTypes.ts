@@ -61,8 +61,6 @@ export const InterruptType = {
   // 通用审核（基础设定类、标题、弧线大纲等共用 review_generic；章节正文 review_chapter）
   REVIEW_GENERIC: "review_generic",
   REVIEW_CHAPTER: "review_chapter",
-  // 分卷边界闸门（Volume boundary gate；chapter_plan 前瞻窗口穿越卷 target 边界时触发）
-  VOLUME_BOUNDARY_GATE: "volume_boundary_gate",
   // 其他
   ASK_CONTINUE: "ask_continue",
   CONSISTENCY_GATE: "consistency_gate", // 设定一致性总审闸门（save_config 冻结前，跨设定终审）
@@ -356,7 +354,6 @@ export type FormKind =
   | "entity_cards_prune_confirm"
   | "consistency_gate"
   | "consistency_diff"
-  | "volume_boundary_gate"
   | "unknown";
 
 /**
@@ -420,8 +417,6 @@ const TYPE_TO_FORM: Record<InterruptTypeValue, FormKind> = {
   [InterruptType.ENTITY_SELECT_CONFIRM]: "entity_select_confirm", // 入库筛选专用勾选表单
   [InterruptType.ENTITY_CARDS_PRUNE_ASK]: "entry_gate", // 复用 entry_gate 形式（是/否）
   [InterruptType.ENTITY_CARDS_PRUNE_CONFIRM]: "entity_cards_prune_confirm", // 卡库精简专用勾选表单
-  // 分卷边界闸门：专用 3 选 1 表单（继续本卷 / 收卷 / 延长 target_max）
-  [InterruptType.VOLUME_BOUNDARY_GATE]: "volume_boundary_gate",
 };
 
 /**
@@ -651,78 +646,4 @@ export function buildFinalizeConfirmUse(): BrainstormFinalizeConfirmUse {
  * 为了类型明确保留独立 builder。 */
 export function buildFinalizeConfirmBackToChat(): BrainstormFinalizeConfirmBackToChat {
   return { action: "back_to_chat" };
-}
-
-// ── 分卷边界闸门 payload + resume 值（与后端 nodes/volume_gate.py 对齐）─────────
-
-/** 单条穿越点：本次 chapter_plan 窗口穿到了某卷的 target_min 或 target_max。 */
-export interface VolumeBoundaryCrossing {
-  volume_index: number;
-  kind: "target_min" | "target_max";
-  chapter: number;
-}
-
-/** 卷条目 dict 快照（interrupt payload 用；结构与 Volume interface 一致，但由后端 dataclass → dict 转换）。 */
-export interface VolumeDictSnapshot {
-  index: number;
-  title: string;
-  summary: string;
-  setup_for_next: string;
-  chapter_start: number;
-  target_min: number;
-  target_max: number;
-  actual_end: number | null;
-  status: string;
-}
-
-/** 三选一选项，后端在 volume_gate.py 里构造。 */
-export interface VolumeBoundaryOption {
-  action: "continue_current" | "close_at" | "extend_target_max";
-  label: string;
-  suggested_chapter?: number;
-  suggested_target_max?: number;
-}
-
-/**
- * VOLUME_BOUNDARY_GATE payload。字段与 nodes/volume_gate.py::volume_boundary_gate 构造的 dict 完全一致。
- * window / crossings / current_volume / next_volumes / options 用于渲染表单展示与默认值。
- */
-export interface VolumeBoundaryGatePayload {
-  type: InterruptTypeValue;
-  window: [number, number];
-  crossings: VolumeBoundaryCrossing[];
-  current_volume: VolumeDictSnapshot;
-  next_volumes: VolumeDictSnapshot[];
-  message: string;
-  options: VolumeBoundaryOption[];
-}
-
-/** 分卷闸门三分支的结构化 resume 值。 */
-export interface VolumeGateContinueCurrent {
-  action: "continue_current";
-}
-export interface VolumeGateCloseAt {
-  action: "close_at";
-  chapter: number;
-}
-export interface VolumeGateExtendTargetMax {
-  action: "extend_target_max";
-  target_max: number;
-}
-export type VolumeGateResume =
-  | VolumeGateContinueCurrent
-  | VolumeGateCloseAt
-  | VolumeGateExtendTargetMax;
-
-/** 「继续本卷」resume 值（无附加字段）。 */
-export function buildVolumeContinueResume(): VolumeGateContinueCurrent {
-  return { action: "continue_current" };
-}
-/** 「在第 X 章收卷」resume 值。 */
-export function buildVolumeCloseAtResume(chapter: number): VolumeGateCloseAt {
-  return { action: "close_at", chapter };
-}
-/** 「延长本卷 target_max 到 N」resume 值。 */
-export function buildVolumeExtendResume(target_max: number): VolumeGateExtendTargetMax {
-  return { action: "extend_target_max", target_max };
 }

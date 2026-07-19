@@ -249,7 +249,7 @@ export function StateEditPanel({ open, threadId, state, disabled, onClose, onSav
 
           {/* 分卷规划(volumes)——横向大结构中间层,位于 overall_outline 之下、chapter_plan 之上。
               JSON 源码可编辑,与 entity_cards 同款范式:解析成功即预览「保存后长什么样」。
-              手改安全:volumes 覆盖语义、除非 VOLUME_BOUNDARY_GATE 命中程序才更新,普通节点不触碰。 */}
+              手改安全:volumes 覆盖语义、除非滚动生成卷(save_volumes)才更新,普通节点不触碰。 */}
           <section className="space-y-2">
             <div className="flex items-baseline justify-between">
               <div className="flex items-center gap-2">

@@ -244,27 +244,27 @@ def route_chapter_or_continue(state: NovelState) -> str:
 
 
 def route_continue_or_end(state: NovelState) -> str:
-    """批次结束后三分:END(用户停) / volume_boundary_gate(需滚动重规划先过分卷闸门) / prepare_arc_outline(直接下一批)。
+    """批次结束后三分:END(用户停) / prepare_volumes(先滚动规划下一卷) / prepare_arc_outline(直接下一批)。
 
-    滚动重规划触发条件(任一即触发):
-    1. `chapter_plan` 为空——首次进入或老工程懒生成兜底。
-    2. 已写完章数 - 上次触发时进度 >= CHAPTER_PLAN_STRIDE——步长滚动。
-
-    ENABLED=False 时直接跳过 chapter_plan 路径,链路等价旧行为。
-
-    需触发 chapter_plan 时先经 volume_boundary_gate：若 state.volumes 非空且本次前瞻窗口
-    穿越某卷 target 边界，gate 会 interrupt 让用户确认（继续本卷 / 收卷 / 延长）；无 volumes
-    或未穿越时 gate 直接透传，无副作用。
+    滚动生成卷触发:当前卷之后尚无下一卷、且下一批末章(done + BATCH_SIZE)将触及/越过当前卷
+    末章(planned_end,已收卷用 actual_end)时,先滚动规划下一卷(prepare_volumes → save_volumes
+    →展开新卷 chapter_plan),让卷与卷衔接自然、下一卷 chapter_plan 在写该批前就就位。
+      - has_next 守卫:下一卷已生成后,接近当前卷末章的后续批不再重复触发。
+      - `>=`(非 `>`):保证越卷前一批就完成滚动,下一卷 chapter_plan 提前就绪。
+      - 冷启动兜底:current_volume 为 None(无 volumes / 章号越界)→ 直接下一批。
     """
-    from noval_workflow.config import CHAPTER_PLAN_ENABLED, CHAPTER_PLAN_STRIDE
+    from noval_workflow.volume_utils import current_volume
 
     if not state.continue_writing:
         return END
-    if not CHAPTER_PLAN_ENABLED:
-        return "prepare_arc_outline"
 
     done = state.total_chapters_written
-    since_last = done - state.chapter_plan_last_regen_at
-    if not state.chapter_plan or since_last >= CHAPTER_PLAN_STRIDE:
-        return "volume_boundary_gate"
+    cur = current_volume(state.volumes, done)
+    if cur is None:
+        return "prepare_arc_outline"
+
+    has_next = any(v.index > cur.index for v in state.volumes)
+    vol_end = cur.actual_end if cur.actual_end is not None else cur.planned_end
+    if (not has_next) and vol_end > 0 and (done + BATCH_SIZE >= vol_end):
+        return "prepare_volumes"
     return "prepare_arc_outline"

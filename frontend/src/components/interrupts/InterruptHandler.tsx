@@ -23,7 +23,6 @@ import { EntitySelectConfirmForm } from "./EntitySelectConfirmForm";
 import { EntityCardsPruneConfirmForm } from "./EntityCardsPruneConfirmForm";
 import { HumanReviewForm } from "./HumanReviewForm";
 import { UserInputsForm } from "./UserInputsForm";
-import { VolumeBoundaryGateForm } from "./VolumeBoundaryGateForm";
 
 interface Props {
   payload: unknown;
@@ -243,16 +242,6 @@ export function InterruptHandler({ payload, onSubmit, disabled, novelState, thre
         <EntityCardsPruneConfirmForm
           key={formKey}
           payload={payload as Parameters<typeof EntityCardsPruneConfirmForm>[0]["payload"]}
-          onSubmit={onSubmit}
-          disabled={disabled}
-        />
-      );
-
-    case "volume_boundary_gate":
-      return (
-        <VolumeBoundaryGateForm
-          key={formKey}
-          payload={payload as Parameters<typeof VolumeBoundaryGateForm>[0]["payload"]}
           onSubmit={onSubmit}
           disabled={disabled}
         />

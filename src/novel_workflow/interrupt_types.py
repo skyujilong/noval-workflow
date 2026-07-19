@@ -109,13 +109,6 @@ class InterruptType(str, Enum):
     ENTITY_CARDS_PRUNE_CONFIRM = "entity_cards_prune_confirm"  # 展示全库 + 预选建议删除，人工勾选
 
     # ============================================================
-    # 分卷（Volume）相关中断
-    # ============================================================
-    # 分卷边界穿越闸门：chapter_plan 前瞻窗口若穿越某卷 target_min/target_max 时，
-    # interrupt 让用户三选一（继续本卷 / 在第 X 章收卷 / 延长 target_max）。
-    VOLUME_BOUNDARY_GATE = "volume_boundary_gate"
-
-    # ============================================================
     # 其他中断
     # ============================================================
     ASK_CONTINUE = "ask_continue"  # 是否继续写下一批

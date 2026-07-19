@@ -9,7 +9,6 @@ import {
   EXECUTE_VALUE,
   SKIP_VALUE,
   buildReviewResume,
-  buildVolumeContinueResume,
   formKindFromType,
   type HumanReviewPayload,
   type EntitySelectConfirmPayload,
@@ -171,14 +170,6 @@ export function getLazyResume(
     // 批末是否继续：自动继续（空串 ∈ 后端 _CONTINUE_SIGNALS）
     case "ask_continue":
       return { auto: true, value: "", actionLabel: "自动继续下一批" };
-
-    // 分卷边界：默认继续本卷（最不激进的一支）
-    case "volume_boundary_gate":
-      return {
-        auto: true,
-        value: buildVolumeContinueResume(),
-        actionLabel: "自动继续本卷",
-      };
 
     // 章末实体入库筛选：全部入库（发 new_cards + updates 的全部 key）
     case "entity_select_confirm": {

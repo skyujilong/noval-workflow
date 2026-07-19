@@ -42,7 +42,7 @@ export interface Volume {
   planned_end: number;
   // chapters：本卷章数——仅 volumes review 草稿（单卷对象）的可编辑字段；存量卷用 planned_end 导出，无此字段。
   chapters?: number;
-  // 【过渡期遗留，Step 5 删】旧「章数软约束」，滚动架构下恒为 0，仅供 volume_boundary_gate/editableState 兼容。
+  // 【过渡期遗留，Step 5 删】旧「章数软约束」，滚动架构下恒为 0，仅供 editableState 存量兼容。
   target_min: number;
   target_max: number;
   actual_end: number | null;
