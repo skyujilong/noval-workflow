@@ -114,6 +114,29 @@ VOLUMES_REVIEW_PROMPT = """请审核以下【分卷规划】（前瞻队列：1 
 如内容合格，只输出：无问题
 否则逐条指出问题并给出具体修改建议。"""
 
+
+# ── 卷级花名册(volume_cast)审核 ───────────────────────────────────────────────
+# 卷激活、展开 chapter_plan 之前的「本卷登场阵容」审核（与 nodes/volume_cast.py 契约对齐）：
+#   - 契约 {"introducing":[完整卡...], "returning":[{"name","role_in_volume"}...], "focus":"..."}
+#   - introducing = 本卷新登场且现有卡司没有的重要人物/关键物品，完整设定卡（落 entity_cards canon）
+#   - returning = 本卷返场的已有角色 + 各自「本卷作用/弧线」（只引用名字，不重建卡）
+#   - focus = 本卷阵容主线一句话
+# 审核关注：只建本卷新实体、不越界为后续卷/全书铺、返场弧线服务本卷主线、字段合规、命名不撞现有卡司。
+VOLUME_CAST_REVIEW_PROMPT = """请审核以下【本卷花名册】草稿（卷级登场阵容，严格 JSON 对象）：
+
+{draft}
+
+审核要点：
+1. 【结构合法】是否为合法 JSON 对象（以 {{ 开头）、无 markdown 围栏、无前置解释？是否含 `introducing`（数组）、`returning`（数组）、`focus`（字符串）三键？
+2. 【只建本卷新实体】`introducing` 里是否**只**放了【现有卡司/已建实体】里没有的实体？凡已在现有卡司的（名字或别名命中）都应进 `returning`、禁止在 `introducing` 重复建卡。
+3. 【聚焦本卷·不越界】`introducing` 是否只规划**这一卷**主线真正需要的重要人物/关键物品？有没有为后续卷/全书提前建卡、或堆砌一次性龙套/杂物凑数（那些应留给正文临场）？
+4. 【卡片字段合规】每张 introducing 完整卡是否字段规范：type 为 人物/物品/装备/势力/地点之一；人物必填单选 role（主角/主要配角/功能性反派/根源反派/感情线角色/次要角色）、能力落【力量体系】；关键物品/装备给 effect/rank/owner？命名是否避开与现有卡司冲突、避烂大街姓/生僻字？
+5. 【返场弧线服务主线】`returning` 各角色的 `role_in_volume` 是否写明其**本卷**作用/弧线（本卷做什么、与主线什么关系），而非空洞套话或与本卷主线无关？
+6. 【本卷主线】`focus` 是否点出本卷阵容的整体主线/看点，与激活卷 summary 一致、不跑偏？
+
+如内容合格，只输出：无问题
+否则逐条指出问题并给出具体修改建议。"""
+
 # 说明：原 CHARACTER_PROFILES_REVIEW_PROMPT（bible 散文人物档案审核）已删——Phase-1 改为一次
 # 直出结构化 CharacterCard，其审核由 entity_cards.CHARACTER_CARDS_REVIEW_PROMPT 承担。
 

@@ -31,6 +31,12 @@ class EntityCardsSubState(EditStepSubState):
     # 读：本章已定稿 beats（登场实体主要依据）+ 章号锚（严格核对，防跳 gate 残留串章）
     current_chapter_beats: list = field(default_factory=list)
     beats_chapter_index: int = -1
+    # 读：分卷 + 本卷花名册——entity_cards_prompt 头部注入【本卷花名册】（volume_cast_card 读
+    # volumes/volume_cast/volume_cast_index），让本章建卡依据卷级登场规划、减少临场乱造新重要角色。
+    # 只读桥接，不写回 parent。
+    volumes: list = field(default_factory=list)
+    volume_cast: dict = field(default_factory=dict)
+    volume_cast_index: int = -1
     # 读 + 写：全书实体卡库（save 端去重 merge 后写回）
     entity_cards: list = field(default_factory=list)
     # 写：本章登场实体名单 + 章号锚（供 prepare_chapter 触发式注入）

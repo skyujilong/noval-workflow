@@ -68,6 +68,7 @@ from noval_workflow.prompts.entity_cards import (
     format_equipment_for_context,
     normalize_entity_name,
     resolve_owner,
+    volume_cast_prompt,
 )
 from noval_workflow.prompts.review_shared import (
     ARC_OUTLINE_REVIEW_PROMPT,
@@ -86,6 +87,7 @@ from noval_workflow.prompts.review_shared import (
     PHASE_SUMMARY_REVIEW_PROMPT,
     POWER_SYSTEM_REVIEW_PROMPT,
     TITLES_REVIEW_PROMPT,
+    VOLUME_CAST_REVIEW_PROMPT,
     VOLUMES_REVIEW_PROMPT,
     WORLD_BUILDING_REVIEW_PROMPT,
 )
@@ -126,6 +128,7 @@ __all__ = [
     "CORE_CONFLICTS_REVIEW_PROMPT",
     "OVERALL_OUTLINE_REVIEW_PROMPT",
     "VOLUMES_REVIEW_PROMPT",
+    "VOLUME_CAST_REVIEW_PROMPT",
     "CHARACTER_CARDS_REVIEW_PROMPT",
     "TITLES_REVIEW_PROMPT",
     "CHAPTER_REVIEW_PROMPT",
@@ -157,6 +160,7 @@ __all__ = [
     "UPDATABLE_FIELDS",
     "entity_cards_prompt",
     "entity_discover_prompt",
+    "volume_cast_prompt",
     "format_cards_for_chapter_prompt",
     "format_cards_digest_for_prune",
     "format_character_profiles_from_cards",

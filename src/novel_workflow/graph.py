@@ -27,6 +27,10 @@ from noval_workflow.nodes.volumes import (
     route_after_save_volumes,
     save_volumes,
 )
+from noval_workflow.nodes.volume_cast import (
+    prepare_volume_cast,
+    save_volume_cast,
+)
 from noval_workflow.nodes.foundation import (
     prepare_character_cards,
     prepare_core_conflicts,
@@ -124,6 +128,11 @@ builder.add_node("save_config", save_config)
 builder.add_node("prepare_volumes", prepare_volumes)
 builder.add_node("review_volumes", review_subgraph)
 builder.add_node("save_volumes", save_volumes)
+
+# 卷级花名册（Volume Cast Roster）：卷激活、展开 chapter_plan 之前生成本卷登场阵容
+builder.add_node("prepare_volume_cast", prepare_volume_cast)
+builder.add_node("review_volume_cast", review_subgraph)
+builder.add_node("save_volume_cast", save_volume_cast)
 
 # Phase 1 → 冻结前的设定一致性总审闸门（脑爆链与常规链在此汇合后统一覆盖）
 builder.add_node("audit_consistency", audit_consistency)
@@ -245,9 +254,15 @@ builder.add_conditional_edges(
     route_after_save_volumes,
     {
         "prepare_character_cards": "prepare_character_cards",
-        "prepare_chapter_plan": "prepare_chapter_plan",
+        # 滚动新卷：先生成本卷花名册（登场阵容），再展开 chapter_plan
+        "prepare_volume_cast": "prepare_volume_cast",
     },
 )
+
+# 花名册三元组：prepare → review(强制人工·可编辑) → save → 展开本卷 chapter_plan
+builder.add_edge("prepare_volume_cast", "review_volume_cast")
+builder.add_edge("review_volume_cast", "save_volume_cast")
+builder.add_edge("save_volume_cast", "prepare_chapter_plan")
 
 builder.add_edge("prepare_character_cards", "review_character_cards")
 builder.add_edge("review_character_cards", "save_character_cards")
@@ -284,8 +299,10 @@ builder.add_conditional_edges(
 )
 
 
-# save_config 冻结设定后 → 首卷 chapter_plan 展开（滚动生成卷架构:开书已生成卷 1,直接展开）
-builder.add_edge("save_config", "prepare_chapter_plan")
+# save_config 冻结设定后 → 首卷花名册（登场阵容）→ 再展开首卷 chapter_plan。
+# 开书与滚动两条路径在此汇聚：滚动经 route_after_save_volumes 直达 prepare_volume_cast，
+# 开书经设定链末尾 save_config 汇入，两路都先过花名册三元组再进 chapter_plan。
+builder.add_edge("save_config", "prepare_volume_cast")
 
 # Phase 2.5 — chapter plan chain(首次进入 → 生成 → 审核 → 落库 → arc_outline)
 builder.add_edge("prepare_chapter_plan", "review_chapter_plan")

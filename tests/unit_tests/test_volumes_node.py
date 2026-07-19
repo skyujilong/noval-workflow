@@ -255,6 +255,6 @@ def test_route_after_save_volumes_first_time_goes_to_character_cards():
     assert route_after_save_volumes(NovelState(total_chapters_written=0)) == "prepare_character_cards"
 
 
-def test_route_after_save_volumes_rolling_goes_to_chapter_plan():
-    """滚动分卷（写作中，written>0）→ 展开新激活卷 prepare_chapter_plan。"""
-    assert route_after_save_volumes(NovelState(total_chapters_written=30)) == "prepare_chapter_plan"
+def test_route_after_save_volumes_rolling_goes_to_volume_cast():
+    """滚动分卷（写作中，written>0）→ 先生成本卷花名册 prepare_volume_cast（再由其接 chapter_plan）。"""
+    assert route_after_save_volumes(NovelState(total_chapters_written=30)) == "prepare_volume_cast"

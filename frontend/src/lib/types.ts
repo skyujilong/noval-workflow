@@ -205,6 +205,7 @@ export const REVIEW_TYPE_LABELS: Record<string, string> = {
   arc_outline: "弧线大纲",
   chapter_plan: "章节规划(远端锚点)",
   volumes: "分卷规划",
+  volume_cast: "本卷花名册",
   foreshadowing: "伏笔台账",
   phase_summary: "阶段固化数据",
   scene_beats: "章节 scene beats",

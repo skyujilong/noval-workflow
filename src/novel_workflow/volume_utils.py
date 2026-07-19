@@ -120,3 +120,65 @@ def volume_position_card(state: "NovelState") -> str:
         lines.append("- 后续卷前瞻：（本卷为终卷，无后续）")
 
     return "\n".join(lines)
+
+
+def volume_cast_card(state: "NovelState") -> str:
+    """生成"本卷花名册"markdown 片段，供 chapter_plan / arc_outline / 章前 entity_cards 三处注入。
+
+    空花名册、或 volume_cast_index 与当前激活卷 index 不一致（陈旧——尚未为本卷生成花名册，或残留
+    自上一卷）→ 返回 ""（向后兼容：老小说/未生成时不注入）。
+
+    只渲染动态层（本卷阵容主线 + 返场阵容及各自本卷弧线 + 本卷新登场名单）：新登场实体的完整
+    设定卡已并入 entity_cards、随 build_foundation_context 的【人物档案】段注入，故此处不重复卡片
+    正文，只给"本卷谁登场、各自本卷干什么"的卷级地图。
+
+    返回格式（示例）：
+        【本卷花名册】
+        - 本卷阵容主线：林渊挑大梁对阵血月教，夺回焚天印
+        - 本卷登场阵容（含各自本卷弧线）：
+          · 林渊：本卷从内门弟子成长为核心战力
+          · 沈清颜：本卷揭开身世、与林渊结盟
+        - 本卷新登场（完整设定见实体卡）：血月教主〔人物〕、焚天印〔物品〕
+    """
+    vc = state.volume_cast
+    if not vc:
+        return ""
+
+    cur = current_volume(state.volumes, state.total_chapters_written)
+    # 锚定校验：花名册须是「为当前激活卷」生成的，否则视为陈旧不注入（防串卷）。
+    if cur is None or state.volume_cast_index != cur.index:
+        return ""
+
+    lines = ["【本卷花名册】"]
+
+    focus = (vc.get("focus") or "").strip()
+    if focus:
+        lines.append(f"- 本卷阵容主线：{focus}")
+
+    returning = vc.get("returning") or []
+    returning_lines = []
+    for r in returning:
+        if not isinstance(r, dict):
+            continue
+        name = (r.get("name") or "").strip()
+        if not name:
+            continue
+        role = (r.get("role_in_volume") or "").strip() or "（本卷作用待定）"
+        returning_lines.append(f"  · {name}：{role}")
+    if returning_lines:
+        lines.append("- 本卷登场阵容（含各自本卷弧线）：")
+        lines.extend(returning_lines)
+
+    introducing = vc.get("introducing") or []
+    intro_names = "、".join(
+        f"{i.get('name', '')}〔{i.get('type', '')}〕"
+        for i in introducing
+        if isinstance(i, dict) and (i.get("name") or "").strip()
+    )
+    if intro_names:
+        lines.append(f"- 本卷新登场（完整设定见实体卡）：{intro_names}")
+
+    # 只有标题、无任何实质内容 → 不注入（避免空壳段）
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)

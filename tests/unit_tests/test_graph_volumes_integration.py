@@ -35,18 +35,29 @@ def test_graph_wires_volumes_chain_after_overall_outline():
     assert ("save_overall_outline", "prepare_volumes") in downstream
     assert ("prepare_volumes", "review_volumes") in downstream
     assert ("review_volumes", "save_volumes") in downstream
-    # save_volumes 现为条件路由：首次→人物卡；滚动→展开新卷 chapter_plan
+    # save_volumes 现为条件路由：首次→人物卡；滚动→先生成本卷花名册 prepare_volume_cast
     assert ("save_volumes", "prepare_character_cards") in downstream
-    assert ("save_volumes", "prepare_chapter_plan") in downstream
+    assert ("save_volumes", "prepare_volume_cast") in downstream
+    # 滚动分支不再直连 chapter_plan（改经花名册三元组）
+    assert ("save_volumes", "prepare_chapter_plan") not in downstream
     # 原直连边应已断
     assert ("save_overall_outline", "prepare_character_cards") not in downstream
 
 
-def test_graph_save_config_direct_to_chapter_plan():
-    """save_config 直连 prepare_chapter_plan（首卷展开），不再经闸门。"""
+def test_graph_wires_volume_cast_triple_before_chapter_plan():
+    """花名册三元组：save_config / 滚动新卷都先过 prepare_volume_cast → review → save → chapter_plan。"""
     edges = graph.get_graph().edges
     downstream = {(e.source, e.target) for e in edges}
-    assert ("save_config", "prepare_chapter_plan") in downstream
+    # 开书路径：设定链末尾 save_config 汇入花名册（不再直连 chapter_plan）
+    assert ("save_config", "prepare_volume_cast") in downstream
+    assert ("save_config", "prepare_chapter_plan") not in downstream
+    # 三元组内部接线 + 收口到 chapter_plan
+    assert ("prepare_volume_cast", "review_volume_cast") in downstream
+    assert ("review_volume_cast", "save_volume_cast") in downstream
+    assert ("save_volume_cast", "prepare_chapter_plan") in downstream
+    # 三个节点在图上
+    nodes = set(graph.get_graph().nodes)
+    assert {"prepare_volume_cast", "review_volume_cast", "save_volume_cast"} <= nodes
 
 
 def test_graph_ask_continue_routes_to_prepare_volumes():

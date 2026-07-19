@@ -16,6 +16,8 @@ import { SceneBeatsCards } from "./SceneBeatsCards";
 import { ChapterPlanCards } from "./ChapterPlanCards";
 import { VolumesReviewCards } from "./VolumesReviewCards";
 import { VolumesReviewForm } from "./VolumesReviewForm";
+import { VolumeCastReviewCards } from "./VolumeCastReviewCards";
+import { VolumeCastReviewForm } from "./VolumeCastReviewForm";
 import { EntityCardsReviewCards } from "./EntityCardsReviewCards";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
@@ -65,6 +67,19 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState, threa
   if (reviewType === "volumes" && threadId) {
     return (
       <VolumesReviewForm
+        payload={payload}
+        onSubmit={onSubmit}
+        disabled={disabled}
+        threadId={threadId}
+      />
+    );
+  }
+
+  // 本卷花名册（volume_cast）：结构化 JSON + 需就地编辑，delegate 到专用可编辑表单；
+  // 同样要求 threadId 才能覆写 current_draft，无 threadId 时降级为通用只读 + 打回。
+  if (reviewType === "volume_cast" && threadId) {
+    return (
+      <VolumeCastReviewForm
         payload={payload}
         onSubmit={onSubmit}
         disabled={disabled}
@@ -168,6 +183,10 @@ export function HumanReviewForm({ payload, onSubmit, disabled, novelState, threa
             // setup_for_next 分卡展示，卷标题条突出 chapter_start + target range + status。
             // 前端只读——想改仍走「提出修改意见」文本打回重跑。
             <VolumesReviewCards draft={draft} />
+          ) : reviewType === "volume_cast" ? (
+            // volume_cast（本卷花名册）是结构化 JSON（introducing/returning/focus），走专用只读
+            // 卡片视图（无 threadId 降级路径）；有 threadId 时上面已 delegate 到可编辑表单。
+            <VolumeCastReviewCards draft={draft} />
           ) : ENTITY_CARD_REVIEW_TYPES.has(reviewType) ? (
             // character_cards / entity_cards / entity_discover 草稿都是 {"new_cards":[...]} 之类的
             // JSON 对象，走结构化卡片视图（复用 EntityCardsReadonly），比散文渲染可扫得多。

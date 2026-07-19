@@ -316,6 +316,20 @@ class NovelState:
     # 覆盖语义：save_volumes 全量覆盖返回（含上一卷收口 + 新卷 append）；不使用 operator.add。
     volumes: list[Volume] = field(default_factory=list)
 
+    # ── Phase 1.5 / 滚动：卷级花名册（Volume Cast Roster）─────────────────────────
+    # 卷激活、展开 chapter_plan 之前，由 prepare/save_volume_cast 生成本卷登场阵容——
+    # 「全书实体真源 entity_cards」与「章级临场发现」之间的中间层：本卷新登场重要人物/关键物品
+    # 的**完整设定卡**已并入 entity_cards（canon，去重预注册），此字段只存「返场阵容 + 本卷弧线 +
+    # 本卷主线」的动态层，经 volume_cast_card 注入 chapter_plan/arc/章前实体环节，给长线埋线与
+    # 卷内承接提供卷级前置依据，取代「正文临场现编重要人物/道具」。
+    # 覆盖语义（非 reducer）：每次卷激活由 save_volume_cast 覆盖写入；非 review 桥接字段，
+    # 不进 reset_review_fields()。结构：
+    #   {"volume_index", "focus", "returning":[{"name","role_in_volume"}], "introducing":[{"name","type"}]}
+    volume_cast: dict = field(default_factory=dict)
+    # 花名册锚定的卷号（= 生成时激活卷 index）；volume_cast_card 用它核对当前激活卷，
+    # 防陈旧花名册串到下一卷。初始 -1 = 从未生成。
+    volume_cast_index: int = -1
+
     # ── 设定一致性总审（save_config 冻结前的跨设定闸门；transient，覆盖语义，无 reducer）──
     # 每次进入 audit_consistency / consistency_gate 都被节点主动覆盖，无残留风险；
     # 不进 reset_review_fields()（那是 review_subgraph 桥接字段清理，本闸门不走子图）。

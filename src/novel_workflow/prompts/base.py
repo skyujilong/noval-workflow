@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
-from noval_workflow.volume_utils import volume_position_card
+from noval_workflow.volume_utils import volume_cast_card, volume_position_card
 
 if TYPE_CHECKING:
     from noval_workflow.state import ChapterPlanItem, NovelState
@@ -826,6 +826,10 @@ class PromptPack:
         volume_card = volume_position_card(state)
         volume_section = f"\n\n{volume_card}" if volume_card else ""
 
+        # 【本卷花名册】——卷级登场阵容（返场弧线 + 新登场名单）；未生成/陈旧时返回 "" 不注入。
+        cast_card = volume_cast_card(state)
+        cast_section = f"\n\n{cast_card}" if cast_card else ""
+
         is_first_batch = state.total_chapters_written == 0
         continuity_rule = (
             "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
@@ -855,7 +859,7 @@ class PromptPack:
         )
         rhythm_section = rhythm_template.format(**rhythm_kwargs)
 
-        return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{volume_section}{position_section}{prev_section}{chapter_plan_section}
+        return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{volume_section}{cast_section}{position_section}{prev_section}{chapter_plan_section}
 
 # 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
@@ -1071,6 +1075,10 @@ def render_chapter_plan_prompt(
     volume_card = volume_position_card(state)
     volume_section = f"\n\n{volume_card}" if volume_card else ""
 
+    # 【本卷花名册】——卷级登场阵容，让章节规划知道本卷谁登场/各自本卷弧线；未生成/陈旧时不注入。
+    cast_card = volume_cast_card(state)
+    cast_section = f"\n\n{cast_card}" if cast_card else ""
+
     q = compute_chapter_plan_quotas(count)
     burst_max = q["burst_max"]
     burst_min = q["burst_min"]
@@ -1135,7 +1143,7 @@ def render_chapter_plan_prompt(
 
     genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
 
-    return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{written_section}{locked_section}{status_section}
+    return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{cast_section}{written_section}{locked_section}{status_section}
 
 # 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出**当前整卷** {count} 章的路线图。
 
@@ -1190,6 +1198,7 @@ def render_chapter_plan_prompt(
 1. 已登场的重要配角（暗线人物/反派/CP/队友）**每5-8章必须有一次推进或深化**，禁止长期消失后突然信息倾倒。
 2. 每5章范围内至少埋1条新伏笔或推进1条已有伏笔；**伏笔埋后15章内必须有阶段性推进**（哪怕只是再次提及），禁止无限悬空。
 3. 新出场的重要人物（首秀章）必须在 purpose 里标注「首次登场」，并在 key_turn 里给出辨识度标签（外貌/口头禅/身份标识）。
+4. 头部若提供了本卷登场花名册（返场阵容 + 新登场名单 + 本卷主线），请据此安排：返场角色在本卷的登场/推进章节要落到其「本卷弧线」上；新登场的重要角色/关键道具要选合理首秀章并提前铺垫呼应。**勿临时引入花名册之外的重要新角色**（一次性过场龙套不受限）。
 4. **登场必须事件驱动,禁止「角色介绍流水账」**：任何重要人物的首秀章,purpose 必须是一桩正在发生的具体事件 / 冲突 / 需求（该角色因这件事被卷入或主动介入),登场只是这桩事件的副产品——**禁止**把某章的 purpose 写成「介绍角色 X / 引出队友 Y」式纯登场秀；**禁止**连续多章每章只为引入一个新角色地排队登场（一次最多带出 1 位重要人物,且该章须同时推进一件已在进行的事）。
 
 ### 五、钩子反模板（禁用套路）

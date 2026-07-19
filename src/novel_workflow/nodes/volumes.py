@@ -233,5 +233,9 @@ def save_volumes(state: NovelState) -> dict:
 
 
 def route_after_save_volumes(state: NovelState) -> str:
-    """首次分卷（尚未开写，written==0）→继续设定链(人物卡)；滚动分卷（写作中）→展开新卷 chapter_plan。"""
-    return "prepare_character_cards" if state.total_chapters_written == 0 else "prepare_chapter_plan"
+    """首次分卷（尚未开写，written==0）→继续设定链(人物卡)；滚动分卷（写作中）→先生成本卷花名册。
+
+    滚动分支落到 prepare_volume_cast（而非直接 chapter_plan）：新激活卷先定登场阵容再展开章节规划。
+    开书路径的花名册在设定链末尾经 save_config → prepare_volume_cast 汇入（见 graph.py），两路统一。
+    """
+    return "prepare_character_cards" if state.total_chapters_written == 0 else "prepare_volume_cast"

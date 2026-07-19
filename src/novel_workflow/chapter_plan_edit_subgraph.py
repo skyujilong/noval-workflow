@@ -85,6 +85,10 @@ class ChapterPlanEditSubState:
     # chapter_plan_prompt 头部要注入分卷位置卡，volume_position_card 读 volumes——
     # 旧弧线子图自建 prompt 不需要它，改走 chapter_plan_prompt 后必须镜像。
     volumes: list = field(default_factory=list)
+    # chapter_plan_prompt 头部还注入【本卷花名册】，volume_cast_card 读这两个字段——同样必须镜像
+    # （否则 mid-batch 编辑重跑 chapter_plan 时 AttributeError）。只读注入，不写回 parent。
+    volume_cast: dict = field(default_factory=dict)
+    volume_cast_index: int = -1
     # chapter_plan 镜像（读入 + 合并后写回 parent）
     chapter_plan: list = field(default_factory=list)
     chapter_plan_planned_upto: int = 0

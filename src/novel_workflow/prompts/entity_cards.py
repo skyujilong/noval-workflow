@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from noval_workflow.prompts.base import _extract_arc_chapter_block
 from noval_workflow.prompts.scene_beats import format_beats_for_chapter_prompt
 from noval_workflow.state import EntityType
+from noval_workflow.volume_utils import volume_cast_card
 
 if TYPE_CHECKING:
     from noval_workflow.state import EntityCard, NovelState
@@ -107,7 +108,7 @@ _ENTITY_CARDS_TEMPLATE = """请识别本章**登场实体**（人物/物品/装�
 
 【已有实体清单（这些是已建过卡 / 已在人物档案里的，禁止重复建卡）】
 {existing_roster}
-
+{volume_cast_section}
 ---
 
 ## 任务
@@ -250,6 +251,14 @@ def entity_cards_prompt(state: "NovelState") -> str:
 
     existing_roster = _format_existing_roster(state.entity_cards)
 
+    # 【本卷花名册】卷级登场规划：告诉本章建卡环节「本卷计划让谁登场」，让登场判定依据卷级规划、
+    # 减少临场乱造新人；未生成/陈旧时 volume_cast_card 返回 "" → 不注入（向后兼容）。
+    cast_card = volume_cast_card(state)
+    volume_cast_section = (
+        f"\n【本卷花名册（卷级登场规划，供判断本章该让谁登场、勿临场乱造新重要角色）】\n{cast_card}\n"
+        if cast_card else ""
+    )
+
     # 首版不接自进化桶（entity_cards 未登记 evolved 桶，硬接会回退到 chapter 桶污染本 prompt）。
     return ENTITY_CARDS_PROMPT.format(
         chapter_num=chapter_num,
@@ -258,6 +267,92 @@ def entity_cards_prompt(state: "NovelState") -> str:
         arc_section=arc_section,
         beats_section=beats_section,
         existing_roster=existing_roster,
+        volume_cast_section=volume_cast_section,
+    )
+
+
+# ── 卷级花名册（volume_cast）生成提示词 ───────────────────────────────────────
+#
+# 卷激活、展开 chapter_plan 之前，规划本卷登场阵容：为本卷新登场且现有卡司没有的重要人物/关键
+# 物品建**完整设定卡**（introducing，落 entity_cards canon），返场角色只标注「本卷作用/弧线」
+# （returning）。与 entity_cards（章级）区别：花名册是卷级前置规划、以本卷主线为限、可含物品。
+# 卡片字段与 _CARD_SPEC 同源（parse_card 是字段权威），此处按 introducing 语境重述、去掉 cast 框架。
+
+_VOLUME_CAST_TEMPLATE = """请为**本卷**规划「登场花名册」：确定本卷要登场的重要人物/关键物品，为其中**新登场且现有卡司没有的**建立完整设定卡，返场角色只标注其「本卷作用/弧线」。
+
+【本卷定位】第 {vol_index} 卷《{vol_title}》
+- 本卷主线：{vol_summary}
+- 卷尾埋钩（为下一卷）：{vol_setup}
+
+【现有卡司 / 已建实体（这些已在卡库，禁止重复建卡；本卷若返场只写进 returning）】
+{existing_roster}
+{lookahead_section}
+---
+
+## 任务
+把本卷的重要登场实体分两类处理：
+1. **返场**（名字或别名命中【现有卡司】）：写进 `returning`，只标注该角色**这一卷**的作用/弧线（本卷做什么、与主线什么关系），**不重建卡**。
+2. **新登场**（现有卡司没有的重要人物/关键物品）：写进 `introducing`，建**完整设定卡**（字段见下）。以本卷主线**真正需要**的重要角色/关键道具为限——不为凑数堆工具人、不写只服务一幕的龙套/杂物（那些留给正文临场发现）。
+
+## 硬约束（必须满足，否则不合格重来）
+1. **只建新实体**：`introducing` 只放现有卡司里**没有**的实体；已有实体一律进 `returning`，禁止重复建卡。
+2. **只规划本卷**：只建**这一卷**会登场的重要实体，**不要**为后续卷/全书提前建卡（后续卷前瞻仅供你判断本卷埋什么线）。
+3. **重要为限、宁缺毋滥**：聚焦本卷主线服务的角色/道具，别一口气写太多。
+4. **人物必填单选 role**：主角/主要配角/功能性反派/根源反派/感情线角色/次要角色六者之一，只填一个；深浅按 role 分层（主角/根源反派/关键反转角色才写 hidden_persona/ability_contract，普通配角留空）。
+5. **能力落体系**：人物 abilities、物品 rank 涉及能力/境界/品阶时，必须落入系统提示【力量体系】框架。
+6. **命名规范**：避开与现有卡司冲突、避烂大街姓（叶/萧/林/楚/苏/慕容）、避生僻拗口字。
+
+## 单张 introducing 卡字段（严格 JSON，非该 type 的字段留空）
+```json
+{{"name": "实体名（唯一，作主键）", "type": "人物/物品/装备/势力/地点", "aliases": ["别称/绰号，无则空数组"], "summary": "一句话定位（≤30字）", "first_appear_chapter": <本卷起始章号或本卷内首次登场章号，整数>, "role": "【人物·必填单选】主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（非人物留空）", "appearance": "【人物】体貌基线（≤60字，非人物留空）", "speech_style": "【人物】说话风格/口吻（≤30字，非人物留空）", "personality": "【人物·表层】性格底色（非人物留空）", "abilities": "【人物】能力底牌，落力量体系（非人物留空）", "hidden_persona": "【人物·条件字段】仅主角/根源反派/关键反转角色写，普通角色留空", "arc_trajectory": "【人物·条件字段】全书弧光大势，仅关键角色写", "ability_contract": "【人物·条件字段】仅战力关键角色写：初始锚点+成长天花板+隐藏杀手锏", "motivation": "【人物·动态】当前动机/目标（非人物留空）", "current_state": "【人物·动态】当前处境（≤30字，非人物留空）", "relations": "【人物·动态】与主角/他人关系（非人物留空）", "owner": "【物品/装备·动态】归属人（非物品留空）", "effect": "【物品/装备】效果/能力（非物品留空）", "status": "【物品/装备·动态】当前状态（非物品留空）", "rank": "【物品/装备】品阶/等级，落力量体系（非物品留空）", "standing": "【势力·动态】当前强弱/格局（非势力留空）"}}
+```
+
+## 输出格式（严格 JSON 对象，无 markdown 围栏，无解释文字）
+```
+{{"introducing": [ /* 本卷新登场重要实体的完整卡，字段如上；无新登场则空数组 */ ], "returning": [{{"name": "已有角色名", "role_in_volume": "该角色本卷的作用/弧线"}}], "focus": "本卷阵容主线一句话（本卷谁挑大梁、核心看点）"}}
+```
+
+请直接输出 JSON 对象。"""
+
+
+def _format_volume_lookahead(state: "NovelState", active_index: int) -> str:
+    """渲染「后续卷前瞻」段（本卷之后的草稿卷 title+summary），仅供 LLM 判断本卷该引入谁、埋什么线。
+
+    只列方向、不含章级细节；无后续卷时返回空串（拼进模板不留空行）。
+    """
+    later = sorted(
+        (v for v in (state.volumes or []) if getattr(v, "index", 0) > active_index),
+        key=lambda v: getattr(v, "index", 0),
+    )
+    if not later:
+        return ""
+    lines = ["\n【后续卷前瞻（中期方向地图，仅供判断本卷埋线；不要为后续卷建卡）】"]
+    for v in later:
+        brief = (getattr(v, "summary", "") or "").strip() or "（方向待定）"
+        lines.append(f"- 第 {getattr(v, 'index', '?')} 卷《{getattr(v, 'title', '')}》：{brief}")
+    return "\n".join(lines) + "\n"
+
+
+def volume_cast_prompt(state: "NovelState", active_volume) -> str:
+    """组装本卷「花名册」生成提示词：现有卡司(system_context 已带) + 激活卷主线 → introducing/returning/focus。
+
+    Args:
+        state: NovelState（需含 entity_cards / volumes）。
+        active_volume: 当前激活卷 Volume（volume_utils.current_volume 的结果）；None 时回退占位。
+    """
+    vol_index = getattr(active_volume, "index", "?") if active_volume else "?"
+    vol_title = getattr(active_volume, "title", "") if active_volume else ""
+    vol_summary = (getattr(active_volume, "summary", "") if active_volume else "") or "（未给主线摘要）"
+    vol_setup = (getattr(active_volume, "setup_for_next", "") if active_volume else "") or "（无）"
+    existing_roster = _format_existing_roster(state.entity_cards)
+    lookahead_section = _format_volume_lookahead(state, getattr(active_volume, "index", 0) if active_volume else 0)
+    return _VOLUME_CAST_TEMPLATE.format(
+        vol_index=vol_index,
+        vol_title=vol_title,
+        vol_summary=vol_summary,
+        vol_setup=vol_setup,
+        existing_roster=existing_roster,
+        lookahead_section=lookahead_section,
     )
 
 

@@ -73,6 +73,8 @@ const PRE_WRITING_REVIEW_TYPES = new Set<string>([
   "overall_outline",
   "character_cards",
   "volumes",
+  // 卷级花名册：卷激活时的登场阵容决策，强制人工卡点（不可自动跳过，同 volumes/character_cards）
+  "volume_cast",
 ]);
 
 /**
