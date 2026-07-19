@@ -64,9 +64,9 @@ def test_graph_ask_continue_routes_to_prepare_volumes():
 
 def _sample_volumes() -> list[Volume]:
     return [
-        Volume(index=1, title="卷1", chapter_start=1, target_min=22, target_max=28,
+        Volume(index=1, title="卷1", chapter_start=1, planned_end=28,
                summary="卷1主线", setup_for_next="埋钩", status="in_progress"),
-        Volume(index=2, title="卷2", chapter_start=29, target_min=35, target_max=45,
+        Volume(index=2, title="卷2", chapter_start=29, planned_end=73,
                summary="卷2主线", setup_for_next="", status="planning"),
     ]
 

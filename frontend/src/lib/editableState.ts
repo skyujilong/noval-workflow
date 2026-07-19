@@ -315,7 +315,6 @@ export function entityCardsJsonEqual(a: string, b: string): boolean {
 // 任一不合格禁止保存，避免脏数据经 update_state 覆盖后在 volume_position_card 处炸。
 //
 // 允许字段：index/title/summary/setup_for_next/chapter_start/planned_end/actual_end/status
-// （target_min/target_max 过渡期仍接受但不强校验，Step 5 删）。
 // 手改安全性：volumes 覆盖语义（无 reducer），除非滚动生成卷分支才被程序覆盖。
 
 const VOLUME_STATUS_VALUES = ["planning", "in_progress", "closed"] as const;
@@ -328,8 +327,6 @@ const VOLUME_ALLOWED_KEYS = new Set<string>([
   "setup_for_next",
   "chapter_start",
   "planned_end",
-  "target_min", // 过渡期遗留，接受但不强校验（Step 5 删）
-  "target_max", // 过渡期遗留
   "actual_end",
   "status",
 ]);
@@ -397,9 +394,6 @@ export function parseVolumesJson(text: string): VolumesParse {
     const index = rec.index as number;
     const chapter_start = rec.chapter_start as number;
     const planned_end = rec.planned_end as number;
-    // 过渡期遗留字段：接受但不强校验（滚动架构下恒为 0）
-    const target_min = typeof rec.target_min === "number" ? (rec.target_min as number) : 0;
-    const target_max = typeof rec.target_max === "number" ? (rec.target_max as number) : 0;
 
     // string 字段：必填（可空串）、必须是字符串
     for (const f of VOLUME_STRING_FIELDS) {
@@ -450,8 +444,6 @@ export function parseVolumesJson(text: string): VolumesParse {
       setup_for_next,
       chapter_start,
       planned_end,
-      target_min,
-      target_max,
       actual_end,
       status: status as Volume["status"],
     });

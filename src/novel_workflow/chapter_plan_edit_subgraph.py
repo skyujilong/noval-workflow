@@ -401,8 +401,8 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
 def cp_writeback_node(state: ChapterPlanEditSubState) -> dict:
     """锁定合并后写回 parent chapter_plan（全量覆盖语义）。
 
-    只覆写未写段、保留 chapter<=done 历史真值；**不动** chapter_plan_planned_upto /
-    chapter_plan_last_regen_at——mid-batch 编辑不是向前延展窗口、也不改 STRIDE 记账节奏。
+    只覆写未写段、保留 chapter<=done 历史真值；**不动** chapter_plan_planned_upto
+    ——mid-batch 编辑只就地改本批已规划条目，不向前延展、不改卷规划记账。
     """
     if not state.final_chapter_plan:
         return {}

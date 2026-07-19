@@ -35,8 +35,8 @@ export function VolumesReadonly({ volumes }: Props) {
   return (
     <div className="space-y-2">
       {volumes.map((v) => {
-        // planned_end 权威末章号（过渡期老数据回退 target_max 换算）
-        const winEnd = v.planned_end > 0 ? v.planned_end : v.chapter_start + v.target_max - 1;
+        // planned_end 权威末章号
+        const winEnd = v.planned_end;
         const planLen = winEnd - v.chapter_start + 1;
         const meta = statusMeta(v.status);
         return (

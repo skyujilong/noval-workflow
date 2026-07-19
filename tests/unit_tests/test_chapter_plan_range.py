@@ -50,11 +50,10 @@ def test_plan_range_empty_volumes_fallback():
     assert _plan_range(state) == (6, 6)
 
 
-def test_plan_range_planned_end_unset_falls_back_to_target_max():
-    """老快照 planned_end=0 → 回退 target_max 换算，避免 end<start 非法区间。"""
+def test_plan_range_planned_end_abnormal_falls_back_to_single_chapter():
+    """planned_end 异常(< start，如坏数据 0) → 兜底 [start, start] 单章，避免非法区间。"""
     state = NovelState(
         total_chapters_written=0,
-        volumes=[Volume(index=1, title="卷1", chapter_start=1, planned_end=0,
-                        target_max=28, status="in_progress")],
+        volumes=[Volume(index=1, title="卷1", chapter_start=1, planned_end=0, status="in_progress")],
     )
-    assert _plan_range(state) == (1, 28)
+    assert _plan_range(state) == (1, 1)

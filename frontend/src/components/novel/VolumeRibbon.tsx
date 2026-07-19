@@ -27,15 +27,14 @@ function chaptersDoneInVolume(volume: Volume, totalWritten: number): number {
   return Math.max(0, totalWritten - volume.chapter_start + 1);
 }
 
-/** 本卷规划总章数 = planned_end - chapter_start + 1（过渡期老数据回退 target_max）。 */
+/** 本卷规划总章数 = planned_end - chapter_start + 1。 */
 function plannedLength(volume: Volume): number {
-  if (volume.planned_end > 0) return volume.planned_end - volume.chapter_start + 1;
-  return volume.target_max > 0 ? volume.target_max : 0;
+  return volume.planned_end > 0 ? volume.planned_end - volume.chapter_start + 1 : 0;
 }
 
-/** 本卷末章号（绝对章号）= planned_end（过渡期老数据回退 chapter_start + target_max - 1）。 */
+/** 本卷末章号（绝对章号）= planned_end。 */
 function plannedEndOf(volume: Volume): number {
-  return volume.planned_end > 0 ? volume.planned_end : volume.chapter_start + volume.target_max - 1;
+  return volume.planned_end;
 }
 
 /** 已收卷的「实际卷长」= actual_end - chapter_start + 1。 */

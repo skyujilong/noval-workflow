@@ -27,37 +27,28 @@ class ChapterPlanItem:
 
 @dataclass
 class Volume:
-    """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上。
+    """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上（滚动生成卷架构）。
 
-    弹性 range 语义（关键，与作者/LLM 直觉对齐）：
-      - chapter_start 是本卷**起始章号**（1-based，锁定）
-      - target_min / target_max 是本卷**章数**（数量，软约束），不是绝对章号
-      - 卷内绝对章号窗口 = [chapter_start, chapter_start + target_max - 1]
-      - actual_end 只有在 VOLUME_BOUNDARY_GATE 用户点「在此收卷」后才写入绝对章号，
-        在此之前 = None（当前卷进行中）
-      - 拼接规则：chapter_start[i+1] = chapter_start[i] + target_max[i]（前卷按上限占位；
-        实际收卷 actual_end < 上限时可重算后续卷 chapter_start，Step 05 处理）
+    章号语义（关键，一律由 save_volumes 权威赋值，不信 LLM 的绝对章号）：
+      - chapter_start 是本卷**起始章号**（1-based，权威锁定 = 上一卷 planned_end + 1）
+      - planned_end 是本卷**末章号**（绝对章号，权威边界 = chapter_start + 本卷章数 - 1）
+      - 卷内绝对章号窗口 = [chapter_start, planned_end]，本卷章数 = planned_end - chapter_start + 1
+      - actual_end：滚动到下一卷时上一卷收口写入（= planned_end），进行中卷 = None
 
     章 → 卷映射由 volume_utils.volume_of_chapter(chapter_num, volumes) 提供：
       - 已收卷（actual_end != None）：chapter ∈ [chapter_start, actual_end]
-      - 进行中卷（actual_end == None）：chapter >= chapter_start 且是最靠前的未收卷
+      - 进行中卷（actual_end == None）：chapter ∈ [chapter_start, planned_end]
 
-    序列化/容错照抄 ChapterPlanItem：LangGraph checkpoint 序列化时 dataclass 自动转 dict；
-    LLM 出的 JSON 由 save_volumes 逐条 `Volume(**item)` 造实例，字段缺失/类型错时抛
-    TypeError 触发审核循环重生成。老 state 快照反序列化时缺字段走默认值。
+    序列化/容错：LangGraph checkpoint 序列化时 dataclass 自动转 dict；save_volumes 从 LLM 单卷
+    对象取内容字段、其余权威赋值；nodes 层用 _coerce_volume 归一（过滤未知键，兼容老快照）。
     """
     index: int                     # 第几卷（1-based）
     title: str                     # 卷名，如「第一卷 · 少年入宗」
     summary: str = ""              # 本卷主线目标 + 情绪基调 + 收尾状态（≤80 字）
     setup_for_next: str = ""       # 卷尾要为下一卷埋的钩（≤60 字，最后一卷可空）
-    chapter_start: int = 1         # 起始**章号**（1-based，硬锁定）
-    # planned_end：本卷规划**末章号**（绝对章号，1-based）。滚动生成卷架构的权威边界——
-    # save_volumes 按 chapter_start + clamp(LLM 建议章数) - 1 权威赋值。
-    # 卷内绝对章号窗口 = [chapter_start, planned_end]。
-    planned_end: int = 0
-    target_min: int = 0            # 【过渡期遗留，Step 5 删】目标章数下限（软约束）
-    target_max: int = 0            # 【过渡期遗留，Step 5 删】目标章数上限（软约束）
-    actual_end: int | None = None  # 实际收卷**章号**，None = 仍在进行中
+    chapter_start: int = 1         # 起始**章号**（1-based，权威锁定）
+    planned_end: int = 0           # 末**章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]
+    actual_end: int | None = None  # 实际收卷**章号**（= planned_end），None = 仍在进行中
     status: str = "planning"       # planning | in_progress | closed
 
 
@@ -316,12 +307,11 @@ class NovelState:
     # 人物档案的唯一真源是 entity_cards 里的 CharacterCard（Phase-1 一次直出结构化卡司）——
     # 原 character_profiles 散文 bible 已删，深层设计并入 CharacterCard 的 canon 字段。
 
-    # ── Phase 1.5：分卷规划（Volumes，横向大结构中间层）─────────────────────────
-    # 位于 overall_outline 之下、chapter_plan 之上。由 prepare_volumes 从 overall_outline
-    # 抽取结构化 Volume 列表（默认 4 卷），走 review_volumes 人审后写入。弹性 range 语义
-    # （详见 Volume dataclass 注释）：卷起点锁定，卷终点用 target_min/target_max 章数软约束
-    # 表达，实际章数由 VOLUME_BOUNDARY_GATE（Step 05）根据剧情动态调整。
-    # 覆盖语义：save_volumes 全量覆盖返回；不使用 operator.add（用户可能删卷/合并卷）。
+    # ── Phase 1.5 / 滚动：分卷规划（Volumes，横向大结构中间层）───────────────────
+    # 位于 overall_outline 之下、chapter_plan 之上。滚动生成卷：开书由 prepare_volumes 只规划
+    # 卷 1，写作推进到触及当前卷末章时由 route_continue_or_end 触发再规划下一卷；卷长 LLM 内容
+    # 驱动（松护栏 [15,50]，人可破），章号一律 save_volumes 权威赋值（详见 Volume dataclass 注释）。
+    # 覆盖语义：save_volumes 全量覆盖返回（含上一卷收口 + 新卷 append）；不使用 operator.add。
     volumes: list[Volume] = field(default_factory=list)
 
     # ── 设定一致性总审（save_config 冻结前的跨设定闸门；transient，覆盖语义，无 reducer）──
@@ -354,17 +344,14 @@ class NovelState:
     total_chapters_written: int = 0 # 全书已完成章节总数（跨批次累积）
     continue_writing: bool = True   # ask_continue 节点的用户决策：True = 继续下一批
 
-    # ── Phase 2.5：章节规划（chapter_plan，滚动窗口的远端锚点）────────────────────
-    # 在整书 overall_outline 与批级 arc_outline 之间的一层「中景大纲」，向前一次规划
-    # CHAPTER_PLAN_WINDOW 章，每写完 CHAPTER_PLAN_STRIDE 章滚动一次。已写完的章条目
-    # 永久锁定（save_chapter_plan 合并保证），只重写未写部分。
+    # ── Phase 2.5：章节规划（chapter_plan，以「卷」为规划单元的中景大纲）──────────
+    # 在整书 overall_outline 与批级 arc_outline 之间的一层「中景大纲」，以卷为单元：卷刚生成好时
+    # （首卷 / 滚动新卷）一次规划整卷 [chapter_start, planned_end]，本卷之前条目永久锁定不重规划。
     #
-    # 覆盖语义：全量覆盖返回（不用 operator.add，因为不是纯追加，是「历史保留 + 未来覆盖」）。
+    # 覆盖语义：全量覆盖返回（不用 operator.add，因为不是纯追加，是「历史保留 + 新卷追加」）。
     chapter_plan: list[ChapterPlanItem] = field(default_factory=list)
-    # 已被覆盖到的最远章号（1-based）；供路由与前端用于展示「已规划到第 N 章」。
+    # 已被规划到的最远章号（1-based）；供路由与前端用于展示「已规划到第 N 章」。
     chapter_plan_planned_upto: int = 0
-    # 上一次触发重规划时 total_chapters_written 的值；用于 STRIDE 判定，避免同一进度重复触发。
-    chapter_plan_last_regen_at: int = 0
 
     # ── Phase 2.5：批次小号大纲（arc outline）────────────────────────────────────
     current_arc_outline: str = ""

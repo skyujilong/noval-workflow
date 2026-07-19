@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
-from noval_workflow.volume_utils import format_chapter_plan_volume_budget, volume_position_card
+from noval_workflow.volume_utils import volume_position_card
 
 if TYPE_CHECKING:
     from noval_workflow.state import ChapterPlanItem, NovelState
@@ -1059,12 +1059,6 @@ def render_chapter_plan_prompt(
     volume_card = volume_position_card(state)
     volume_section = f"\n\n{volume_card}" if volume_card else ""
 
-    # 【本批章数容量锚点】—— 基于 state.volumes(权威分卷)切出本批 [start, end] 覆盖的每卷
-    # 章数额度,让 LLM 明确"每卷剩余多少章空间/本批处于卷内哪个位置",防止把两卷份的
-    # 推进挤到一批。未启用分卷(volumes==[])时函数返回 "",天然回退不注入。
-    budget_hint = format_chapter_plan_volume_budget(state.volumes, start_chapter, end_chapter)
-    budget_section = f"\n\n{budget_hint}" if budget_hint else ""
-
     q = compute_chapter_plan_quotas(count)
     burst_max = q["burst_max"]
     burst_min = q["burst_min"]
@@ -1129,7 +1123,7 @@ def render_chapter_plan_prompt(
 
     genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
 
-    return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{budget_section}{written_section}{locked_section}{status_section}
+    return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{written_section}{locked_section}{status_section}
 
 # 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出**当前整卷** {count} 章的路线图。
 
@@ -1195,7 +1189,7 @@ ending_hook **禁止**使用以下套路：
 1. 本 {count} 章须与整体大纲的阶段定位对齐，不要提前爆完终局。
 2. 严守作品既定设定（题材/世界观/力量或规则体系/人物关系），不新增私设、不降智/拔高角色。
 3. 能力 / 资源 / 身份 / 立场跃迁**必须有铺垫章在前**（{spec.escalation_prerequisites}），禁止「上一章还没起势，下一章直接跨阶段跳变」的跃迁式升级。
-4. **章数容量校准（若头部【本批章数容量锚点】存在，最高优先级）**：本 {count} 章的剧情密度必须与每卷剩余额度对齐——若本批覆盖到某卷末尾几章（卷内倒数 5 章内），这几章应写「本卷收束 / 卷末大高潮」而非「才刚开始铺垫」；若本批覆盖到某卷开局几章（卷内前 5 章），这几章应写「本卷开局 / 新阶段定位」而非「已经卷末收束」；若本批完全在卷中段，则稳态推进即可。**禁止**忽视卷内位置一律按"平均推进"式写法。
+4. **整卷节奏铺排（本次规划的就是当前整卷，其起止章号见头部卷位置卡）**：本 {count} 章要按卷内位置编排密度——卷首几章（前 5 章内）写「本卷开局 / 新阶段定位 / 抛出本卷核心目标」，卷中稳态推进 + 小转折维持张力，卷末几章（倒数 5 章内）集中「本卷收束 + 卷末大高潮 + 埋下一卷钩」。**禁止**把整卷按"平均推进"一路平铺、卷末不收束。
 
 ## 输出前自检（全部通过才输出）
 1. 是否严格 `[` 开头 `]` 结尾，无围栏无解释？

@@ -118,9 +118,9 @@ builder.add_node("save_character_cards", save_character_cards)
 builder.add_node("save_initial_status", save_initial_status)
 builder.add_node("save_config", save_config)
 
-# Phase 1.5 — 分卷规划（Volumes，横向大结构中间层）
-# 插在 save_overall_outline 之后、prepare_character_cards 之前：LLM 从整书大纲抽卷
-# → 用户 review 编辑（含 target_min/target_max）→ 落库到 state.volumes。
+# Phase 1.5 / 滚动 — 分卷规划（Volumes，横向大结构中间层）
+# 开书插在 save_overall_outline 之后：LLM 规划单卷 → 用户 review 编辑本卷章数 → 落库；
+# 写作中由 ask_continue 触发再进 prepare_volumes 滚动规划下一卷。
 builder.add_node("prepare_volumes", prepare_volumes)
 builder.add_node("review_volumes", review_subgraph)
 builder.add_node("save_volumes", save_volumes)

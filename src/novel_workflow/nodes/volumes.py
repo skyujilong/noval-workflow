@@ -31,7 +31,7 @@ def _coerce_volume(v) -> Volume:
     """把 state.volumes 里的元素归一为 Volume 实例。
 
     LangGraph checkpoint 重水合可能把 Volume 落成 dict（参照 entity_cards 的 _coerce_card）；
-    这里防御性归一，过滤未知键（过渡期老快照的 target_min/target_max 仍是合法字段，予以保留）。
+    这里防御性归一，过滤未知键（老快照残留的 target_min/target_max 等已删字段被自动丢弃）。
     """
     if isinstance(v, Volume):
         return v

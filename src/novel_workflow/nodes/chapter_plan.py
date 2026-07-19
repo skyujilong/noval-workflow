@@ -98,18 +98,14 @@ def _plan_range(state: NovelState) -> tuple[int, int]:
     规划对象 = 当前(最大 index)卷:开书首卷,或滚动刚生成的新卷。
       start = max(卷 chapter_start, 已写 + 1)  —— 卷内已写部分锁定,只规划未写段的卷范围
       end   = 卷 planned_end                    —— 规划到卷末(而非旧的固定 WINDOW 窗口)
-    无 volumes / planned_end 未定(老快照) → 回退,不返回非法区间(end < start)。
+    无 volumes / planned_end 异常 → 回退 [已写+1, 已写+1],不返回非法区间(end < start)。
     """
     done = state.total_chapters_written
     if not state.volumes:
         return done + 1, done + 1
     cur = max(state.volumes, key=lambda v: v.index)
     start = max(cur.chapter_start, done + 1)
-    end = cur.planned_end
-    if end < start:
-        # planned_end 未定(老快照)回退 target_max 换算;再不行退化为单章,避免非法区间
-        end = cur.chapter_start + cur.target_max - 1 if cur.target_max > 0 else start
-        end = max(end, start)
+    end = max(cur.planned_end, start)  # planned_end 异常(< start)时兜底为单章,避免非法区间
     return start, end
 
 
@@ -159,6 +155,4 @@ def save_chapter_plan(state: NovelState) -> dict:
     return {
         "chapter_plan": merged,
         "chapter_plan_planned_upto": planned_upto,
-        # 记录本次触发进度,供 route_continue_or_end 的 STRIDE 判定避免重复触发（Step 4 删）。
-        "chapter_plan_last_regen_at": state.total_chapters_written,
     }
