@@ -42,12 +42,16 @@ from noval_workflow.context import (
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
-from noval_workflow.nodes.chapter_plan import merge_chapter_plan, parse_chapter_plan_items
+from noval_workflow.nodes.chapter_plan import (
+    merge_chapter_plan,
+    parse_chapter_plan_items,
+)
 from noval_workflow.prompts import ARC_CHAPTER_FORMAT, get_prompt_pack
 from noval_workflow.prompts.base import (
     _extract_chapter_plan_range,
     _format_chapter_plan_block,
 )
+from noval_workflow.prompts.render import SystemRole, build_system, render_user
 
 _logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class ChapterPlanEditSubState:
     镜像父图 NovelState / ChapterEditSubState 中本子图要读的所有字段——缺字段会被
     langgraph 静默丢弃 / build_foundation_context 与 chapter_plan_prompt 里 AttributeError。
     """
+
     # Parent-graph fields (read-only context)
     novel_name: str = ""
     genre: str = ""
@@ -93,12 +98,13 @@ class ChapterPlanEditSubState:
     chapter_plan: list = field(default_factory=list)
     chapter_plan_planned_upto: int = 0
 
-    # Review bridge（system_context 用于 LLM system message）
-    system_context: str = ""
+    # Review bridge（三层 prompt：system_prompt=L1 / context_prompt=L2 / task_prompt=L3）
+    system_prompt: str = ""
+    context_prompt: str = ""
 
     # chapter_plan 编辑私有中间态
     chapter_plan_direction: str = ""
-    ai_chapter_plan: str = ""          # LLM 输出的原始 JSON 草稿（供 confirm 解析/展示）
+    ai_chapter_plan: str = ""  # LLM 输出的原始 JSON 草稿（供 confirm 解析/展示）
     chapter_plan_error: str = ""
     chapter_plan_needs_rewrite: bool = False
     final_chapter_plan: list = field(default_factory=list)  # 确认后的新未写段条目
@@ -114,9 +120,10 @@ class ChapterPlanEditSubState:
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
+
 def _clean_title(line: str) -> str:
-    line = re.sub(r'^\d+[\.）\)．、]\s*', '', line)
-    return line.lstrip('-– ').strip()
+    line = re.sub(r"^\d+[\.）\)．、]\s*", "", line)
+    return line.lstrip("-– ").strip()
 
 
 def _plan_edit_range(state: ChapterPlanEditSubState) -> tuple[int, int]:
@@ -145,7 +152,9 @@ def _batch_window(state: ChapterPlanEditSubState) -> tuple[int, int]:
     return batch_start, batch_end
 
 
-def _rewrite_chapter_plan_with_ai(state: ChapterPlanEditSubState, direction: str) -> str:
+def _rewrite_chapter_plan_with_ai(
+    state: ChapterPlanEditSubState, direction: str
+) -> str:
     """按调整方向重规划 chapter_plan 未写窗口段，复用主图 chapter_plan_prompt 骨架。
 
     locked_entries = 章 <= done 的历史条目（LLM 禁止改动/重复输出）；prompt 末尾追加
@@ -154,7 +163,9 @@ def _rewrite_chapter_plan_with_ai(state: ChapterPlanEditSubState, direction: str
     done = state.total_chapters_written
     start, end = _plan_edit_range(state)
     pack = get_prompt_pack(state.genre, state.novel_name)
-    locked = _extract_chapter_plan_range(state.chapter_plan, 1, done) if done > 0 else []
+    locked = (
+        _extract_chapter_plan_range(state.chapter_plan, 1, done) if done > 0 else []
+    )
     base_task = pack.chapter_plan_prompt(
         state=state,
         start_chapter=start,
@@ -167,10 +178,18 @@ def _rewrite_chapter_plan_with_ai(state: ChapterPlanEditSubState, direction: str
         "要求：严格贯彻上述方向；与已写完章节不矛盾；仅重新输出未写段的 JSON 数组。"
     )
     llm = get_llm(temperature=0.7, label="chapter_plan_edit:rewrite")
-    result = llm.invoke([
-        SystemMessage(content=state.system_context),
-        HumanMessage(content=base_task + direction_section),
-    ])
+    system = build_system(
+        SystemRole.GENRE_AUTHOR,
+        "按人工调整方向重规划未写窗口的章节规划",
+        genre_identity=pack.flavor.system_identity,
+    )
+    context = build_foundation_context(state, include_identity=False)
+    result = llm.invoke(
+        [
+            SystemMessage(content=system),
+            HumanMessage(content=render_user(context, base_task + direction_section)),
+        ]
+    )
     return result.content.strip()
 
 
@@ -178,31 +197,42 @@ def _derive_arc_from_plan(state: ChapterPlanEditSubState, plan_slice: list) -> s
     """从「本批 chapter_plan 切片」派生弧线大纲——弧线是 chapter_plan 的纯下游函数，
     不接受自由方向单独驱动。已写章须承接、未写章严格落在锚点上。
     """
-    already_written = state.current_batch_titles[:state.current_chapter_index]
-    remaining = state.current_batch_titles[state.current_chapter_index:]
+    already_written = state.current_batch_titles[: state.current_chapter_index]
+    remaining = state.current_batch_titles[state.current_chapter_index :]
 
     chapter_ctx = build_chapter_context(state)
-    chapter_section = f"\n\n【最近章节内容（请据此保持连贯）】\n{chapter_ctx}" if chapter_ctx else ""
+    chapter_section = (
+        f"\n\n【最近章节内容（请据此保持连贯）】\n{chapter_ctx}" if chapter_ctx else ""
+    )
 
     anchor_block = _format_chapter_plan_block(plan_slice)
     anchor_section = (
         f"\n\n【本批远端锚点（来自更新后的 chapter_plan，弧线须严格落在其目标/转折/钩子上）】\n{anchor_block}"
-        if anchor_block else ""
+        if anchor_block
+        else ""
     )
     written_section = (
-        "\n\n【本批已写章节（不得矛盾）】\n"
-        + "\n".join(
-            f"{state.total_chapters_written - len(already_written) + i + 1}. {t}"
-            for i, t in enumerate(already_written)
+        (
+            "\n\n【本批已写章节（不得矛盾）】\n"
+            + "\n".join(
+                f"{state.total_chapters_written - len(already_written) + i + 1}. {t}"
+                for i, t in enumerate(already_written)
+            )
         )
-    ) if already_written else ""
+        if already_written
+        else ""
+    )
     remaining_section = (
-        "\n\n【本批未写章节（必须覆盖）】\n"
-        + "\n".join(
-            f"{state.total_chapters_written + i + 1}. {t}"
-            for i, t in enumerate(remaining)
+        (
+            "\n\n【本批未写章节（必须覆盖）】\n"
+            + "\n".join(
+                f"{state.total_chapters_written + i + 1}. {t}"
+                for i, t in enumerate(remaining)
+            )
         )
-    ) if remaining else ""
+        if remaining
+        else ""
+    )
 
     prompt = (
         f"请根据更新后的远端锚点，重新规划当前批次的故事弧线大纲。"
@@ -215,23 +245,43 @@ def _derive_arc_from_plan(state: ChapterPlanEditSubState, plan_slice: list) -> s
         f"请直接输出更新后的弧线大纲，不需要额外标题。"
     )
     llm = get_llm(temperature=0.7, label="chapter_plan_edit:derive_arc")
-    result = llm.invoke([
-        SystemMessage(content=state.system_context),
-        HumanMessage(content=prompt),
-    ])
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    system = build_system(
+        SystemRole.GENRE_AUTHOR,
+        "从章节规划派生本批弧线大纲",
+        genre_identity=pack.flavor.system_identity,
+    )
+    context = build_foundation_context(state, include_identity=False)
+    result = llm.invoke(
+        [
+            SystemMessage(content=system),
+            HumanMessage(content=render_user(context, prompt)),
+        ]
+    )
     return result.content.strip()
 
 
 def _generate_titles_with_ai(
-    state: ChapterPlanEditSubState, arc_outline: str, direction: str, remaining_count: int
+    state: ChapterPlanEditSubState,
+    arc_outline: str,
+    direction: str,
+    remaining_count: int,
 ) -> list[str]:
-    existing_titles = state.all_chapter_titles + state.current_batch_titles[:state.current_chapter_index]
+    existing_titles = (
+        state.all_chapter_titles
+        + state.current_batch_titles[: state.current_chapter_index]
+    )
     existing_section = (
-        "\n".join(f"{i+1}. {t}" for i, t in enumerate(existing_titles))
-        if existing_titles else "（暂无）"
+        "\n".join(f"{i + 1}. {t}" for i, t in enumerate(existing_titles))
+        if existing_titles
+        else "（暂无）"
     )
     chapter_ctx = build_chapter_context(state)
-    chapter_section = f"\n\n【最近章节内容（请据此保持情节连贯）】\n{chapter_ctx}" if chapter_ctx else ""
+    chapter_section = (
+        f"\n\n【最近章节内容（请据此保持情节连贯）】\n{chapter_ctx}"
+        if chapter_ctx
+        else ""
+    )
 
     prompt = (
         f"请根据以下弧线大纲，生成接下来{remaining_count}个章节的标题。\n\n"
@@ -245,12 +295,25 @@ def _generate_titles_with_ai(
         f"请直接输出{remaining_count}个标题，每行一个。"
     )
     llm = get_llm(temperature=0.7, label="chapter_plan_edit:generate_titles")
-    result = llm.invoke([
-        SystemMessage(content=state.system_context),
-        HumanMessage(content=prompt),
-    ])
-    lines = [_clean_title(l) for l in result.content.strip().splitlines() if l.strip()]
-    return [l for l in lines if l][:remaining_count]
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    system = build_system(
+        SystemRole.GENRE_AUTHOR,
+        "根据弧线大纲生成章节标题",
+        genre_identity=pack.flavor.system_identity,
+    )
+    context = build_foundation_context(state, include_identity=False)
+    result = llm.invoke(
+        [
+            SystemMessage(content=system),
+            HumanMessage(content=render_user(context, prompt)),
+        ]
+    )
+    lines = [
+        _clean_title(line)
+        for line in result.content.strip().splitlines()
+        if line.strip()
+    ]
+    return [line for line in lines if line][:remaining_count]
 
 
 def _plan_cards_payload(items: list) -> list[dict]:
@@ -260,10 +323,13 @@ def _plan_cards_payload(items: list) -> list[dict]:
 
 # ── node functions ─────────────────────────────────────────────────────────────
 
+
 def _cp_entry(entry_prompt: str):
     def cp_entry(state: ChapterPlanEditSubState) -> dict:
         # 本批已写完（无剩余章可派生弧线）→ 跳过
-        is_last_in_batch = state.current_chapter_index >= len(state.current_batch_titles)
+        is_last_in_batch = state.current_chapter_index >= len(
+            state.current_batch_titles
+        )
         # chapter_plan 为空（未启用 / 未生成）→ 跳过；维持「弧线永不手改」不变量，
         # 不退回旧的自由改弧线路径。
         if is_last_in_batch or not state.chapter_plan:
@@ -277,12 +343,14 @@ def _cp_entry(entry_prompt: str):
             entry_prompt
             + "\n\n---\n· 直接回车 / 输入 no 或 否 → 跳过\n· 输入其他内容 → 执行"
         )
-        answer = interrupt({
-            "type": InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE.value,
-            "message": message,
-            "chapter_plan_window": _plan_cards_payload(window_slice),
-            "range": [start, end],
-        })
+        answer = interrupt(
+            {
+                "type": InterruptType.CHAPTER_PLAN_EDIT_ENTRY_GATE.value,
+                "message": message,
+                "chapter_plan_window": _plan_cards_payload(window_slice),
+                "range": [start, end],
+            }
+        )
         if not answer:
             execute = False
         else:
@@ -290,7 +358,6 @@ def _cp_entry(entry_prompt: str):
             execute = raw not in _SKIP_WORDS
         return {
             "cp_execute_gate": execute,
-            "system_context": build_foundation_context(state),
             "chapter_plan_direction": "",
             "ai_chapter_plan": "",
             "chapter_plan_error": "",
@@ -300,6 +367,7 @@ def _cp_entry(entry_prompt: str):
             "titles_direction": "",
             "titles_needs_regen": False,
         }
+
     return cp_entry
 
 
@@ -307,18 +375,24 @@ def cp_direction_node(state: ChapterPlanEditSubState) -> dict:
     start, end = _plan_edit_range(state)
     window_slice = _extract_chapter_plan_range(state.chapter_plan, start, end)
     window_block = _format_chapter_plan_block(window_slice)
-    direction_raw = interrupt({
-        "type": InterruptType.CHAPTER_PLAN_EDIT_DIRECTION.value,
-        "message": (
-            "【后续章节规划调整】\n\n"
-            + (f"【当前未写章节规划（第 {start}-{end} 章）】\n{window_block}\n\n" if window_block else "")
-            + "---\n"
-            + "· 直接回车 → 取消\n"
-            + "· 输入调整方向 → AI 重规划后续章节，弧线大纲与剩余标题自动跟随"
-        ),
-        "chapter_plan_window": _plan_cards_payload(window_slice),
-        "range": [start, end],
-    })
+    direction_raw = interrupt(
+        {
+            "type": InterruptType.CHAPTER_PLAN_EDIT_DIRECTION.value,
+            "message": (
+                "【后续章节规划调整】\n\n"
+                + (
+                    f"【当前未写章节规划（第 {start}-{end} 章）】\n{window_block}\n\n"
+                    if window_block
+                    else ""
+                )
+                + "---\n"
+                + "· 直接回车 → 取消\n"
+                + "· 输入调整方向 → AI 重规划后续章节，弧线大纲与剩余标题自动跟随"
+            ),
+            "chapter_plan_window": _plan_cards_payload(window_slice),
+            "range": [start, end],
+        }
+    )
     return {"chapter_plan_direction": str(direction_raw or "").strip()}
 
 
@@ -342,16 +416,18 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
 
     # AI 重写失败 → 手动输入完整 JSON 兜底；仍非法则跳过（绝不污染 parent chapter_plan）
     if not state.ai_chapter_plan:
-        raw = interrupt({
-            "type": InterruptType.CHAPTER_PLAN_EDIT_CONFIRM_ERROR.value,
-            "message": (
-                f"AI 重规划失败（{state.chapter_plan_error}），请手动输入完整的未写段章节规划 JSON 数组\n\n"
-                "---\n"
-                "· 直接回车 → 跳过（不改动）\n"
-                "· 粘贴 JSON 数组 → 手动替换"
-            ),
-            "error": state.chapter_plan_error,
-        })
+        raw = interrupt(
+            {
+                "type": InterruptType.CHAPTER_PLAN_EDIT_CONFIRM_ERROR.value,
+                "message": (
+                    f"AI 重规划失败（{state.chapter_plan_error}），请手动输入完整的未写段章节规划 JSON 数组\n\n"
+                    "---\n"
+                    "· 直接回车 → 跳过（不改动）\n"
+                    "· 粘贴 JSON 数组 → 手动替换"
+                ),
+                "error": state.chapter_plan_error,
+            }
+        )
         text = str(raw or "").strip()
         if not text:
             return {"final_chapter_plan": [], "chapter_plan_needs_rewrite": False}
@@ -364,17 +440,21 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
             return {"final_chapter_plan": [], "chapter_plan_needs_rewrite": False}
         return {"final_chapter_plan": items, "chapter_plan_needs_rewrite": False}
 
-    raw = interrupt({
-        "type": InterruptType.CHAPTER_PLAN_EDIT_CONFIRM.value,
-        "message": (
-            "【AI 重规划的后续章节规划】\n"
-            "（弧线大纲与剩余标题将据此自动重生成）\n\n---\n"
-            "· 直接回车 → 接受\n"
-            "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
-            "· 以「=」开头粘贴 JSON 数组 → 直接替换（跳过 AI）"
-        ),
-        "ai_chapter_plan": _plan_cards_payload(parse_chapter_plan_items(state.ai_chapter_plan)),
-    })
+    raw = interrupt(
+        {
+            "type": InterruptType.CHAPTER_PLAN_EDIT_CONFIRM.value,
+            "message": (
+                "【AI 重规划的后续章节规划】\n"
+                "（弧线大纲与剩余标题将据此自动重生成）\n\n---\n"
+                "· 直接回车 → 接受\n"
+                "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
+                "· 以「=」开头粘贴 JSON 数组 → 直接替换（跳过 AI）"
+            ),
+            "ai_chapter_plan": _plan_cards_payload(
+                parse_chapter_plan_items(state.ai_chapter_plan)
+            ),
+        }
+    )
     confirm = str(raw or "").strip()
 
     if not confirm:
@@ -386,7 +466,11 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
     if confirm.startswith("="):
         content = confirm[1:].strip()
         try:
-            items = parse_chapter_plan_items(content) if content else parse_chapter_plan_items(state.ai_chapter_plan)
+            items = (
+                parse_chapter_plan_items(content)
+                if content
+                else parse_chapter_plan_items(state.ai_chapter_plan)
+            )
         except ValueError as e:
             _logger.error("手动替换的章节规划 JSON 非法，回退到 AI 结果: %s", e)
             items = parse_chapter_plan_items(state.ai_chapter_plan)
@@ -419,7 +503,7 @@ def arc_rederive_node(state: ChapterPlanEditSubState) -> dict:
     """从更新后的 chapter_plan 本批切片派生弧线大纲。无未写章 / 无切片时不动弧线。"""
     if not state.final_chapter_plan:
         return {}
-    remaining = state.current_batch_titles[state.current_chapter_index:]
+    remaining = state.current_batch_titles[state.current_chapter_index :]
     if not remaining:
         return {}
     batch_start, batch_end = _batch_window(state)
@@ -433,11 +517,13 @@ def arc_rederive_node(state: ChapterPlanEditSubState) -> dict:
 
 
 def arc_titles_regen_node(state: ChapterPlanEditSubState) -> dict:
-    remaining_titles = state.current_batch_titles[state.current_chapter_index:]
+    remaining_titles = state.current_batch_titles[state.current_chapter_index :]
     arc_outline = state.current_arc_outline
     direction = state.titles_direction or state.chapter_plan_direction
     try:
-        ai_titles = _generate_titles_with_ai(state, arc_outline, direction, len(remaining_titles))
+        ai_titles = _generate_titles_with_ai(
+            state, arc_outline, direction, len(remaining_titles)
+        )
     except Exception as e:
         _logger.error("arc_titles_regen failed: %s", e)
         ai_titles = []
@@ -445,14 +531,15 @@ def arc_titles_regen_node(state: ChapterPlanEditSubState) -> dict:
 
 
 def arc_titles_confirm_node(state: ChapterPlanEditSubState) -> dict:
-    remaining_titles = state.current_batch_titles[state.current_chapter_index:]
+    remaining_titles = state.current_batch_titles[state.current_chapter_index :]
     ai_titles = state.ai_titles
     shortage = len(remaining_titles) - len(ai_titles)
 
     shortage_note = (
         f"\nAI 仅生成了 {len(ai_titles)} 个，需要 {len(remaining_titles)} 个，"
         "用「=」覆盖时请补全所有标题。"
-        if shortage > 0 else ""
+        if shortage > 0
+        else ""
     )
 
     if not ai_titles:
@@ -463,27 +550,27 @@ def arc_titles_confirm_node(state: ChapterPlanEditSubState) -> dict:
             for i, t in enumerate(ai_titles)
         )
 
-    titles_confirm_raw = interrupt({
-        "type": InterruptType.ARC_TITLES_CONFIRM.value,
-        "message": (
-            titles_display
-            + shortage_note
-            + "\n\n---\n"
-            "· 直接回车 → 接受\n"
-            "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
-            "· 以「=」开头，每行一个标题 → 直接替换（跳过 AI）"
-        ),
-        "ai_generated_titles": ai_titles,
-        "shortage": shortage,
-    })
+    titles_confirm_raw = interrupt(
+        {
+            "type": InterruptType.ARC_TITLES_CONFIRM.value,
+            "message": (
+                titles_display + shortage_note + "\n\n---\n"
+                "· 直接回车 → 接受\n"
+                "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
+                "· 以「=」开头，每行一个标题 → 直接替换（跳过 AI）"
+            ),
+            "ai_generated_titles": ai_titles,
+            "shortage": shortage,
+        }
+    )
     titles_confirm = str(titles_confirm_raw or "").strip()
 
     if not titles_confirm:
         final_titles = ai_titles
     elif titles_confirm.startswith("="):
         content = titles_confirm[1:].strip()
-        new_lines = [_clean_title(l) for l in content.splitlines() if l.strip()]
-        final_titles = [l for l in new_lines if l][:len(remaining_titles)]
+        new_lines = [_clean_title(line) for line in content.splitlines() if line.strip()]
+        final_titles = [line for line in new_lines if line][: len(remaining_titles)]
     else:
         return {
             "titles_direction": titles_confirm,
@@ -491,10 +578,10 @@ def arc_titles_confirm_node(state: ChapterPlanEditSubState) -> dict:
         }
 
     if len(final_titles) < len(remaining_titles):
-        final_titles = final_titles + remaining_titles[len(final_titles):]
+        final_titles = final_titles + remaining_titles[len(final_titles) :]
 
     if final_titles:
-        kept = state.current_batch_titles[:state.current_chapter_index]
+        kept = state.current_batch_titles[: state.current_chapter_index]
         return {
             "current_batch_titles": kept + final_titles,
             "titles_direction": "",
@@ -504,6 +591,7 @@ def arc_titles_confirm_node(state: ChapterPlanEditSubState) -> dict:
 
 
 # ── routing ────────────────────────────────────────────────────────────────────
+
 
 def _route_after_entry(state: ChapterPlanEditSubState) -> str:
     if not state.cp_execute_gate:
@@ -527,7 +615,7 @@ def _route_after_cp_confirm(state: ChapterPlanEditSubState) -> str:
 
 def _route_after_arc_rederive(state: ChapterPlanEditSubState) -> str:
     # 无未写章 / 弧线未变时无需重生成标题
-    remaining = state.current_batch_titles[state.current_chapter_index:]
+    remaining = state.current_batch_titles[state.current_chapter_index :]
     if state.final_chapter_plan and remaining:
         return "arc_titles_regen"
     return END
@@ -540,6 +628,7 @@ def _route_after_titles_confirm(state: ChapterPlanEditSubState) -> str:
 
 
 # ── factory ────────────────────────────────────────────────────────────────────
+
 
 def make_chapter_plan_edit_subgraph(
     *, entry_prompt: str = "是否调整后续章节规划？弧线大纲将自动跟随"

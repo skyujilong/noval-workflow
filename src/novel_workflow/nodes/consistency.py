@@ -33,9 +33,7 @@ from noval_workflow.json_utils import invoke_json
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     CONSISTENCY_AUDIT_PROMPT,
-    CONSISTENCY_AUDIT_SYSTEM_PROMPT,
     CONSISTENCY_REVISE_PROMPT,
-    CONSISTENCY_REVISE_SYSTEM_PROMPT,
 )
 from noval_workflow.state import NovelState
 
@@ -59,7 +57,9 @@ _REVISABLE_FIELDS: dict[str, str] = dict(_FOUNDATION_FIELDS)
 # 前端语义化按钮：通过冻结(freeze) / 让 AI 修订(revise) / 重新审查(reaudit)。
 # 兼容旧值：空串「跳过」= 冻结；"yes"「执行」= 重新审查（历史 entry_gate 复用遗留）。
 _REDO_SIGNALS = frozenset({"yes", "y", "执行", "重新审查", "重审", "redo", "reaudit"})
-_REVISE_SIGNALS = frozenset({"revise", "修订", "ai修订", "让ai修订", "ai 修订", "让 ai 修订"})
+_REVISE_SIGNALS = frozenset(
+    {"revise", "修订", "ai修订", "让ai修订", "ai 修订", "让 ai 修订"}
+)
 
 
 def _collect_foundation(state: NovelState) -> str:
@@ -132,11 +132,22 @@ def audit_consistency(state: NovelState) -> dict:
         }
     try:
         # 审计是一次性批判性体检，temperature 对齐 llm_self_review 的 0.3，求稳。
+        # system 走 build_system：CONSISTENCY_AUDIT_SYSTEM_PROMPT（终审架构师身份+职责）作 identity，
+        # 叠加硬契约 + 优先级约定，让一致性审计也守 L1 底线（架构统一）。
+        # system 走 build_system(SystemRole.CONSISTENCY_AUDITOR)——身份文本(终审架构师职责)
+        # 单点定义在 render._ROLE_TEXT,与其他 role 一致管理。
+        from noval_workflow.prompts.render import SystemRole, build_system
+
         llm = get_llm(temperature=0.3, label="consistency_audit")
-        report = llm.invoke([
-            SystemMessage(content=CONSISTENCY_AUDIT_SYSTEM_PROMPT),
-            HumanMessage(content=CONSISTENCY_AUDIT_PROMPT.format(draft=settings)),
-        ]).content.strip()
+        audit_system = build_system(
+            SystemRole.CONSISTENCY_AUDITOR, "对全部底层设定做一致性总审"
+        )
+        report = llm.invoke(
+            [
+                SystemMessage(content=audit_system),
+                HumanMessage(content=CONSISTENCY_AUDIT_PROMPT.format(draft=settings)),
+            ]
+        ).content.strip()
     except Exception as e:  # noqa: BLE001 — 审计失败绝不阻断冻结（仿 brainstorm_extract）
         _logger.error("设定一致性审计失败：%s", e)
         return {
@@ -161,7 +172,11 @@ def consistency_gate(state: NovelState) -> dict:
     """
     count = state.consistency_audit_count
     report = (state.consistency_report or "（无报告）").strip()
-    verdict = "本轮未发现跨设定硬伤" if state.consistency_pass else "本轮发现需关注的问题（见下）"
+    verdict = (
+        "本轮未发现跨设定硬伤"
+        if state.consistency_pass
+        else "本轮发现需关注的问题（见下）"
+    )
     # 达上限后任何按钮都强制冻结，此时不再提供「让 AI 修订」（点了也只会冻结，避免误导）。
     can_revise = not state.consistency_pass and count < _MAX_AUDIT_ROUNDS
     if count >= _MAX_AUDIT_ROUNDS:
@@ -172,8 +187,12 @@ def consistency_gate(state: NovelState) -> dict:
     else:
         lines = ["· 通过冻结 → 采纳当前设定，进入正式创作"]
         if can_revise:
-            lines.append("· 让 AI 修订 → 由 AI 依据上述问题改写涉事设定，改动以 diff 呈现，可逐项编辑后应用")
-        lines.append("· 重新审查 → 请先在左侧「编辑当前状态」就地修改设定，再点此重新体检")
+            lines.append(
+                "· 让 AI 修订 → 由 AI 依据上述问题改写涉事设定，改动以 diff 呈现，可逐项编辑后应用"
+            )
+        lines.append(
+            "· 重新审查 → 请先在左侧「编辑当前状态」就地修改设定，再点此重新体检"
+        )
         tail = "\n".join(lines)
     # AI 修订未产出可用改动时，上一步 revise_consistency 会留一行提示，前置到报告上方。
     note = (state.consistency_revise_note or "").strip()
@@ -184,11 +203,13 @@ def consistency_gate(state: NovelState) -> dict:
         "────────\n"
         f"{tail}"
     )
-    decision = interrupt({
-        "type": InterruptType.CONSISTENCY_GATE.value,
-        "message": message,
-        "can_revise": can_revise,
-    })
+    decision = interrupt(
+        {
+            "type": InterruptType.CONSISTENCY_GATE.value,
+            "message": message,
+            "can_revise": can_revise,
+        }
+    )
     d = str(decision or "").strip().lower()
     if d in _REVISE_SIGNALS:
         action = "revise"
@@ -228,12 +249,21 @@ def revise_consistency(state: NovelState) -> dict:
 
     _EMPTY_NOTE = "（AI 未提出可用修订，可手动修订设定或直接通过冻结。）"
     try:
+        from noval_workflow.prompts.render import SystemRole, build_system
+
         llm = get_llm(temperature=0.3, label="consistency_revise")
+        revise_system = build_system(
+            SystemRole.SETTINGS_ENGINEER, "针对问题清单做最小必要修订"
+        )
         data = invoke_json(
             llm,
             [
-                SystemMessage(content=CONSISTENCY_REVISE_SYSTEM_PROMPT),
-                HumanMessage(content=CONSISTENCY_REVISE_PROMPT.format(report=report, settings=settings)),
+                SystemMessage(content=revise_system),
+                HumanMessage(
+                    content=CONSISTENCY_REVISE_PROMPT.format(
+                        report=report, settings=settings
+                    )
+                ),
             ],
             kind=dict,
             label="consistency_revise",
@@ -262,13 +292,15 @@ def revise_consistency(state: NovelState) -> dict:
         if after == before:  # 与原文一字不差 → 无实际改动，丢弃
             dropped.append(f"{key}: 与原文无异")
             continue
-        revisions.append({
-            "field": key,
-            "label": label,
-            "before": before,
-            "after": after,
-            "reason": str(item.get("reason") or "").strip(),
-        })
+        revisions.append(
+            {
+                "field": key,
+                "label": label,
+                "before": before,
+                "after": after,
+                "reason": str(item.get("reason") or "").strip(),
+            }
+        )
 
     # 观测点：diff 闸门只在 revisions 非空时触发；折回闸门时靠这行定位是「模型没给」还是「被过滤光」。
     _logger.info(
@@ -286,7 +318,9 @@ def revise_consistency(state: NovelState) -> dict:
 
 def route_after_revise(state: NovelState) -> str:
     """有可用修订 → 进 diff 审核闸门；否则折返回一致性闸门（带一行「AI 未修订」提示）。"""
-    return "consistency_diff_gate" if state.consistency_revisions else "consistency_gate"
+    return (
+        "consistency_diff_gate" if state.consistency_revisions else "consistency_gate"
+    )
 
 
 def consistency_diff_gate(state: NovelState) -> dict:
@@ -301,13 +335,19 @@ def consistency_diff_gate(state: NovelState) -> dict:
         f"AI 依据一致性总审报告提出 {len(revisions)} 处修订。请审核每处改动（可直接编辑修订后文本），"
         "「应用修订」将写回设定并自动复审一轮，「放弃」则不改动任何设定。"
     )
-    decision = interrupt({
-        "type": InterruptType.CONSISTENCY_DIFF.value,
-        "message": message,
-        "revisions": revisions,
-    })
+    decision = interrupt(
+        {
+            "type": InterruptType.CONSISTENCY_DIFF.value,
+            "message": message,
+            "revisions": revisions,
+        }
+    )
 
-    action = decision.get("action") if isinstance(decision, dict) else str(decision or "").strip().lower()
+    action = (
+        decision.get("action")
+        if isinstance(decision, dict)
+        else str(decision or "").strip().lower()
+    )
     if action == "apply":
         items = decision.get("revisions") or [] if isinstance(decision, dict) else []
         edits = {
@@ -323,4 +363,8 @@ def consistency_diff_gate(state: NovelState) -> dict:
 
 def route_after_diff_gate(state: NovelState) -> str:
     """应用修订 → 回 audit_consistency 复审一轮（验证问题是否消除）；放弃 → 折返回闸门。"""
-    return "audit_consistency" if state.consistency_action == "apply" else "consistency_gate"
+    return (
+        "audit_consistency"
+        if state.consistency_action == "apply"
+        else "consistency_gate"
+    )

@@ -29,20 +29,34 @@ from noval_workflow.chapter_plan_edit_subgraph import make_chapter_plan_edit_sub
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.edit_step_subgraph import make_edit_step_subgraph
 from noval_workflow.entity_cards_prune_subgraph import entity_cards_prune_step
-from noval_workflow.entity_select_subgraph import EntityDiscoverSubState, entity_select_step
-from noval_workflow.foreshadow_prune_subgraph import ForeshadowSubState, foreshadow_prune_step
+from noval_workflow.entity_select_subgraph import (
+    EntityDiscoverSubState,
+    entity_select_step,
+)
+from noval_workflow.foreshadow_prune_subgraph import (
+    ForeshadowSubState,
+    foreshadow_prune_step,
+)
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.chapter_edit import chapter_edit_done
-from noval_workflow.nodes.entity_cards import _prepare_entity_discover, _save_entity_discover
+from noval_workflow.nodes.entity_cards import (
+    _prepare_entity_discover,
+    _save_entity_discover,
+)
 from noval_workflow.prompts import (
     foreshadowing_prompt,
     phase_summary_prompt,
+)
+from noval_workflow.prompts.render import (
+    SystemRole,
+    build_prepare_fields,
 )
 
 _logger = logging.getLogger(__name__)
 
 # ── ChapterEditSubState ────────────────────────────────────────────────────────
+
 
 @dataclass
 class ChapterEditSubState:
@@ -96,13 +110,18 @@ class ChapterEditSubState:
     # 统一实体卡库：章末 entity_discover_step 读入 + 写回（补新卡 / 更新动态字段）。
     entity_cards: list = field(default_factory=list)
 
-    # ── review_subgraph 桥接字段 ────────────────────────────────────────────────
-    system_context: str = ""
-    task_prompt: str = ""
+    # ── review_subgraph 桥接字段（三层 prompt：与 ReviewSubState 同构）────────
+    system_prompt: str = ""  # L1：身份 + 硬契约 + 任务契约 + 优先级约定
+    context_prompt: str = ""  # L2：参考资料（设定/台账/前文）
+    task_prompt: str = (
+        ""  # L3：本次指令 + 输出格式（snapshot 类含 prev 基线 + 前文，见 ledger）
+    )
     current_draft: str = ""
     review_feedback: str = ""
     approved: bool = False
-    review_type: str = "foundation"  # 初始哨兵值；各 prepare 步骤必覆盖为已登记 review 类型
+    review_type: str = (
+        "foundation"  # 初始哨兵值；各 prepare 步骤必覆盖为已登记 review 类型
+    )
     review_history: list = field(default_factory=list)
     llm_review_count: int = 0
     llm_review_max: int = 3
@@ -121,10 +140,23 @@ class ChapterEditSubState:
 
 # ── prepare / save closures for the tracking steps ───────────────────────────
 
+
 def _prepare_foreshadowing(state) -> dict:
+    """snapshot 类：身份用数据维护员；L2=设定（exclude_snapshots 避免快照重复）。
+
+    prev（上次伏笔台账）与 chapter_context（近期章节）留 L3 task：snapshot 类是「数据更新」
+    任务，prev 是「要更新的对象」基线（影响 carry-over 文案分支），chapter_context 是更新依据，
+    与任务强耦合，留 task 与 generate/llm_self_review 的 snapshot 分支现有逻辑一致。
+    """
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
-        "task_prompt": foreshadowing_prompt(state, build_chapter_context(state)),
+        **build_prepare_fields(
+            role=SystemRole.SNAPSHOT_MAINTAINER,
+            task_contract="根据已完成章节内容更新伏笔台账",
+            context=build_foundation_context(
+                state, exclude_snapshots=True, include_identity=False
+            ),
+            task=foreshadowing_prompt(state, build_chapter_context(state)),
+        ),
         "review_type": "foreshadowing",
     }
 
@@ -143,9 +175,19 @@ def _save_foreshadowing(state) -> dict:
 
 
 def _prepare_phase(state) -> dict:
+    """snapshot 类：身份用数据维护员；L2=设定（exclude_snapshots 避免快照重复）。
+
+    prev（上次阶段固化）与 chapter_context 留 L3 task（同 _prepare_foreshadowing 理由）。
+    """
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
-        "task_prompt": phase_summary_prompt(state, build_chapter_context(state)),
+        **build_prepare_fields(
+            role=SystemRole.SNAPSHOT_MAINTAINER,
+            task_contract="根据已完成章节内容更新阶段固化数据",
+            context=build_foundation_context(
+                state, exclude_snapshots=True, include_identity=False
+            ),
+            task=phase_summary_prompt(state, build_chapter_context(state)),
+        ),
         "review_type": "phase_summary",
     }
 
@@ -190,7 +232,8 @@ _PHASE_STEP = make_edit_step_subgraph(
 # 审核通过后挂「入库筛选」后处理，让人工勾选真正入库的项，剔除一次性碎屑；
 # state_cls 配套设成含 entity_select_selected 字段的子类，否则勾选结果被 langgraph 丢弃。
 _ENTITY_DISCOVER_STEP = make_edit_step_subgraph(
-    entry_prompt="是否发现本章新实体 / 更新实体卡库（装备状态、人物动机）？" + _ENTRY_HINT,
+    entry_prompt="是否发现本章新实体 / 更新实体卡库（装备状态、人物动机）？"
+    + _ENTRY_HINT,
     prepare_fn=_prepare_entity_discover,
     save_fn=_save_entity_discover,
     entry_gate_type=InterruptType.ENTITY_DISCOVER_ENTRY_GATE,

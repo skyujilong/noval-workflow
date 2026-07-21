@@ -1,0 +1,17 @@
+{
+  "last_compact_after_step": "03-prepare-foundation",
+  "next_step": "all-done",
+  "completed_steps": [
+    "01-render-user-helper",
+    "02-state-schema",
+    "03-prepare-foundation",
+    "04-prepare-chapter-arc",
+    "05-prepare-snapshot",
+    "06-generate-self-review",
+    "07-edit-subgraphs",
+    "08-independent-llm",
+    "09-verify-expand",
+    "10-test-final"
+  ],
+  "final_status": "verify 脚本 99 PASS/0 FAIL；全量单测 287 passed/0 failed；lint 干净"
+}

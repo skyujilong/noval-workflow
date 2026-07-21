@@ -9,16 +9,32 @@ from noval_workflow.context import build_foundation_context, get_output_dir
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.entity_cards import merge_cards_from_json
 from noval_workflow.prompts import get_prompt_pack, initial_status_prompt
+from noval_workflow.prompts.render import (
+    SystemRole,
+    build_prepare_fields,
+)
 from noval_workflow.state import NovelState, reset_review_fields
 
 
 # ── prepare nodes ─────────────────────────────────────────────────────────────
+# 三层 prompt 统一组装模式（见 prompts/render.py::build_prepare_fields）：
+# - L1 system_prompt = build_system(role, task_contract, genre_identity=...)：身份+硬契约+任务契约+优先级约定
+# - L2 context_prompt = build_foundation_context(state, include_identity=False)：设定/台账（去身份避免双注）
+# - L3 task_prompt = pack.xxx_prompt：任务指令（prompt 方法内部不再注入身份，已在 base.py 删除双注）
+# 创作类用 SystemRole.GENRE_AUTHOR + genre_identity=pack.flavor.system_identity；
+# snapshot 类（initial_status）用 SystemRole.SNAPSHOT_MAINTAINER。
+
 
 def prepare_core_theme(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.core_theme_prompt,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为本小说创作【核心主题与立意】",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.core_theme_prompt,
+        ),
         "review_type": "core_theme",
         **reset_review_fields(),
     }
@@ -27,8 +43,13 @@ def prepare_core_theme(state: NovelState) -> dict:
 def prepare_world_building(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.world_building_prompt,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为本小说创作【世界观设定】",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.world_building_prompt,
+        ),
         "review_type": "world_building",
         **reset_review_fields(),
     }
@@ -37,8 +58,13 @@ def prepare_world_building(state: NovelState) -> dict:
 def prepare_power_system(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.power_system_prompt,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为本小说创作【力量体系】设定",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.power_system_prompt,
+        ),
         "review_type": "power_system",
         **reset_review_fields(),
     }
@@ -47,8 +73,13 @@ def prepare_power_system(state: NovelState) -> dict:
 def prepare_core_conflicts(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.core_conflicts_prompt,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为本小说设计【核心冲突】",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.core_conflicts_prompt,
+        ),
         "review_type": "core_conflicts",
         **reset_review_fields(),
     }
@@ -57,8 +88,13 @@ def prepare_core_conflicts(state: NovelState) -> dict:
 def prepare_overall_outline(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.overall_outline_prompt(state.total_word_count),
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为本书撰写全书战略概要（Synopsis）",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.overall_outline_prompt(state.total_word_count),
+        ),
         "review_type": "overall_outline",
         **reset_review_fields(),
     }
@@ -68,8 +104,13 @@ def prepare_character_cards(state: NovelState) -> dict:
     """Phase-1 一次直出全套核心人物结构化卡（取代原 bible 散文，省一跑 LLM）。"""
     pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.character_cards_prompt,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为全书一次性生成全套核心人物结构化卡（直接输出 JSON）",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.character_cards_prompt,
+        ),
         "review_type": "character_cards",
         **reset_review_fields(),
     }
@@ -78,24 +119,30 @@ def prepare_character_cards(state: NovelState) -> dict:
 def prepare_initial_status(state: NovelState) -> dict:
     """从已定稿的人物卡（深层视图）+ 世界观固化「人物初始基线（第0章）」，写入 state.phase_summary。
 
-    复用 review_type="phase_summary" —— 本质是数据维护员式的结构化萃取，需继承 snapshot
-    的身份/关思考/审核 prompt/中断表单。故上下文参数对标 chapter_edit_subgraph._prepare_phase
-    （exclude_snapshots=True 保持干净、include_identity=False 让 generate 拼数据维护员身份）；
-    deep_character_view=True 注入人物卡的底牌契约/全书成长天花板，供固化战力基线校验。
-    但作为顶层 foundation 节点，须 reset_review_fields() 清掉上一步（character_cards）的
-    审核桥接字段。产出经审核后写入同一个 phase_summary 字段，Phase 2.5 首批据此 carry-over。
+    snapshot 类（数据维护）：身份用 SystemRole.SNAPSHOT_MAINTAINER（非创作者），
+    exclude_snapshots=True 保持干净（台账更新类不重复注入快照到 L2），deep_character_view=True
+    注入人物卡的底牌契约/全书成长天花板，供固化战力基线校验。产出经审核后写入同一个
+    phase_summary 字段，Phase 2.5 首批据此 carry-over。
     """
     return {
-        "system_context": build_foundation_context(
-            state, exclude_snapshots=True, include_identity=False, deep_character_view=True
+        **build_prepare_fields(
+            role=SystemRole.SNAPSHOT_MAINTAINER,
+            task_contract="为主角与主要配角固化【人物初始基线（开篇/第0章）】",
+            context=build_foundation_context(
+                state,
+                exclude_snapshots=True,
+                include_identity=False,
+                deep_character_view=True,
+            ),
+            task=initial_status_prompt(),
         ),
-        "task_prompt": initial_status_prompt(),
         "review_type": "phase_summary",
         **reset_review_fields(),
     }
 
 
 # ── save nodes ────────────────────────────────────────────────────────────────
+
 
 def save_core_theme(state: NovelState) -> dict:
     return {"core_theme": state.current_draft}
@@ -114,10 +161,12 @@ def route_after_world_building(state: NovelState) -> str:
     否则整步跳过、直连核心冲突。
 
     state.has_power_system 由 collect_user_inputs（直接填表路径按题材默认写入）或
-    brainstorm_extract_review（脑爆路径由用户在抽屉里确认）负责填充。这里不查 flavor——
+    brainstorm_extract_review（脑爆路径由用户在抽屉里确认）负责填充。这里不查 flavor--
     作品级决策统一从 state 读，避免"题材开关 vs 作品级用户选择"的双源冲突。
     """
-    return "prepare_power_system" if state.has_power_system else "prepare_core_conflicts"
+    return (
+        "prepare_power_system" if state.has_power_system else "prepare_core_conflicts"
+    )
 
 
 def save_core_conflicts(state: NovelState) -> dict:
@@ -129,7 +178,7 @@ def save_overall_outline(state: NovelState) -> dict:
 
 
 def save_character_cards(state: NovelState) -> dict:
-    """Phase-1 结构化卡司 JSON → 解析落 entity_cards（与章前建卡同一套 parse/去重/owner 解析）。
+    """Phase-1 结构化卡司 JSON -> 解析落 entity_cards（与章前建卡同一套 parse/去重/owner 解析）。
 
     LLM 输出 {"new_cards": [...]}；解析失败 fail-loud 触发审核循环重生成（一次出 6-10 张富卡
     的 JSON 比散文更易截断，故走 repair_and_parse 容围栏/尾逗号/截断，仍失败即报错）。
@@ -142,7 +191,9 @@ def save_character_cards(state: NovelState) -> dict:
         raise ValueError(f"Phase-1 卡司 JSON 解析失败: {exc}") from exc
     raw_new = parsed.get("new_cards", []) or []
     if not isinstance(raw_new, list):
-        raise ValueError(f"Phase-1 卡司 new_cards 必须是数组，实际类型={type(raw_new).__name__}")
+        raise ValueError(
+            f"Phase-1 卡司 new_cards 必须是数组，实际类型={type(raw_new).__name__}"
+        )
     merged = merge_cards_from_json(raw_new, state.entity_cards)
     return {"entity_cards": merged}
 
@@ -179,5 +230,7 @@ def save_config(state: NovelState) -> dict:
     }
 
     config_path = output_dir / "config.json"
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    config_path.write_text(
+        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return {}

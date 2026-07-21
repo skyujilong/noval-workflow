@@ -207,7 +207,7 @@ def _format_existing_roster(cards: list["EntityCard"]) -> str:
     """把已有卡库渲染成紧凑清单（name〔type〕别名: a/b），供生成 prompt 判定新旧。
 
     只列 name/type/aliases——判新旧够用，不灌全字段（省 token）。人物档案里的已有人物
-    另经 system_context 的【人物档案】段进入，故这里只列结构化卡库。
+    另经 context_prompt 的【人物档案】段进入，故这里只列结构化卡库。
     """
     if not cards:
         return "（卡库为空，本章登场实体多半都是新的；但人物档案里的已有角色仍算已有，勿重复建卡）"
@@ -301,10 +301,11 @@ _VOLUME_CAST_TEMPLATE = """请为**本卷**规划「登场花名册」：确定�
 4. **人物必填单选 role**：主角/主要配角/功能性反派/根源反派/感情线角色/次要角色六者之一，只填一个；深浅按 role 分层（主角/根源反派/关键反转角色才写 hidden_persona/ability_contract，普通配角留空）。
 5. **能力落体系**：人物 abilities、物品 rank 涉及能力/境界/品阶时，必须落入系统提示【力量体系】框架。
 6. **命名规范**：避开与现有卡司冲突、避烂大街姓（叶/萧/林/楚/苏/慕容）、避生僻拗口字。
+7. **字段值一律字符串**：除 `aliases`（数组）外，所有字段值必须是**字符串**（可为空串 `""`）；禁止把 `ability_contract` / `hidden_persona` / `arc_trajectory` 等字段拆成嵌套 JSON 对象（如 `{{"initial_anchor": ..., "growth_ceiling": ..., "hidden_trump": ...}}`），要用中文一段话描述、以 `；` 或 `+` 分隔子要素。
 
 ## 单张 introducing 卡字段（严格 JSON，非该 type 的字段留空）
 ```json
-{{"name": "实体名（唯一，作主键）", "type": "人物/物品/装备/势力/地点", "aliases": ["别称/绰号，无则空数组"], "summary": "一句话定位（≤30字）", "first_appear_chapter": <本卷起始章号或本卷内首次登场章号，整数>, "role": "【人物·必填单选】主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（非人物留空）", "appearance": "【人物】体貌基线（≤60字，非人物留空）", "speech_style": "【人物】说话风格/口吻（≤30字，非人物留空）", "personality": "【人物·表层】性格底色（非人物留空）", "abilities": "【人物】能力底牌，落力量体系（非人物留空）", "hidden_persona": "【人物·条件字段】仅主角/根源反派/关键反转角色写，普通角色留空", "arc_trajectory": "【人物·条件字段】全书弧光大势，仅关键角色写", "ability_contract": "【人物·条件字段】仅战力关键角色写：初始锚点+成长天花板+隐藏杀手锏", "motivation": "【人物·动态】当前动机/目标（非人物留空）", "current_state": "【人物·动态】当前处境（≤30字，非人物留空）", "relations": "【人物·动态】与主角/他人关系（非人物留空）", "owner": "【物品/装备·动态】归属人（非物品留空）", "effect": "【物品/装备】效果/能力（非物品留空）", "status": "【物品/装备·动态】当前状态（非物品留空）", "rank": "【物品/装备】品阶/等级，落力量体系（非物品留空）", "standing": "【势力·动态】当前强弱/格局（非势力留空）"}}
+{{"name": "实体名（唯一，作主键）", "type": "人物/物品/装备/势力/地点", "aliases": ["别称/绰号，无则空数组"], "summary": "一句话定位（≤30字）", "first_appear_chapter": <本卷起始章号或本卷内首次登场章号，整数>, "role": "【人物·必填单选】主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（非人物留空）", "appearance": "【人物】体貌基线（≤60字，非人物留空）", "speech_style": "【人物】说话风格/口吻（≤30字，非人物留空）", "personality": "【人物·表层】性格底色（非人物留空）", "abilities": "【人物】能力底牌，落力量体系（非人物留空）", "hidden_persona": "【人物·条件字段·一段中文字符串】仅主角/根源反派/关键反转角色写：暗线秘密/隐藏能力/立场偏差，一句话描述；普通角色留空字符串 \\"\\"，禁止嵌套 JSON 对象", "arc_trajectory": "【人物·条件字段·一段中文字符串】全书弧光大势（一句话，如 \\"由懦弱少年→坚定守护者\\"），仅关键角色写；禁止拆成 {{开篇, 收官}} 嵌套对象", "ability_contract": "【人物·条件字段·一段中文字符串】仅战力关键角色写，格式：\\"初始锚点：X；成长天花板：Y；隐藏杀手锏：Z\\" 拼成一段字符串；禁止拆成 {{initial_anchor, growth_ceiling, hidden_trump}} 嵌套对象", "motivation": "【人物·动态】当前动机/目标（非人物留空）", "current_state": "【人物·动态】当前处境（≤30字，非人物留空）", "relations": "【人物·动态】与主角/他人关系（非人物留空）", "owner": "【物品/装备·动态】归属人（非物品留空）", "effect": "【物品/装备】效果/能力（非物品留空）", "status": "【物品/装备·动态】当前状态（非物品留空）", "rank": "【物品/装备】品阶/等级，落力量体系（非物品留空）", "standing": "【势力·动态】当前强弱/格局（非势力留空）"}}
 ```
 
 ## 输出格式（严格 JSON 对象，无 markdown 围栏，无解释文字）
@@ -334,7 +335,7 @@ def _format_volume_lookahead(state: "NovelState", active_index: int) -> str:
 
 
 def volume_cast_prompt(state: "NovelState", active_volume) -> str:
-    """组装本卷「花名册」生成提示词：现有卡司(system_context 已带) + 激活卷主线 → introducing/returning/focus。
+    """组装本卷「花名册」生成提示词：现有卡司(context_prompt 已带) + 激活卷主线 → introducing/returning/focus。
 
     Args:
         state: NovelState（需含 entity_cards / volumes）。
@@ -765,14 +766,15 @@ _PROMOTE_CHARACTER_TEMPLATE = """请为一位「原次要角色」补齐【重�
 
 - **role**：固定填「{target_role}」。
 - **appearance**：体貌基线（身形/气质/年龄段/大致长相，供正文外貌一致）+ 可选 1 个识别特征，≤60字；若现状卡 appearance 太薄则加厚，但不与已有描述冲突。
-- **hidden_persona**：深层隐藏人设——暗线秘密/异常/隐藏能力/立场偏差，与表层 `personality` 不冲突、可后期反转（升为重要角色理应写，别与既定性格打架）。
-- **arc_trajectory**：全书弧光——开篇→收官心性/立场/羁绊/认知的迭代大势（只写大势不填情节）；若提升为反派向 role，写阶段作用 + 闭环退场。
+- **hidden_persona**：**一段中文字符串**——深层隐藏人设（暗线秘密/异常/隐藏能力/立场偏差），与表层 `personality` 不冲突、可后期反转；禁止嵌套 JSON 对象。
+- **arc_trajectory**：**一段中文字符串**——全书弧光大势（开篇→收官心性/立场/羁绊/认知迭代，只写大势不填情节；反派写阶段作用+闭环退场）；禁止拆成 `{{开篇, 收官}}` 嵌套对象。
 - **ability_contract**：{contract_spec}
 
 ## 硬约束
 
 - **只深化、不推翻**：现状卡已定的 name/summary/personality/abilities/motivation/relations 保持不变，仅做深层补全。
 - **自洽**：深层设计与全书 canon、该角色现有立场/关系闭环自洽，杜绝为提升而强行拔高、降智。
+- **字段值一律字符串**：5 键的值全部是**字符串**（可为空串 `""`）；禁止把 `ability_contract` / `hidden_persona` / `arc_trajectory` 拆成嵌套 JSON 对象（如 `{{"initial_anchor": ..., "growth_ceiling": ..., "hidden_trump": ...}}`），要用中文一段话描述、以 `；` 或 `+` 分隔子要素。
 - **只输出** 上述 5 键的 JSON 对象，无解释、无 markdown 围栏。"""
 
 
@@ -797,9 +799,9 @@ def promote_character_prompt(state: "NovelState", card, target_role: str) -> str
         else ""
     )
     contract_spec = (
-        "仅当该角色与战力相关才写完整契约（初始锚点 + 全书成长天花板 + 隐藏杀手锏触发/反噬，须落【力量体系】）；纯文戏/非战斗角色留空或据现有 abilities 简述。"
+        "**一段中文字符串**——仅当该角色与战力相关才写完整契约，格式 \"初始锚点：X；成长天花板：Y；隐藏杀手锏：Z\" 拼成一段字符串（须落【力量体系】）；纯文戏/非战斗角色留空字符串 \"\" 或据现有 abilities 简述。**禁止拆成 `{\"initial_anchor\": ..., \"growth_ceiling\": ..., \"hidden_trump\": ...}` 嵌套 JSON 对象。**"
         if state.has_power_system
-        else "本作无独立力量体系——一般留空，除非该角色确有可成长的关键能力，则据 abilities 简述其成长与底牌。"
+        else "**一段中文字符串**——本作无独立力量体系，一般留空字符串 \"\"，除非该角色确有可成长的关键能力，则据 abilities 简述其成长与底牌（一段话，禁止拆成嵌套 JSON 对象）。"
     )
     return _PROMOTE_CHARACTER_TEMPLATE.format(
         target_role=target_role,

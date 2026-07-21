@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import type { EntityCard } from "../../lib/types";
+import { safeStr } from "../../lib/safe";
 import { EntityCardEditForm } from "./EntityCardEditForm";
 
 interface Props {
@@ -30,12 +31,16 @@ const TYPE_BADGE: Record<string, string> = {
 };
 
 // 一行「标签 · 值」，值为空时不渲染，避免卡片堆一片空字段。
-function Row({ label, value }: { label: string; value?: string }) {
-  if (!value) return null;
+// safeStr 兜底：LLM 有时把 str 字段出成 dict/list（例如 ability_contract → {initial_anchor,
+// growth_ceiling, hidden_trump}），直接 `{value}` 塞 JSX 会崩 React。后端 pydantic 层已在
+// generate 出口拦截+回喂重试，safeStr 是最后一道防御——覆盖老 checkpoint 里的脏数据。
+function Row({ label, value }: { label: string; value?: unknown }) {
+  const text = safeStr(value);
+  if (!text) return null;
   return (
     <div className="text-[11px] text-gray-600">
       <span className="text-gray-400">{label} · </span>
-      {value}
+      {text}
     </div>
   );
 }

@@ -10,7 +10,6 @@ from noval_workflow.json_utils import JsonParseError
 from noval_workflow.nodes.scene_beats import _prepare_scene_beats, _save_scene_beats
 from noval_workflow.prompts import (
     ALL_DEVICE_TAGS,
-    SCENE_BEATS_PROMPT,
     SCENE_BEATS_REVIEW_PROMPT,
     format_beats_for_chapter_prompt,
     scene_beats_prompt,
@@ -21,19 +20,28 @@ from noval_workflow.state import NovelState
 
 # ── device_tag 枚举完整性 ─────────────────────────────────────────────────────
 
+
 def test_all_device_tags_frozen_and_complete():
     """ALL_DEVICE_TAGS 应覆盖打脸四拍、三段式、钩子、伏笔、缓冲全部枚举值。"""
     expected = {
-        "setup", "buildup", "release",
-        "slap_taunt", "slap_silence", "slap_crush", "slap_witness",
-        "hook_opening", "hook_chapter_end",
-        "foreshadow_plant", "foreshadow_recover",
+        "setup",
+        "buildup",
+        "release",
+        "slap_taunt",
+        "slap_silence",
+        "slap_crush",
+        "slap_witness",
+        "hook_opening",
+        "hook_chapter_end",
+        "foreshadow_plant",
+        "foreshadow_recover",
         "buffer",
     }
     assert ALL_DEVICE_TAGS == frozenset(expected)
 
 
 # ── validate_beats：程序化兜底校验 ─────────────────────────────────────────────
+
 
 def _mk_beat(bid: int, tags: list[str], **overrides) -> dict:
     base = {
@@ -112,6 +120,7 @@ def test_validate_flags_non_list_beats():
 
 # ── format_beats_for_chapter_prompt：注入 chapter_prompt 的 markdown 渲染 ──────
 
+
 def test_format_beats_renders_all_fields():
     beats = [_mk_beat(1, ["setup", "foreshadow_plant"])]
     md = format_beats_for_chapter_prompt(beats)
@@ -128,6 +137,7 @@ def test_format_empty_beats_returns_empty_string():
 
 
 # ── scene_beats_prompt：状态组装 ──────────────────────────────────────────────
+
 
 def test_scene_beats_prompt_injects_batch_and_arc():
     state = NovelState(
@@ -168,8 +178,10 @@ def test_scene_beats_prompt_falls_back_when_arc_block_unfindable():
 
 # ── _save_scene_beats：JSON 落地行为 ──────────────────────────────────────────
 
+
 class _FakeState:
     """最小 state 桩，只提供 _save_scene_beats 需要的两个字段。"""
+
     def __init__(self, draft: str, total_written: int = 0):
         self.current_draft = draft
         self.total_chapters_written = total_written
@@ -187,7 +199,9 @@ def test_save_scene_beats_parses_clean_json_and_writes_index():
 
 def test_save_scene_beats_repairs_dirty_json():
     """LLM 常吐带 markdown 围栏的 JSON——repair_and_parse 应自动修好。"""
-    dirty = "```json\n[" + json.dumps(_mk_beat(1, ["setup"]), ensure_ascii=False) + "]\n```"
+    dirty = (
+        "```json\n[" + json.dumps(_mk_beat(1, ["setup"]), ensure_ascii=False) + "]\n```"
+    )
     state = _FakeState(dirty, total_written=0)
     result = _save_scene_beats(state)
     assert result["beats_chapter_index"] == 1
@@ -209,6 +223,7 @@ def test_save_scene_beats_empty_draft_returns_empty_dict():
 
 # ── _prepare_scene_beats：契约字段落地到 review_type ──────────────────────────
 
+
 def test_prepare_scene_beats_sets_review_type():
     state = NovelState(
         novel_name="X",
@@ -221,10 +236,12 @@ def test_prepare_scene_beats_sets_review_type():
     result = _prepare_scene_beats(state)
     assert result["review_type"] == "scene_beats"
     assert result["task_prompt"]  # 非空
-    assert result["system_context"]
+    assert result["system_prompt"]  # L1 非空
+    assert result["context_prompt"]  # L2 非空
 
 
 # ── review prompt 注册完整性 ──────────────────────────────────────────────────
+
 
 def test_scene_beats_review_prompt_has_draft_placeholder():
     """SCENE_BEATS_REVIEW_PROMPT 应含 {draft} 占位，供 subgraph.llm_self_review 填充。"""
@@ -234,11 +251,13 @@ def test_scene_beats_review_prompt_has_draft_placeholder():
 def test_subgraph_review_prompts_registers_scene_beats():
     """subgraph._REVIEW_PROMPTS 应含 scene_beats 条目——否则自审会 fail-fast 报未登记。"""
     from noval_workflow.subgraph import _REVIEW_PROMPTS
+
     assert "scene_beats" in _REVIEW_PROMPTS
     assert _REVIEW_PROMPTS["scene_beats"] == SCENE_BEATS_REVIEW_PROMPT
 
 
 # ── 打回重跑输出格式提醒(防 review_history 窗口截断后 LLM 忘掉 JSON 契约)────────
+
 
 def test_regen_instruction_reminds_scene_beats_json_format(monkeypatch):
     """scene_beats 打回重跑时,human 消息必须显式声明「严格输出 JSON 数组、无 markdown 围栏」。
@@ -262,13 +281,14 @@ def test_regen_instruction_reminds_scene_beats_json_format(monkeypatch):
 
         def invoke(self, messages):
             recorder.append((self.label, list(messages)))
-            return AIMessage(content='[{"id":1,"device_tags":["setup"]}]')
+            # Phase 2 后 scene_beats 走 invoke_pydantic_list (BeatDraft) 校验，返回值必须合规
+            return AIMessage(content='[{"beat_id":1,"device_tags":["setup"]}]')
 
     monkeypatch.setattr(sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm")))
 
     state = ReviewSubState(
         review_type="scene_beats",
-        system_context="SYS",
+        system_prompt="SYS",
         task_prompt="首轮任务(会被窗口裁掉)",
         review_feedback="[AI审稿意见]\npacing 全 fast,请改",
         review_history=[
@@ -293,7 +313,9 @@ def test_regen_instruction_reminds_scene_beats_json_format(monkeypatch):
     # 反例:必须显式禁止最常见的三种破坏形态(围栏 / 前置解释 / 输出散文)
     assert "严禁的错误形态" in prompt or "❌" in prompt
     assert "```json" in prompt, "反例应显示禁止 markdown 围栏"
-    assert "好的" in prompt or "已按意见调整" in prompt, "反例应包含 LLM 常见的说明性前后缀"
+    assert "好的" in prompt or "已按意见调整" in prompt, (
+        "反例应包含 LLM 常见的说明性前后缀"
+    )
     assert "第一个字符必须是 `[`" in prompt, "结尾应再次强调 JSON 边界"
 
 
@@ -317,7 +339,7 @@ def test_regen_instruction_keeps_prose_hint_for_chapter(monkeypatch):
 
     state = ReviewSubState(
         review_type="chapter",
-        system_context="SYS",
+        system_prompt="SYS",
         task_prompt="首轮章节任务",
         review_feedback="[AI审稿意见]\n对白偏干",
         review_history=[

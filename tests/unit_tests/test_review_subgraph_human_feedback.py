@@ -30,7 +30,9 @@ class _FakeLLM:
     - generate:*    返回一段占位正文。
     """
 
-    def __init__(self, label: str, recorder: list, self_review_reply: str = "无问题") -> None:
+    def __init__(
+        self, label: str, recorder: list, self_review_reply: str = "无问题"
+    ) -> None:
         self.label = label
         self.recorder = recorder
         self.self_review_reply = self_review_reply
@@ -69,8 +71,8 @@ def test_human_feedback_reaches_self_review(monkeypatch):
     graph = _build_graph()
     config = {"configurable": {"thread_id": "t-char"}}
     init = ReviewSubState(
-        review_type="character_cards",
-        system_context="SYSTEM_CONTEXT_角色",
+        review_type="core_theme",
+        system_prompt="SYSTEM_CONTEXT_角色",
         task_prompt="请生成主要人物档案。",
     )
 
@@ -78,9 +80,7 @@ def test_human_feedback_reaches_self_review(monkeypatch):
     graph.invoke(init, config)
 
     # ② 人工打回（带修改意见 + 深度思考）→ 重写 → 自审 → 再次停在 human_review
-    graph.invoke(
-        Command(resume={"feedback": HUMAN_FB, "thinking": "enabled"}), config
-    )
+    graph.invoke(Command(resume={"feedback": HUMAN_FB, "thinking": "enabled"}), config)
 
     self_reviews = [msgs for lbl, msgs in recorder if lbl.startswith("self_review:")]
     assert len(self_reviews) == 2, "应有两次自审：首次生成后 + 打回重写后"
@@ -111,8 +111,8 @@ def test_first_generation_has_no_human_feedback_prefix(monkeypatch):
         sg, "get_llm", lambda *a, **k: _FakeLLM(k.get("label", "llm"), recorder)
     )
     state = ReviewSubState(
-        review_type="character_cards",
-        system_context="SYS",
+        review_type="core_theme",
+        system_prompt="SYS",
         current_draft="一段草稿正文。",
         human_feedback="",
     )
@@ -131,12 +131,15 @@ def test_machine_review_coexists_with_human_feedback(monkeypatch):
     recorder: list = []
     AI_ISSUE = "主角动机仍不够清晰，请再补一处早期铺垫。"
     monkeypatch.setattr(
-        sg, "get_llm",
-        lambda *a, **k: _FakeLLM(k.get("label", "llm"), recorder, self_review_reply=AI_ISSUE),
+        sg,
+        "get_llm",
+        lambda *a, **k: _FakeLLM(
+            k.get("label", "llm"), recorder, self_review_reply=AI_ISSUE
+        ),
     )
     state = ReviewSubState(
         review_type="character_cards",
-        system_context="SYS",
+        system_prompt="SYS",
         current_draft="一段人物档案草稿。",
         human_feedback="请补充主角的一个关键弱点。",
     )
@@ -148,9 +151,9 @@ def test_machine_review_coexists_with_human_feedback(monkeypatch):
 
     # ② 自审 prompt 里人工意见（最高优先级）与机器审核清单并存
     prompt = _texts(recorder[-1][1])
-    assert "最高优先级：人工审核意见" in prompt          # 人工意见强调块在
-    assert "请补充主角的一个关键弱点。" in prompt         # 人工意见原文在
-    assert "卡司配额" in prompt                          # 标准机器审核清单也在（CHARACTER_CARDS_REVIEW_PROMPT）
+    assert "最高优先级：人工审核意见" in prompt  # 人工意见强调块在
+    assert "请补充主角的一个关键弱点。" in prompt  # 人工意见原文在
+    assert "卡司配额" in prompt  # 标准机器审核清单也在（CHARACTER_CARDS_REVIEW_PROMPT）
 
 
 def test_generate_consumes_machine_feedback_and_keeps_human_feedback(monkeypatch):
@@ -161,10 +164,10 @@ def test_generate_consumes_machine_feedback_and_keeps_human_feedback(monkeypatch
     )
     ai_fb = "[AI审稿意见]\n主角动机不清晰。"
     state = ReviewSubState(
-        review_type="character_cards",
-        system_context="SYS",
-        review_feedback=ai_fb,                       # 机器意见：待本轮 generate 消费
-        human_feedback="请补充主角弱点。",             # 人工意见：应持久保留
+        review_type="core_theme",
+        system_prompt="SYS",
+        review_feedback=ai_fb,  # 机器意见：待本轮 generate 消费
+        human_feedback="请补充主角弱点。",  # 人工意见：应持久保留
         review_history=[
             {"role": "human", "content": "请补充主角弱点。"},
             {"role": "ai", "content": "上一版草稿。"},

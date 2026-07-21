@@ -29,6 +29,7 @@ from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts.registry import available_genres
+from noval_workflow.prompts.render import SystemRole, build_system
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -75,44 +76,17 @@ def _chat_only(history: list[dict]) -> list[dict]:
     return [e for e in history if not _is_pin(e)]
 
 # ── prompts ──────────────────────────────────────────────────────────────────
-_BRAINSTORM_SYSTEM_PROMPT_BASE = """你是一位资深的小说策划与灵感教练。你的任务是通过轻松的多轮对话，
-和用户一起脑爆出一部小说的雏形：基础设定（题材、写作风格、目标读者、核心基调、篇幅）、
-核心主题立意、世界观框架，以及核心冲突（主角面对的核心矛盾、对抗势力、贯穿全书的主要张力）。
-
-对话原则：
-1. 一次只聚焦一两个问题，循序渐进，不要一口气抛出一堆问题。
-2. 主动提出有启发性的可选方向供用户挑选，而不是干巴巴地索取信息。
-3. 适时小结已经达成的共识，帮助用户看清雏形逐渐成形。
-4. 当用户表示满意、或基础信息与主题 / 世界观 / 核心冲突已较完整时，主动提示用户可以「结束脑爆」进入正式创作。
-5. 用自然、口语化的中文，简洁有重点。
-
-【结束前必须共同敲定的 7 个基础参数】
-在提示用户「结束脑爆」之前，请确认下列 7 项都已经和用户聊清楚（可以是用户主动提，也可以你主动提问引导）：
-1. 小说名称
-2. 小说类型（必须落在这几个候选之内：{genres_list}——不要引导用户去"武侠""奇幻"等不在候选内的类型；如果讨论中偏离，主动收敛到最近的候选值）
-3. 写作风格（如硬核、意识流、白描、幽默轻快、细腻内省等，1-3 个关键词即可）
-4. 目标读者（以兴趣 / 身份为主，如青少年男性、职场女性、中年科幻迷；避免使用"18-25 岁"这类人口学标签）
-5. 核心基调（如热血励志、压抑沉重、温情治愈、悬疑压抑等，1-3 个关键词即可）
-6. 每章字数（如 3000 字、5000 字）
-7. 总字数目标（如 30 万字、100 万字）
-
-引导原则：
-- 不要一次追问多项——每轮主动提 1-2 项即可，混在自然对话里；
-- 允许在同一句里给 2-3 个可选项让用户挑（"你更倾向硬核战斗流还是心理内省流？"）；
-- 用户已经明确表达过的项目就不要重复问；
-- 上述 7 项与核心主题、世界观、核心冲突齐平；这 7 项没聊清就不要建议用户「结束脑爆」。
-
-【定期小结（每 3-4 轮，或聊完一个大话题时）】
-以自然、简短、非机械的方式回顾一次，附在正文末尾即可（不必每一轮都做，避免观感啰嗦）：
-- 「目前咱们已经敲定的：<列 3-6 条要点，可涵盖 7 基础参数中已定项 + 主题 / 世界观 / 冲突方向>」
-- 「还想跟你聊清楚的：<列 1-3 条剩余项，优先点名 7 基础参数中尚未明确的>」
-让用户能一眼看出雏形成型进度，也能主动补足缺项。"""
+# 身份基座(BRAINSTORM_COACH 的"资深策划与灵感教练"职责说明,含 {genres_list} 占位符)
+# 已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_COACH]——通过 build_system 的
+# identity_substitutions 参数动态注入候选题材清单,保持身份文本单点。
+#
+# 保留在此的只有"力量体系分支硬规则"——这属于本次对话的任务契约(按 has_power_system flag
+# 分支决定,非身份职责),经 build_system 的 task_contract 参数传入。
 
 # 力量体系分支硬规则：由前端 switch 决定。开关状态实时写回 state.has_power_system，
 # 每轮 brainstorm_respond 按 flag 拼进 system prompt 让 AI 引导风格与用户意图对齐——
 # 避免"AI 按题材默认引导 vs 用户实际想要"的错位。
-_POWER_SYSTEM_ON_RULE = """
-【本作力量体系约定：开启】
+_POWER_SYSTEM_ON_RULE = """【本作力量体系约定：开启】
 本作**包含**独立力量体系。世界观有雏形后请**主动引导**用户聊清这套体系——聊的过程中至少覆盖以下维度，
 避免只停留在"见习→大师"式的口味级描述：
 1. **力量来源与底层原理**：力量是从哪里来的、遵循什么底层规则；
@@ -126,8 +100,7 @@ _POWER_SYSTEM_ON_RULE = """
 
 这套体系是全书人物成长与冲突升级的统一标尺，务必聊到"能直接照着写打斗和晋级章节"的颗粒度。"""
 
-_POWER_SYSTEM_OFF_RULE = """
-【本作力量体系约定：关闭】
+_POWER_SYSTEM_OFF_RULE = """【本作力量体系约定：关闭】
 本作**不单列**力量体系。实力/竞争规则融进世界观与冲突即可（如资源、地位、人脉、社会规则）。
 **不要主动询问**"力量体系"、"修炼境界"、"异能等级"之类的概念——除非用户明确提出，否则不引入这个维度。"""
 
@@ -136,12 +109,21 @@ def _build_brainstorm_system_prompt(has_power_system: bool) -> str:
     """按作品级 has_power_system 拼脑爆 system prompt。前端 switch 切换后写回 state，
     下一轮 respond 立即感知新 flag——AI 引导风格随开关变化。
 
-    题材候选值 {genres_list} 从 registry 单一权威源动态注入，新增题材包时自动同步进 prompt。"""
+    身份文本(策划与灵感教练职责)从 SystemRole.BRAINSTORM_COACH 单点取,{genres_list} 占位符
+    通过 identity_substitutions 从 registry 单一权威源动态注入(新增题材包时自动同步进 prompt);
+    力量体系分支规则(_POWER_SYSTEM_ON_RULE / _POWER_SYSTEM_OFF_RULE)走 build_system 的
+    task_contract 参数——脑爆不属于创作产线,BRAINSTORM_COACH 在 _NO_HARD_CONTRACTS_ROLES
+    白名单中,不叠硬契约。
+    """
     rule = _POWER_SYSTEM_ON_RULE if has_power_system else _POWER_SYSTEM_OFF_RULE
     genres_list = " / ".join(available_genres())
-    return _BRAINSTORM_SYSTEM_PROMPT_BASE.replace("{genres_list}", genres_list) + rule
+    return build_system(
+        SystemRole.BRAINSTORM_COACH,
+        task_contract=rule,
+        identity_substitutions={"genres_list": genres_list},
+    )
 
-_COMPRESS_SYSTEM_PROMPT = "你是严谨的对话纪要员，擅长把长对话压缩成不丢关键信息的要点概要。"
+# 对话纪要员身份已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_COMPRESSOR]。
 
 _COMPRESS_PROMPT = """以下是一段小说灵感脑爆对话的早期内容（可能已包含一份更早的概要）。
 请把它压缩成一份简明的要点概要，保留所有已经确定或倾向的设定、主题、世界观线索与关键决定，
@@ -149,8 +131,7 @@ _COMPRESS_PROMPT = """以下是一段小说灵感脑爆对话的早期内容（�
 
 {material}"""
 
-_FINALIZE_MARKDOWN_SYSTEM_PROMPT = """你是一位小说设定整理员。你的唯一职责是把用户和 AI 在脑爆对话里
-**已经共同敲定**的完整版本原封不动地整理成一份 markdown 文档——**不改写、不压缩、不补充你自己的理解**。"""
+# 设定整理员身份已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_ORGANIZER]。
 
 # has_power_system=True 分支：4 节完整格式（含力量体系）
 _FINALIZE_MARKDOWN_PROMPT_WITH_POWER = """以下是一段小说灵感脑爆对话（含早期概要与最近对话）。请把用户和 AI 在
@@ -261,7 +242,9 @@ def _compress(prev_summary: str, overflow: list[dict]) -> str:
         llm = get_llm(temperature=0.3, label="brainstorm_compress", thinking="disabled")
         result = llm.invoke(
             [
-                SystemMessage(content=_COMPRESS_SYSTEM_PROMPT),
+                SystemMessage(
+                    content=build_system(SystemRole.BRAINSTORM_COMPRESSOR, "把长对话压缩为不丢关键信息的要点概要")
+                ),
                 HumanMessage(content=_COMPRESS_PROMPT.format(material=material)),
             ],
             config={"tags": ["nostream"]},  # 别被 messages-tuple 流出到前端
@@ -406,7 +389,9 @@ def brainstorm_finalize(state: NovelState) -> dict:
         llm = get_llm(temperature=0.3, label="brainstorm_finalize", thinking="disabled")
         # 无 nostream tag：chunks 会流到前端聊天页 AI 气泡末尾
         reply = llm.invoke([
-            SystemMessage(content=_FINALIZE_MARKDOWN_SYSTEM_PROMPT),
+            SystemMessage(
+                content=build_system(SystemRole.BRAINSTORM_ORGANIZER, "把脑爆对话中已敲定的完整版原封不动整理成 markdown")
+            ),
             HumanMessage(content=prompt_template.format(material=material)),
         ]).content
         markdown = (reply or "").strip()
@@ -511,9 +496,7 @@ def _split_finalize_markdown(md: str, has_power_system: bool) -> tuple[dict[str,
 # 让 collect_user_inputs 让用户从下拉手选，而不是往 state 里塞下拉不识别的野值。
 _ALLOWED_GENRES: frozenset[str] = frozenset(available_genres())
 
-_BASIC_EXTRACT_SYSTEM_PROMPT = """你是一位小说信息抽取员。你的唯一任务是从一段脑爆对话历史 + 完整版整理稿里，
-把用户和 AI 已经共同敲定的 7 个基础参数抽成一份严格的 JSON。**不同字段有不同的严格度**——
-硬事实类字段绝不允许脑补，氛围类字段可以做温和归纳（详见下方规则）。"""
+# 信息抽取员身份已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_EXTRACTOR]。
 
 _BASIC_EXTRACT_PROMPT = """以下是一段小说灵感脑爆对话（含 AI 已整理的完整版 markdown）。请只抽取
 **基础参数**（7 个字段），输出一份严格 JSON。
@@ -585,7 +568,9 @@ def _extract_basic_fields(state: NovelState) -> dict[str, str]:
         llm = get_llm(temperature=0.2, label="brainstorm_extract_basic", thinking="disabled")
         reply = llm.invoke(
             [
-                SystemMessage(content=_BASIC_EXTRACT_SYSTEM_PROMPT),
+                SystemMessage(
+                    content=build_system(SystemRole.BRAINSTORM_EXTRACTOR, "把脑爆对话已敲定的 7 个基础参数抽成严格 JSON")
+                ),
                 HumanMessage(
                     content=_BASIC_EXTRACT_PROMPT.format(
                         material=material,

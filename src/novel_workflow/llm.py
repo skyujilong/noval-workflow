@@ -117,14 +117,17 @@ class _PerfLogHandler(BaseCallbackHandler):
                 msg_type = getattr(m, "type", "unknown")
                 if msg_type == "system":
                     system_chars += chars
-                    # 只解析第一个 system message 的组成结构
-                    if not sections:
-                        sections = _parse_system_sections(content)
                 elif msg_type == "human":
                     user_chars += chars
                     # 用首条 human 的开头预览标记「这是哪种任务」
                     if not user_preview:
                         user_preview = _preview(content)
+                    # 三层 prompt 重构后，设定/台账资料从 system 移到 user 的【参考资料】块，
+                    # system 只剩身份+硬契约（瘦、无【】资料段头）。故 sections 改从首条 human
+                    # 解析：白名单 _SYSTEM_CONTEXT_TOP_SECTIONS 只匹配设定段名（世界观/人物档案…），
+                    # 【参考资料】/【本次任务】等分隔符不在白名单、自动跳过，只余真正的设定组成。
+                    if not sections:
+                        sections = _parse_context_sections(content)
 
         self._pending[run_id] = _PendingCall(
             label=self._label,
@@ -142,7 +145,7 @@ class _PerfLogHandler(BaseCallbackHandler):
         self._log(f"  总计: {total_chars} 字符 (system: {system_chars}, user: {user_chars})")
         if sections:
             summary = ", ".join(f"{s.name}: ~{s.chars}字" for s in sections)
-            self._log(f"  System Context 组成: {summary}")
+            self._log(f"  参考资料（L2）组成: {summary}")
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         pending = self._pending.pop(run_id, None)
@@ -246,8 +249,11 @@ class _PerfLogHandler(BaseCallbackHandler):
         return None
 
 
-def _parse_system_sections(text: str) -> list[_Section]:
-    """从 system message 里按顶层【】section 拆出结构化画像（名字 + 字符数 + 正文预览）。
+def _parse_context_sections(text: str) -> list[_Section]:
+    """从消息正文里按顶层【】section 拆出结构化画像（名字 + 字符数 + 正文预览）。
+
+    三层 prompt 重构后由 on_chat_model_start 对**首条 human message**调用（设定资料
+    已从 system 移到 user 的【参考资料】块）；函数本身与消息类型无关，可解析任意文本。
 
     为什么要白名单：LLM 生成的力量体系正文里也带【输出天花板】【治疗核心】这类
     子标题，伏笔台账里更是每个条目都有【伏笔编号】/【伏笔名称】等一堆【】——若不

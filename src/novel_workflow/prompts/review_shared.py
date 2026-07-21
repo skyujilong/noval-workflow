@@ -9,7 +9,7 @@ from __future__ import annotations
 
 
 # 跨设定 / 因果 / 反降智审查片段——追加进 4 个 foundation 审核 prompt。
-# generate 与 llm_self_review 共享同一 system_context（含前置已定稿设定），审稿模型本就"能"
+# generate 与 llm_self_review 共享同一 system_prompt（L1 身份+硬契约）+ context_prompt（L2 前置设定，经 render_user 进 user），审稿模型本就"能"
 # 跨字段比对，此片段把这项审查从"可选"抬成"必查"。用字符串拼接注入（其内无 {} 占位，
 # 不会干扰下游 .format(draft=...)）。刻意声明"优先于字数"，扭转旧 prompt 以字数达标为主的倾向。
 _CROSS_SETTING_AUDIT = """
@@ -209,8 +209,7 @@ TITLES_REVIEW_PROMPT: str = _titles_review_prompt()
 def _arc_outline_review_prompt() -> str:
     from noval_workflow.config import BATCH_SIZE
     max_words = BATCH_SIZE * 500
-    return f"""# 角色：你是专业网文弧线大纲质检专家
-你的任务是严格审核以下批次弧线大纲，确保其格式规范、内容可落地、逻辑自洽。
+    return f"""你的任务是严格审核以下批次弧线大纲，确保其格式规范、内容可落地、逻辑自洽。
 
 ## 待审核内容
 {{draft}}
@@ -232,8 +231,7 @@ ARC_OUTLINE_REVIEW_PROMPT: str = _arc_outline_review_prompt()
 
 # ── 章节规划(chapter_plan)审核 ────────────────────────────────────────────────
 
-CHAPTER_PLAN_REVIEW_PROMPT = """# 角色：你是长篇网文的中景大纲质检专家
-你的任务是严格审核以下滚动章节规划(chapter_plan)条目，确保其结构合法、承接自然、节奏合理、字段可用，尤其要防止「节奏塌陷」「连续被虐」「钩子套路」「套话占位」四类顽疾。
+CHAPTER_PLAN_REVIEW_PROMPT = """你的任务是严格审核以下滚动章节规划(chapter_plan)条目，确保其结构合法、承接自然、节奏合理、字段可用，尤其要防止「节奏塌陷」「连续被虐」「钩子套路」「套话占位」四类顽疾。
 
 ## 待审核内容(严格 JSON 数组)
 {draft}
@@ -357,7 +355,7 @@ FORESHADOW_PRUNE_ANALYSIS_PROMPT = """请分析以下伏笔台账，给出精简
 
 # ── 实体卡库精简分析提示词（章末，实体发现之后调用）──────────────────────────
 
-ENTITY_CARDS_PRUNE_ANALYSIS_PROMPT = """你是专业的小说实体卡库管理专家，负责在章末精简「登场实体卡库」，剔除不再具有复现价值的噪音卡，抑制写作上下文（人物档案/装备清单）持续膨胀。
+ENTITY_CARDS_PRUNE_ANALYSIS_PROMPT = """请在章末精简「登场实体卡库」，剔除不再具有复现价值的噪音卡，抑制写作上下文（人物档案/装备清单）持续膨胀。
 
 【参考上下文】
 近3章章节概要：{recent_summaries}
@@ -399,13 +397,9 @@ ENTITY_CARDS_PRUNE_ANALYSIS_PROMPT = """你是专业的小说实体卡库管理�
 
 # ── 设定一致性总审（save_config 冻结前的跨设定闸门，nodes/consistency.py 使用）──────
 # 复活 FOUNDATION_REVIEW_PROMPT 的初衷（跨设定矛盾检测），但落到真实节点 audit_consistency 上。
-# System 刻意保持中立审校官口吻、不含"请严格遵守"，让模型批判性审查，而非把设定当权威照单全收。
-CONSISTENCY_AUDIT_SYSTEM_PROMPT = (
-    "你是一名资深的小说设定终审架构师。你的职责不是润色文字，而是把一部小说进入正式创作前的"
-    "全部底层设定当作一个逻辑系统来体检：跨设定找矛盾、找因果断裂、找降智硬伤。"
-    "对送审设定保持批判、审慎，不预设它们正确；只报确实会污染下游大纲 / 正文创作的结构性硬伤，"
-    "不吹毛求疵、不纠结遣词与字数。"
-)
+# 身份文本(终审架构师职责)迁入 render._ROLE_TEXT[SystemRole.CONSISTENCY_AUDITOR]——
+# 单点定义,与其他 role 一致。原 CONSISTENCY_AUDIT_SYSTEM_PROMPT 常量已删除,请直接
+# build_system(SystemRole.CONSISTENCY_AUDITOR, ...) 组装 L1。
 
 # {draft} 由 audit_consistency 填入「拼接后的全部已定稿设定」，对齐全仓 review prompt 惯例。
 CONSISTENCY_AUDIT_PROMPT = """以下是一部小说在正式创作前已定稿的全部底层设定，请做一次「设定一致性总审」，把它们当作一个整体系统交叉审查。
@@ -429,13 +423,8 @@ CONSISTENCY_AUDIT_PROMPT = """以下是一部小说在正式创作前已定稿�
 
 # ── 设定一致性总审 · AI 修订（consistency_diff_gate 上游 revise_consistency 使用）──────
 # 依据 audit 产出的「问题清单」，对被点名的设定项做最小必要改写，输出整段替换文本（非补丁）。
-# System 刻意约束「只改被点名的硬伤、保留其余一切」，避免借修订之名整篇重写、引入新降智。
-CONSISTENCY_REVISE_SYSTEM_PROMPT = (
-    "你是一名严谨的小说设定修订工程师。给定一份「设定一致性问题清单」和当前全部底层设定，"
-    "你的唯一任务是：针对清单里明确点名的硬伤，对相关设定项做最小必要的改写，使矛盾 / 断链 / 降智被消除，"
-    "同时**完整保留所有没有问题的内容与表达**。严禁借修订之名整篇重写、润色文字、改动未被点名的设定项，"
-    "或引入清单之外的新设定。改动要克制、精准、可追溯到具体某条问题。"
-)
+# 身份文本(修订工程师职责)迁入 render._ROLE_TEXT[SystemRole.SETTINGS_ENGINEER]——
+# 原 CONSISTENCY_REVISE_SYSTEM_PROMPT 常量已删除,请直接 build_system(SystemRole.SETTINGS_ENGINEER, ...) 组装 L1。
 
 # {report} 填入 audit 的问题清单；{settings} 填入按字段 key 打标的当前设定（_collect_foundation_tagged）。
 CONSISTENCY_REVISE_PROMPT = """下面是一部小说进入正式创作前的【设定一致性问题清单】和【当前全部底层设定】。请依据问题清单，对被点名的设定项做**最小必要修订**。

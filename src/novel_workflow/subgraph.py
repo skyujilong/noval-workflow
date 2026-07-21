@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import json
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from pydantic import BaseModel
 
 from noval_workflow.config import SELF_REVIEW_DISABLED_TYPES
+from noval_workflow.drafts import (
+    BeatDraft,
+    CharacterCardsDraft,
+    ChapterPlanItemDraft,
+    EntityCardsDraft,
+    EntityDiscoverDraft,
+    ForeshadowingDraft,
+    VolumeCastDraft,
+    VolumesDraft,
+)
 from noval_workflow.interrupt_types import review_type_to_interrupt_type
+from noval_workflow.json_utils import invoke_pydantic, invoke_pydantic_list
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts import (
     ARC_OUTLINE_REVIEW_PROMPT,
@@ -31,12 +45,35 @@ from noval_workflow.prompts import (
     get_evolved_directives,
     get_prompt_pack,
 )
+from noval_workflow.prompts.render import SystemRole, build_system, render_user
 from noval_workflow.state import ReviewSubState
 
 # 自进化整改注入白名单:「会重复生成」的三个环节,打回重跑时从该书 overrides 新鲜读取对应桶,
 # 使当前这一次的打回重跑立即遵循刚提炼应用(或整理消解)的最新整改。
 # 三桶隔离(base.py::_REVIEW_TYPE_TO_EVOLVED_FIELD):chapter/arc_outline/scene_beats 各读各的。
 _EVOLVABLE_REVIEW_TYPES = {"chapter", "arc_outline", "scene_beats"}
+
+# LLM 出 JSON 的 review_type 与其 pydantic draft schema 的映射——generate 节点用它做字段级
+# 校验+失败回喂重试。散文类 review 不在此表，原样 llm.invoke。
+# 覆盖全部 8 种 JSON review（Phase 1 三种 + Phase 2 五种）：
+#   dict 顶层（走 invoke_pydantic）：character_cards / entity_cards / entity_discover /
+#     volume_cast / volumes / foreshadowing
+#   list 顶层（走 invoke_pydantic_list，见 _DRAFT_ITEM_SCHEMAS）：chapter_plan / scene_beats
+_DRAFT_SCHEMAS: dict[str, type[BaseModel]] = {
+    "character_cards": CharacterCardsDraft,
+    "entity_cards": EntityCardsDraft,
+    "entity_discover": EntityDiscoverDraft,
+    "volume_cast": VolumeCastDraft,
+    "volumes": VolumesDraft,
+    "foreshadowing": ForeshadowingDraft,
+}
+
+# LLM 出 **裸 JSON 数组**顶层的 review_type：每条 item 按 item_schema 逐条校验。
+# 与 _DRAFT_SCHEMAS 互斥——同一个 review_type 不会同时在两张表里。
+_DRAFT_ITEM_SCHEMAS: dict[str, type[BaseModel]] = {
+    "chapter_plan": ChapterPlanItemDraft,
+    "scene_beats": BeatDraft,
+}
 
 # Max review rounds kept in history, per review_type.
 # core_theme/titles 等短内容：5 轮可负担；chapter 草稿长（~2000 字/篇），3 轮控制 token。
@@ -112,10 +149,10 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  - 包 ```json 围栏:```json\\n[...]\\n```\n"
         "  - 输出前有解释:「好的,以下是修改后的 beats:[...]」\n"
         "  - 输出后有说明:「[...] 已按意见调整了 pacing」\n"
-        "  - 省略字段:{\"id\":1,\"scene\":\"...\"}(缺 device_tags/target_words 等)\n"
+        '  - 省略字段:{"id":1,"scene":"..."}(缺 device_tags/target_words 等)\n'
         "  - 输出散文/markdown 列表(- Beat 1:...)——scene_beats **不是**正文,是节拍表\n"
-        "  - 非枚举 tag:device_tags:[\"climax\"] / [\"foreshadow\"](必须严格取自上表 12 个)\n"
-        "  - pacing 用中文或其他值:pacing:\"快\" / \"急促\"(只能是 slow/medium/fast)\n\n"
+        '  - 非枚举 tag:device_tags:["climax"] / ["foreshadow"](必须严格取自上表 12 个)\n'
+        '  - pacing 用中文或其他值:pacing:"快" / "急促"(只能是 slow/medium/fast)\n\n'
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),
     # chapter_plan 与 scene_beats 同类:严格 JSON 数组契约,4 字段(chapter/purpose/key_turn/ending_hook),
@@ -142,12 +179,12 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  - 输出前有解释:「好的,以下是修改后的规划:[...]」\n"
         "  - 输出后有说明:「[...] 已按意见调整第 3 章」\n"
         "  - 章号跳号 / 倒序 / 与已锁定条目重复\n"
-        "  - 字段用中文键名:{\"章号\":12,\"目标\":\"...\"}\n"
-        "  - 缺字段:{\"chapter\":12,\"purpose\":\"...\"}(缺 key_turn / ending_hook / intensity)\n"
-        "  - 字段值为空串或占位:{\"ending_hook\":\"\"} / {\"key_turn\":\"待定\"} / {\"key_turn\":\"无强转折,以铺垫为主\"}\n"
-        "  - intensity 非 7 档:{\"intensity\":\"快\"} / {\"intensity\":\"强\"}(必须是铺垫/缓冲/推进/小转折/大转折/爆发/回落之一)\n"
+        '  - 字段用中文键名:{"章号":12,"目标":"..."}\n'
+        '  - 缺字段:{"chapter":12,"purpose":"..."}(缺 key_turn / ending_hook / intensity)\n'
+        '  - 字段值为空串或占位:{"ending_hook":""} / {"key_turn":"待定"} / {"key_turn":"无强转折,以铺垫为主"}\n'
+        '  - intensity 非 7 档:{"intensity":"快"} / {"intensity":"强"}(必须是铺垫/缓冲/推进/小转折/大转折/爆发/回落之一)\n'
         "  - key_turn 写套话「无强转折,以XX铺垫为主」(必须写具体事件,哪怕淡章也要写明推进了什么)\n"
-        "  - ending_hook 用套路:{\"ending_hook\":\"门外传来脚步声\"} / {\"ending_hook\":\"一道黑影闪过\"}(必须是具体信息点)\n"
+        '  - ending_hook 用套路:{"ending_hook":"门外传来脚步声"} / {"ending_hook":"一道黑影闪过"}(必须是具体信息点)\n'
         "  - 输出散文/markdown 列表(第 12 章:主角...)——chapter_plan **不是**大纲文本,是结构化条目\n\n"
         "再次强调:第一个字符必须是 `[`,最后一个字符必须是 `]`,中间只有合法 JSON。"
     ),
@@ -164,11 +201,11 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  personality/abilities/motivation/current_state/relations) / 物品段(owner/effect/status/rank) /\n"
         "  势力段(standing),不适用的段留空字符串,字段一个都不能少。\n\n"
         "【❌ 严禁的错误形态】\n"
-        "  - 顶层输出数组 [ ... ] 而非对象 { \"cast\":..., \"new_cards\":... }\n"
+        '  - 顶层输出数组 [ ... ] 而非对象 { "cast":..., "new_cards":... }\n'
         "  - 把【已有实体】（名字/别称已在清单里）也塞进 new_cards（重复建卡,不合格）\n"
         "  - 人物卡缺 role 或 role 非六枚举之一（主角/主要配角/功能性反派/根源反派/感情线角色/次要角色）\n"
         "  - 包 ```json 围栏 / 输出前后有解释文字\n"
-        "  - type 非枚举:{\"type\":\"角色\"}（只能是 人物/物品/装备/势力/地点）\n"
+        '  - type 非枚举:{"type":"角色"}（只能是 人物/物品/装备/势力/地点）\n'
         "  - 缺字段:new_card 缺 speech_style / status 等（不适用也要留空串,不能省键）\n\n"
         "再次强调:第一个字符必须是 `{`,最后一个字符必须是 `}`,中间只有合法 JSON。"
     ),
@@ -180,7 +217,7 @@ _REGEN_OUTPUT_HINTS: dict[str, str] = {
         "  updates(list[dict],已有卡动态变更,每条含 name + 按 type 白名单字段,无则[])。\n"
         "  白名单:人物→current_state/motivation/relations;装备/物品→owner/status;势力→standing。\n\n"
         "【❌ 严禁】顶层输出数组 / 包围栏 / 前后解释 / updates 里改 canon(name·type·role·外貌·口吻·人设·能力·深层设计·effect·rank)\n"
-        "(只能改上述白名单动态字段)。本章无发现无变化 → {\"new_cards\":[],\"updates\":[]}。"
+        '(只能改上述白名单动态字段)。本章无发现无变化 → {"new_cards":[],"updates":[]}。'
     ),
 }
 
@@ -207,6 +244,7 @@ _REVIEW_PROMPTS = {
 
 PASS_SIGNALS = {"无问题", "没有问题", "无明显问题", "内容合格", "质量合格"}
 
+
 # 触发「判为通过」的条件：
 #   1. 整条回复就是一个 pass 信号（精确匹配，允许前后有标点/空格）
 #   2. 回复较短（< 40 字）且完全被 pass 信号覆盖（避免「第二点无问题，但…」误判）
@@ -216,7 +254,18 @@ def _is_pass(feedback: str) -> bool:
     if stripped in PASS_SIGNALS:
         return True
     # 短回复且只包含 pass 信号词，无否定/转折词
-    NEGATIVE_HINTS = {"但", "不", "问题", "错误", "矛盾", "建议", "修改", "缺少", "缺乏", "需要"}
+    NEGATIVE_HINTS = {
+        "但",
+        "不",
+        "问题",
+        "错误",
+        "矛盾",
+        "建议",
+        "修改",
+        "缺少",
+        "缺乏",
+        "需要",
+    }
     if len(feedback) < 40 and any(s in feedback for s in PASS_SIGNALS):
         if not any(h in feedback for h in NEGATIVE_HINTS):
             return True
@@ -242,19 +291,10 @@ def generate(state: ReviewSubState) -> dict:
         thinking=thinking,
     )
 
-    # snapshot 类型的生成：拼「数据维护员身份 + 完整基础设定（去创作身份的 system_context）」，
-    # 使等级/装备/技能/资源等硬性数值与世界观、力量/等级体系保持一致；
-    # system_context 由 _prepare_* 以 include_identity=False 传入（纯设定块，无创作者口吻）。
-    if is_snapshot:
-        system_content = "你是严谨的小说数据维护员，负责根据任务要求生成或更新各类快照台账数据。"
-        if state.system_context:
-            system_content += (
-                "\n\n以下是本作品的核心设定（含世界观），"
-                "维护台账数据时须与之保持一致：\n" + state.system_context
-            )
-        messages: list = [SystemMessage(content=system_content)]
-    else:
-        messages: list = [SystemMessage(content=state.system_context)]
+    # snapshot 类型的生成：身份已在 prepare 的 system_prompt（SNAPSHOT_IDENTITY_MAINTAINER），
+    # 设定在 context_prompt（exclude_snapshots）。这里只组装 messages，不再内联拼身份/设定。
+    # thinking 决策保留：snapshot 类关思考加速，创作类保留思考。
+    messages: list = [SystemMessage(content=state.system_prompt)]
 
     if state.review_history:
         # Replay accumulated history, then append current feedback as new user turn
@@ -277,24 +317,62 @@ def generate(state: ReviewSubState) -> dict:
             regen_instruction += evolved_directives_block(
                 get_evolved_directives(flavor, state.review_type)
             )
-        messages.append(HumanMessage(content=regen_instruction))
+        # 重跑分支：最新轮用 render_user 拼 L2 资料 + 重写指令，让重写也能看到设定/前文。
+        # 历史轮次（replay）的 user 无 L2 可恢复，但最新轮 L2 由当前 state 重新注入。
+        messages.append(
+            HumanMessage(content=render_user(state.context_prompt, regen_instruction))
+        )
         new_user_msg = state.review_feedback  # 历史只存原始 feedback，不含 instruction
     else:
-        # First generation: no history yet, start with task prompt
-        messages.append(HumanMessage(content=state.task_prompt))
+        # First generation: L2 资料 + L3 任务，用 render_user 拼成带【参考资料】/【本次任务】分区的 user。
+        messages.append(
+            HumanMessage(content=render_user(state.context_prompt, state.task_prompt))
+        )
         new_user_msg = state.task_prompt
 
-    result = llm.invoke(messages)
-    draft = result.content
+    # 8 种 JSON review_type 走 pydantic gateway——LLM 出 dict/list 值时校验失败会回喂 LLM
+    # 重生（三段式），避免 str 字段被 LLM 拆成嵌套对象串到前端崩页。散文类 review 不在两张
+    # 表里，走 else 分支原样穿透。dict 顶层与 list 顶层显式分派，不用反射猜类型。
+    if state.review_type in _DRAFT_ITEM_SCHEMAS:
+        # list 顶层（chapter_plan / scene_beats）：LLM 出裸 JSON 数组，逐条按 item_schema 校验
+        item_schema = _DRAFT_ITEM_SCHEMAS[state.review_type]
+        items = invoke_pydantic_list(
+            llm,
+            messages,
+            item_schema=item_schema,
+            label=state.review_type,
+            max_retries=2,
+        )
+        # dump 成裸数组：与老 repair_and_parse(kind=list) 落库路径的字符串形态保持一致
+        draft = json.dumps(
+            [m.model_dump(mode="json") for m in items],
+            ensure_ascii=False,
+            indent=2,
+        )
+    elif state.review_type in _DRAFT_SCHEMAS:
+        # dict 顶层（character_cards / entity_cards / entity_discover / volume_cast /
+        # volumes / foreshadowing）：走 invoke_pydantic 单模型校验
+        schema = _DRAFT_SCHEMAS[state.review_type]
+        model = invoke_pydantic(
+            llm, messages, schema=schema, label=state.review_type, max_retries=2
+        )
+        # serialize_as_any=True：判别联合子类（CharacterCardDraft/ItemCardDraft 等）按
+        # 运行时类型 dump，保留子类独有字段（role/ability_contract/effect 等）
+        draft = model.model_dump_json(indent=2, serialize_as_any=True)
+    else:
+        # 散文类 review（core_theme / world_building / chapter / arc_outline 等）——
+        # 不需要字段级 schema 校验，一次 llm.invoke 原样落 current_draft。
+        result = llm.invoke(messages)
+        draft = result.content
 
     # Append this round to history and trim to per-type window
     max_rounds = _HISTORY_MAX_ROUNDS.get(state.review_type, _HISTORY_MAX_ROUNDS_DEFAULT)
     new_history = list(state.review_history) + [
         {"role": "human", "content": new_user_msg},
-        {"role": "ai",    "content": draft},
+        {"role": "ai", "content": draft},
     ]
     if len(new_history) > max_rounds * 2:
-        new_history = new_history[-(max_rounds * 2):]
+        new_history = new_history[-(max_rounds * 2) :]
 
     return {
         "current_draft": draft,
@@ -304,6 +382,16 @@ def generate(state: ReviewSubState) -> dict:
 
 
 _SNAPSHOT_REVIEW_TYPES = {"foreshadowing", "phase_summary"}
+
+# 审核阶段身份切换表:上游 prepare 写入的 state.system_prompt 是"创作者"身份(题材作家/数据维护员),
+# 而 arc_outline / chapter_plan 的审核 prompt 里立的是独立"质检专家"身份——若继续复用创作者身份
+# 会与 review_prompt 隐含身份冲突。此表把 review_type 显式派发到审核阶段专属的 SystemRole,
+# 切"质检审校"心态而非"作家发挥"。其他 review_type 保持复用 state.system_prompt(创作者/维护员
+# 审自己产出,与其 review prompt 里的祈使句风格一致,不冲突)。
+_REVIEW_ROLE_MAP: dict[str, SystemRole] = {
+    "arc_outline": SystemRole.ARC_QC,
+    "chapter_plan": SystemRole.CHAPTER_PLAN_QC,
+}
 
 
 def llm_self_review(state: ReviewSubState) -> dict:
@@ -359,27 +447,31 @@ def llm_self_review(state: ReviewSubState) -> dict:
     # For snapshot-type reviews, prepend the task_prompt (which contains the previous
     # snapshot via {prev}) so the reviewer has an explicit baseline for point 5
     # ("no entries dropped vs last snapshot") rather than having to find it buried
-    # in the long system_context.
+    # in the L2 context_prompt (now in the user message via render_user).
     #
-    # snapshot 自审同样注入完整基础设定（拼「审核员身份 + system_context」），据世界观 / 力量体系 /
-    # 人物档案核对硬性数据一致性；仍前置 task_prompt 提供上次快照基线，供「不得漏条目」检查。
-    # system_context 由 _prepare_* 以 include_identity=False 传入（纯设定块，无创作者口吻）。
+    # snapshot 自审：task_prompt（含上次快照基线）前置进 review_prompt，供「不得漏条目」检查。
+    # 身份用 prepare 写入的 system_prompt（snapshot=数据维护员）；设定在 context_prompt。
+    # 自审与 generate 共用 system_prompt：数据维护员审核自己维护的数据，语义成立，审核职责由
+    # review_prompt 的审核清单承载。L2 资料（设定/前文）经 render_user 与 review_prompt 同进 user，
+    # 解决旧路径 review_prompt 不含资料导致自审看不到设定的问题（跨设定一致性审核失效）。
     if state.review_type in _SNAPSHOT_REVIEW_TYPES and state.task_prompt:
         review_prompt = f"【本次更新任务（含上次快照）】\n{state.task_prompt}\n\n---\n\n{human_feedback_prefix}{review_prompt}"
-        system_content = "你是严谨的小说数据审核员，负责审核各类快照数据的完整性与一致性。"
-        if state.system_context:
-            system_content += (
-                "\n\n以下是本作品的核心设定（含世界观），"
-                "请据此核对数据是否与世界观 / 力量体系 / 人物档案一致：\n" + state.system_context
-            )
-        system_msg = SystemMessage(content=system_content)
     else:
         review_prompt = f"{human_feedback_prefix}{review_prompt}"
-        system_msg = SystemMessage(content=state.system_context)
+
+    # 审核阶段身份分派:arc_outline / chapter_plan 走独立"质检专家"身份(见 _REVIEW_ROLE_MAP 注释),
+    # 其余 review_type 复用 prepare 阶段写入的 state.system_prompt(创作者/维护员审自己产出)。
+    if state.review_type in _REVIEW_ROLE_MAP:
+        review_system = build_system(
+            _REVIEW_ROLE_MAP[state.review_type],
+            task_contract=f"审核 {state.review_type} 产出的合规性与逻辑自洽",
+        )
+    else:
+        review_system = state.system_prompt
 
     messages = [
-        system_msg,
-        HumanMessage(content=review_prompt),
+        SystemMessage(content=review_system),
+        HumanMessage(content=render_user(state.context_prompt, review_prompt)),
     ]
 
     result = llm.invoke(messages)
@@ -387,15 +479,33 @@ def llm_self_review(state: ReviewSubState) -> dict:
 
     if _is_pass(feedback):
         return {"review_feedback": "", "llm_review_count": state.llm_review_count + 1}
-    return {"review_feedback": f"[AI审稿意见]\n{feedback}", "llm_review_count": state.llm_review_count + 1}
+    return {
+        "review_feedback": f"[AI审稿意见]\n{feedback}",
+        "llm_review_count": state.llm_review_count + 1,
+    }
 
 
 _APPROVE_SIGNALS = {
     "",  # 空回车 = 通过
     # English
-    "approve", "approved", "ok", "okay", "yes", "y", "lgtm", "good",
+    "approve",
+    "approved",
+    "ok",
+    "okay",
+    "yes",
+    "y",
+    "lgtm",
+    "good",
     # Chinese
-    "无问题", "没问题", "通过", "同意", "好", "好的", "可以", "确认", "批准",
+    "无问题",
+    "没问题",
+    "通过",
+    "同意",
+    "好",
+    "好的",
+    "可以",
+    "确认",
+    "批准",
 }
 
 
@@ -410,20 +520,24 @@ def human_review(state: ReviewSubState) -> dict:
     渲染这些字段，无需再调用 getSubgraphState 反查嵌套子图 state——后者在
     多层子图冒泡时会选错 task，是"多子图映射不对"的根因。
     """
-    feedback = interrupt({
-        "type": review_type_to_interrupt_type(state.review_type).value,
-        "review_type": state.review_type,
-        "current_draft": state.current_draft,
-        "review_feedback": state.review_feedback,
-        "review_history": state.review_history,
-        "llm_review_count": state.llm_review_count,
-        "llm_review_max": state.llm_review_max,
-        # 当前 review_type 的默认深度思考状态，供前端初始化「深度思考」开关，使其默认位置
-        # 与不覆盖时的实际行为一致（创作类开、快照台账类关）。
-        "default_thinking": "disabled" if state.review_type in _SNAPSHOT_REVIEW_TYPES else "enabled",
-        # message 仅放操作提示；草稿正文走 current_draft 字段，前端单独渲染，避免重复存储。
-        "message": "· 直接回车 → 通过\n· 输入修改意见 → 重新生成",
-    })
+    feedback = interrupt(
+        {
+            "type": review_type_to_interrupt_type(state.review_type).value,
+            "review_type": state.review_type,
+            "current_draft": state.current_draft,
+            "review_feedback": state.review_feedback,
+            "review_history": state.review_history,
+            "llm_review_count": state.llm_review_count,
+            "llm_review_max": state.llm_review_max,
+            # 当前 review_type 的默认深度思考状态，供前端初始化「深度思考」开关，使其默认位置
+            # 与不覆盖时的实际行为一致（创作类开、快照台账类关）。
+            "default_thinking": "disabled"
+            if state.review_type in _SNAPSHOT_REVIEW_TYPES
+            else "enabled",
+            # message 仅放操作提示；草稿正文走 current_draft 字段，前端单独渲染，避免重复存储。
+            "message": "· 直接回车 → 通过\n· 输入修改意见 → 重新生成",
+        }
+    )
 
     # resume 值规范形态为结构化 dict（human_review / foreshadowing_review 两个表单统一发送）：
     #   {"feedback": str, "thinking": "enabled"|"disabled"}
@@ -438,11 +552,23 @@ def human_review(state: ReviewSubState) -> dict:
     # 处理 None/falsy 值，避免 str(None) = "None" 的问题
     # 通过分支重置 human_feedback：本轮人工意见已落实，避免残留意见污染下一轮自审。
     if not feedback:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None, "human_feedback": ""}
+        return {
+            "approved": True,
+            "review_feedback": "",
+            "llm_review_count": 0,
+            "thinking_override": None,
+            "human_feedback": "",
+        }
     # 仅用小写副本比对审批信号；review_feedback 保留原始大小写，避免英文意见被压成小写后喂给 LLM。
     feedback_str = str(feedback).strip()
     if feedback_str.lower() in _APPROVE_SIGNALS:
-        return {"approved": True, "review_feedback": "", "llm_review_count": 0, "thinking_override": None, "human_feedback": ""}
+        return {
+            "approved": True,
+            "review_feedback": "",
+            "llm_review_count": 0,
+            "thinking_override": None,
+            "human_feedback": "",
+        }
     # 打回：feedback_str 同时写入 review_feedback（供 generate 本轮消费）与 human_feedback
     # （持久保留，供其后 llm_self_review 核对是否已落实——generate 会清空 review_feedback）。
     return {

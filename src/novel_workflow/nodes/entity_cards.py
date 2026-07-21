@@ -16,6 +16,7 @@ import logging
 
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
+from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.prompts import (
     UPDATABLE_FIELDS,
     entity_cards_prompt,
@@ -23,6 +24,7 @@ from noval_workflow.prompts import (
     normalize_entity_name,
     resolve_owner,
 )
+from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import EntityCard, ItemCard, parse_card
 
 _logger = logging.getLogger(__name__)
@@ -31,12 +33,18 @@ _logger = logging.getLogger(__name__)
 def _prepare_entity_cards(state) -> dict:
     """组装本章登场实体卡的生成任务。
 
-    system_context 用完整基础设定（含世界观/力量体系/人物档案）——判定实体是否已有、能力是否
+    context_prompt 用完整基础设定（含世界观/力量体系/人物档案）——判定实体是否已有、能力是否
     落体系都依赖它；task_prompt 用 entity_cards 组装函数（读 beats/大纲/已有卡库）。
     """
+    pack = get_prompt_pack(state.genre, state.novel_name)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": entity_cards_prompt(state),
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="识别本章登场实体并为新实体建结构化卡",
+            context=build_foundation_context(state, include_identity=False),
+            task=entity_cards_prompt(state),
+        ),
         "review_type": "entity_cards",
     }
 
@@ -63,13 +71,17 @@ def _save_entity_cards(state) -> dict:
     if not isinstance(cast, list):
         raise ValueError(f"登场实体卡 cast 必须是数组，实际类型={type(cast).__name__}")
     if not isinstance(raw_new, list):
-        raise ValueError(f"登场实体卡 new_cards 必须是数组，实际类型={type(raw_new).__name__}")
+        raise ValueError(
+            f"登场实体卡 new_cards 必须是数组，实际类型={type(raw_new).__name__}"
+        )
 
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            # parse_card 判别工厂：按 type 分派变体 + 校验 + 字符串→枚举，非法即 ValueError
-            new_cards.append(parse_card(raw))
+            # _coerce_card 判别工厂：先把 LLM 漂移出的 dict/list 字段收敛回字符串（例如
+            # ability_contract 拆成三段 JSON 的常见漂移），再走 parse_card 分派变体+校验。
+            # 章前/章末/Phase-1/volume_cast 四条建卡路径统一入口，避免脏数据串到 checkpoint。
+            new_cards.append(_coerce_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
 
@@ -81,7 +93,10 @@ def _save_entity_cards(state) -> dict:
     cast_names = [str(n) for n in cast]
     _logger.info(
         "entity_cards 落地：第 %d 章登场 %d 实体，新增 %d 张卡（卡库共 %d）",
-        chapter_num, len(cast_names), len(merged) - len(existing), len(merged),
+        chapter_num,
+        len(cast_names),
+        len(merged) - len(existing),
+        len(merged),
     )
     return {
         "entity_cards": merged,
@@ -91,6 +106,7 @@ def _save_entity_cards(state) -> dict:
 
 
 # ── 去重 merge（防重复建卡的代码层兜底）──────────────────────────────────────
+
 
 def _merge_cards(existing: list[EntityCard], new: list[EntityCard]) -> list[EntityCard]:
     """把新卡按 name+aliases 归一化去重后并入已有卡库。
@@ -106,10 +122,14 @@ def _merge_cards(existing: list[EntityCard], new: list[EntityCard]) -> list[Enti
 
     merged = list(existing)
     for card in new:
-        keys = {normalize_entity_name(card.name)} | {normalize_entity_name(a) for a in card.aliases}
+        keys = {normalize_entity_name(card.name)} | {
+            normalize_entity_name(a) for a in card.aliases
+        }
         keys.discard("")  # 空名不参与匹配，避免把两个空名实体误判为同一个
         if keys & seen:
-            _logger.info("entity_cards: 实体 %r 已在卡库（名/别名命中），丢弃重复卡", card.name)
+            _logger.info(
+                "entity_cards: 实体 %r 已在卡库（名/别名命中），丢弃重复卡", card.name
+            )
             continue
         merged.append(card)
         seen |= keys
@@ -121,6 +141,10 @@ def _coerce_card(obj) -> EntityCard:
 
     dict 一律走 parse_card：按 type 重新分派到正确变体（CharacterCard/ItemCard/SimpleEntityCard），
     跨类脏键自动过滤，字符串 type/role 转回枚举。已是实例（含子类）直接返回。
+
+    字段值类型校验（str 字段被 LLM 漂移成 dict/list 等）已上移到 subgraph.generate 出口的
+    pydantic 层——draft 写入 state 前校验+回喂重试，落库路径不再做字段值收敛。
+    老 checkpoint 里的脏数据由前端 safeStr helper 兜底渲染，不再在这里静默收敛。
     """
     if isinstance(obj, EntityCard):
         return obj
@@ -131,14 +155,27 @@ def _coerce_card(obj) -> EntityCard:
 
 # ── 章末「实体发现 + 动态更新」闭包（读已写正文，补新卡 + 更新已有卡动态字段）──────
 
+
 def _prepare_entity_discover(state) -> dict:
     """组装章末实体发现任务：读本章正文（build_chapter_context）+ 已有卡库 → 补卡 + 动态更新。
 
     本章正文从 chapter_context 读——章末 current_draft 已被前序 discover 步骤覆盖，不可靠。
     """
+    pack = get_prompt_pack(state.genre, state.novel_name)
+    chapter_ctx = build_chapter_context(state)
+    context = build_foundation_context(
+        state, include_identity=False, exclude_snapshots=True
+    )
+    if chapter_ctx:
+        context = f"{context}\n\n{chapter_ctx}" if context else chapter_ctx
     return {
-        "system_context": build_foundation_context(state, exclude_snapshots=True, include_identity=False),
-        "task_prompt": entity_discover_prompt(state, build_chapter_context(state)),
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="章末发现新实体并更新已有卡动态字段",
+            context=context,
+            task=entity_discover_prompt(state, chapter_ctx),
+        ),
         "review_type": "entity_discover",
     }
 
@@ -168,14 +205,15 @@ def _save_entity_discover(state) -> dict:
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            new_cards.append(parse_card(raw))
+            # 走 _coerce_card 统一入口：先字段值收敛(dict/list→str) 再 parse_card 分派变体
+            new_cards.append(_coerce_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
 
     cards = [_coerce_card(c) for c in (state.entity_cards or [])]
-    cards = _merge_cards(cards, new_cards)          # 先补新卡
+    cards = _merge_cards(cards, new_cards)  # 先补新卡
     cards, applied = _apply_updates(cards, updates)  # 再对已有卡应用动态更新
-    _resolve_owners(cards)                           # owner 解析绑定（新卡/易主后统一校验）
+    _resolve_owners(cards)  # owner 解析绑定（新卡/易主后统一校验）
 
     if not new_cards and applied == 0:
         # 纯过场章：无新实体、无有效更新，卡库不动
@@ -183,12 +221,17 @@ def _save_entity_discover(state) -> dict:
 
     _logger.info(
         "entity_discover 落地：第 %d 章新增 %d 卡、更新 %d 卡（卡库共 %d）",
-        state.total_chapters_written, len(new_cards), applied, len(cards),
+        state.total_chapters_written,
+        len(new_cards),
+        applied,
+        len(cards),
     )
     return {"entity_cards": cards}
 
 
-def _apply_updates(cards: list[EntityCard], updates: list) -> tuple[list[EntityCard], int]:
+def _apply_updates(
+    cards: list[EntityCard], updates: list
+) -> tuple[list[EntityCard], int]:
     """对已有卡应用动态字段变更——按卡 type 取 UPDATABLE_FIELDS 白名单，canon 不动（代码层兜底）。
 
     返回 (更新后卡库, 实际生效的更新条数)。update 找不到对应卡时 warn 跳过（不新建，
@@ -209,12 +252,21 @@ def _apply_updates(cards: list[EntityCard], updates: list) -> tuple[list[EntityC
             continue
         target = index.get(normalize_entity_name(upd["name"]))
         if target is None:
-            _logger.warning("entity_discover update 找不到已有卡 %r，跳过（新增应走 new_cards）", upd["name"])
+            _logger.warning(
+                "entity_discover update 找不到已有卡 %r，跳过（新增应走 new_cards）",
+                upd["name"],
+            )
             continue
-        allowed = UPDATABLE_FIELDS.get(target.type, ())  # 按 type 取白名单（target.type 是 EntityType 枚举）
+        allowed = UPDATABLE_FIELDS.get(
+            target.type, ()
+        )  # 按 type 取白名单（target.type 是 EntityType 枚举）
         changed = False
         for key in allowed:
-            if key in upd and upd[key] not in (None, "") and getattr(target, key) != upd[key]:
+            if (
+                key in upd
+                and upd[key] not in (None, "")
+                and getattr(target, key) != upd[key]
+            ):
                 setattr(target, key, upd[key])
                 changed = True
         if changed:
@@ -236,7 +288,11 @@ def _resolve_owners(cards: list[EntityCard]) -> None:
             continue
         resolved = resolve_owner(raw_owner, cards)
         if resolved is None:
-            _logger.warning("entity owner %r 在卡库无对应实体（%s 的归属挂空，请核对）", raw_owner, card.name)
+            _logger.warning(
+                "entity owner %r 在卡库无对应实体（%s 的归属挂空，请核对）",
+                raw_owner,
+                card.name,
+            )
         elif resolved != card.owner:
             card.owner = resolved
 
@@ -245,12 +301,13 @@ def merge_cards_from_json(raw_new: list, existing_cards: list) -> list[EntityCar
     """把一批 new_cards（原始 dict 列表）parse + 去重 merge + owner 解析进已有卡库并返回。
 
     Phase-1 建卡司（foundation.save_character_cards）复用本函数，与章前 _save_entity_cards
-    走同一套 parse_card / 去重 / owner 解析，保证两条建卡路径行为一致。解析失败 fail-loud。
+    走同一套 _coerce_card / 去重 / owner 解析，保证两条建卡路径行为一致（字段值先收敛回
+    字符串再判别分派，避免 LLM 漂移出的 dict 字段串到 checkpoint 和前端）。解析失败 fail-loud。
     """
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            new_cards.append(parse_card(raw))
+            new_cards.append(_coerce_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
     merged = _merge_cards([_coerce_card(c) for c in (existing_cards or [])], new_cards)

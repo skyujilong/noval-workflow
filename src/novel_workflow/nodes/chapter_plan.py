@@ -5,7 +5,7 @@
 prepare_chapter_plan 只在「卷刚生成好」时触发(开书首卷 / 滚动新卷),规划该卷 [chapter_start,
 planned_end];本卷之前(含前卷)的条目永久锁定,不重规划。
 
-- prepare_chapter_plan: 组装 system_context / task_prompt / review_type,交由通用 review_subgraph
+- prepare_chapter_plan: 组装 context_prompt / task_prompt / review_type,交由通用 review_subgraph
 - save_chapter_plan: 解析 LLM JSON → 逐条造 ChapterPlanItem → 与历史锁定段合并 → 写回 state
 """
 
@@ -17,6 +17,7 @@ from noval_workflow.context import build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.prompts.base import _extract_chapter_plan_range
+from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import ChapterPlanItem, NovelState, reset_review_fields
 
 _logger = logging.getLogger(__name__)
@@ -36,11 +37,15 @@ def parse_chapter_plan_items(draft: str) -> list[ChapterPlanItem]:
     items: list[ChapterPlanItem] = []
     for idx, raw in enumerate(raw_items):
         if not isinstance(raw, dict):
-            raise ValueError(f"章节规划第 {idx} 条不是对象(dict),实际类型={type(raw).__name__}")
+            raise ValueError(
+                f"章节规划第 {idx} 条不是对象(dict),实际类型={type(raw).__name__}"
+            )
         try:
             item = ChapterPlanItem(**raw)
         except TypeError as exc:
-            raise ValueError(f"章节规划第 {idx} 条字段不符: {exc}; 原始={raw!r}") from exc
+            raise ValueError(
+                f"章节规划第 {idx} 条字段不符: {exc}; 原始={raw!r}"
+            ) from exc
         items.append(item)
 
     # 章号连续升序校验(LLM 常见错误:跳号 / 倒序)
@@ -87,7 +92,9 @@ def merge_chapter_plan(
     if overshoot:
         # 聚合成一条 warning,避免超发几十条时刷屏
         _logger.warning(
-            "章节规划 LLM 超发 %d 条(章号 > 窗口末章 %d),已截断丢弃", overshoot, plan_end
+            "章节规划 LLM 超发 %d 条(章号 > 窗口末章 %d),已截断丢弃",
+            overshoot,
+            plan_end,
         )
     return sorted(historical + fresh, key=lambda x: x.chapter)
 
@@ -107,7 +114,9 @@ def _plan_range(state: NovelState) -> tuple[int, int]:
         return done + 1, done + 1
     cur = max(activated, key=lambda v: v.index)
     start = max(cur.chapter_start, done + 1)
-    end = max(cur.planned_end, start)  # planned_end 异常(< start)时兜底为单章,避免非法区间
+    end = max(
+        cur.planned_end, start
+    )  # planned_end 异常(< start)时兜底为单章,避免非法区间
     return start, end
 
 
@@ -119,15 +128,21 @@ def prepare_chapter_plan(state: NovelState) -> dict:
     lock_upto = start - 1
     locked_entries = (
         _extract_chapter_plan_range(state.chapter_plan, max(1, start - 10), lock_upto)
-        if lock_upto >= 1 else []
+        if lock_upto >= 1
+        else []
     )
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.chapter_plan_prompt(
-            state=state,
-            start_chapter=start,
-            end_chapter=end,
-            locked_entries=locked_entries,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract=f"为本卷第 {start}-{end} 章规划中景章节规划（chapter_plan）",
+            context=build_foundation_context(state, include_identity=False),
+            task=pack.chapter_plan_prompt(
+                state=state,
+                start_chapter=start,
+                end_chapter=end,
+                locked_entries=locked_entries,
+            ),
         ),
         "review_type": "chapter_plan",
         **reset_review_fields(),

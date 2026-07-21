@@ -20,7 +20,9 @@ import logging
 from noval_workflow.context import build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.nodes.entity_cards import merge_cards_from_json
+from noval_workflow.prompts import get_prompt_pack
 from noval_workflow.prompts import volume_cast_prompt
+from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import NovelState, reset_review_fields
 from noval_workflow.volume_utils import current_volume
 
@@ -30,14 +32,20 @@ _logger = logging.getLogger(__name__)
 def prepare_volume_cast(state: NovelState) -> dict:
     """组装本卷「花名册」生成任务。
 
-    system_context 用完整基础设定（含世界观/力量体系/现有卡司）——判定实体是否已有、能力是否
+    context_prompt 用完整基础设定（含世界观/力量体系/现有卡司）——判定实体是否已有、能力是否
     落体系都依赖它；task_prompt 用 volume_cast_prompt（读激活卷主线 + 现有卡司 + 后续卷前瞻）。
-    题材差异经 system_context 的题材身份前缀影响，故 prompt 本身题材中性（同 entity_cards）。
+    题材差异经 system_prompt 的题材身份（pack.flavor.system_identity）影响，故 prompt 本身题材中性（同 entity_cards）。
     """
+    pack = get_prompt_pack(state.genre, state.novel_name)
     active = current_volume(state.volumes, state.total_chapters_written)
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": volume_cast_prompt(state, active),
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="为当前激活卷规划登场阵容（花名册）",
+            context=build_foundation_context(state, include_identity=False),
+            task=volume_cast_prompt(state, active),
+        ),
         "review_type": "volume_cast",
         **reset_review_fields(),
     }
@@ -63,9 +71,13 @@ def save_volume_cast(state: NovelState) -> dict:
     returning = parsed.get("returning", []) or []
     focus = parsed.get("focus", "")
     if not isinstance(introducing, list):
-        raise ValueError(f"volume_cast introducing 必须是数组，实际类型={type(introducing).__name__}")
+        raise ValueError(
+            f"volume_cast introducing 必须是数组，实际类型={type(introducing).__name__}"
+        )
     if not isinstance(returning, list):
-        raise ValueError(f"volume_cast returning 必须是数组，实际类型={type(returning).__name__}")
+        raise ValueError(
+            f"volume_cast returning 必须是数组，实际类型={type(returning).__name__}"
+        )
 
     active = current_volume(state.volumes, state.total_chapters_written)
     active_index = active.index if active else -1
@@ -76,7 +88,10 @@ def save_volume_cast(state: NovelState) -> dict:
 
     # returning 归一为 [{"name","role_in_volume"}]，只留有 name 的条目（防 LLM 塞脏项）
     returning_clean = [
-        {"name": str(r["name"]).strip(), "role_in_volume": str(r.get("role_in_volume", "")).strip()}
+        {
+            "name": str(r["name"]).strip(),
+            "role_in_volume": str(r.get("role_in_volume", "")).strip(),
+        }
         for r in returning
         if isinstance(r, dict) and str(r.get("name", "")).strip()
     ]
@@ -95,7 +110,10 @@ def save_volume_cast(state: NovelState) -> dict:
     }
     _logger.info(
         "volume_cast 落地：第 %s 卷 新增卡 %d 张、返场 %d 人（卡库共 %d）",
-        active_index, len(merged) - existing_count, len(returning_clean), len(merged),
+        active_index,
+        len(merged) - existing_count,
+        len(returning_clean),
+        len(merged),
     )
     return {
         "entity_cards": merged,

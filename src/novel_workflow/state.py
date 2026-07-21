@@ -225,8 +225,15 @@ def parse_card(raw: dict) -> EntityCard:
 class ReviewSubState:
     novel_name: str = ""        # 小说名称（桥接字段：按小说加载提示词覆盖；由父图 NovelState.novel_name 自动映射）
     genre: str = ""             # 小说类型（桥接字段：按题材加载提示词包；由父图 NovelState.genre 自动映射）
-    system_context: str = ""    # 系统提示词（来自 build_foundation_context）
-    task_prompt: str = ""       # 本次生成任务的具体指令（由父图 prepare 节点写入）
+    # 三层 prompt 桥接字段（prepare 节点写入、subgraph 消费）：
+    # - system_prompt  = L1：身份 + 硬契约 + 任务契约 + 优先级约定（build_system 产出）。瘦、稳定。
+    # - context_prompt = L2：参考资料（已定稿设定/台账/前文/锚点）。按步骤声明、可裁剪。
+    #   解决「自审丢资料」：旧路径 review_prompt 不含资料，自审看不到设定；新路径 L2 与 task 同在 user，
+    #   generate/llm_self_review 都用 render_user(context_prompt, task) 拼用户消息，自审也能看到 L2。
+    # - task_prompt     = L3：本次指令 + 输出格式 + evolved_directives（最高软优先级）。每步不同、重试只换它。
+    system_prompt: str = ""     # L1 系统提示词（prepare 写入，子图消费）
+    context_prompt: str = ""    # L2 参考资料（prepare 写入，子图消费）
+    task_prompt: str = ""       # L3 本次生成任务的具体指令（由父图 prepare 节点写入）
     current_draft: str = ""     # 当前迭代中的草稿内容
     review_feedback: str = ""   # LLM 或人工反馈（空字符串 = 无问题 / 已通过）
     approved: bool = False      # 人工审核通过后置为 True
@@ -292,9 +299,11 @@ class NovelState:
     has_power_system: bool = False
 
     # ── 子图桥接字段（字段名与 ReviewSubState 完全一致，供 LangGraph 自动映射）────
-    system_context: str = ""        # 当前节点的系统提示词（prepare 节点写入，子图消费）
-    task_prompt: str = ""           # 当前节点的生成任务指令（prepare 节点写入，子图消费）
-    current_draft: str = ""         # 子图审核完成后的最终草稿（由子图写回父图）
+    # 三层 prompt 桥接：system_prompt(L1) / context_prompt(L2) / task_prompt(L3)，详见 ReviewSubState 注释。
+    system_prompt: str = ""     # L1 当前节点的系统提示词（prepare 写入，子图消费）
+    context_prompt: str = ""    # L2 参考资料（prepare 写入，子图消费）
+    task_prompt: str = ""       # L3 当前节点的生成任务指令（prepare 写入，子图消费）
+    current_draft: str = ""     # 子图审核完成后的最终草稿（由子图写回父图）
     review_feedback: str = ""       # 审核反馈（LLM 或人工；空 = 通过）
     approved: bool = False          # 审核是否通过
     review_type: str = "foundation" # 初始哨兵值；prepare 节点必覆盖为已登记 review 类型（未覆盖进 review 即 fail-fast）
@@ -371,7 +380,7 @@ class NovelState:
 
     # ── Phase 2.5：批次小号大纲（arc outline）────────────────────────────────────
     current_arc_outline: str = ""
-    # 本批章节的故事弧线大纲（每批开始时由 save_arc_outline 覆盖写入，直接注入 system_context）
+    # 本批章节的故事弧线大纲（每批开始时由 save_arc_outline 覆盖写入，经 build_foundation_context 注入 context_prompt/L2）
 
     # ── Phase 2.7：章级 scene beats（可跳步骤，写正文前先规划本章节拍）──────────
     # 章级 transient：每章由 scene_beats_step 覆盖写入（可跳过），供 prepare_chapter 注入

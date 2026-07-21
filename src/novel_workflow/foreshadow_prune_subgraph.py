@@ -45,14 +45,18 @@ class ForeshadowSubState(EditStepSubState):
     字段桥接时这些字段不在 schema 里、更新被丢弃（详见 make_edit_step_subgraph 的
     state_cls 说明与其节点闭包的窄化注释）。
     """
+
     foreshadow_prune_enabled: bool = False
     foreshadow_prune_suggestion: dict = field(default_factory=dict)  # LLM分析结果
-    foreshadow_prune_selected: list[str] = field(default_factory=list)  # 用户勾选的待删ID
+    foreshadow_prune_selected: list[str] = field(
+        default_factory=list
+    )  # 用户勾选的待删ID
 
 
 # ── 节点 ──────────────────────────────────────────────────────────────────────
 # ⚠️ 节点闭包不写 state 类型注解：LangGraph 会按第一个参数的注解窄化传入的 state，
 # 写基类就丢掉子类字段。不写注解 → 回退到编译时的图 schema（ForeshadowSubState）。
+
 
 def foreshadow_prune_ask(state) -> dict:
     """询问用户是否需要精简伏笔台账（先过节流：非精简章直接跳过，不弹中断、不调 LLM）。"""
@@ -60,17 +64,25 @@ def foreshadow_prune_ask(state) -> dict:
     # 走 END。后端不感知前端自动模式，故手动/自动模式在此一致生效。
     chapter_no = state.total_chapters_written
     if not should_prune_at_chapter(chapter_no):
-        _logger.info("伏笔精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE)
+        _logger.info(
+            "伏笔精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE
+        )
         return {"foreshadow_prune_enabled": False}
 
-    answer = interrupt({
-        "type": InterruptType.FORESHADOW_PRUNE_ASK.value,
-        "message": "是否对伏笔台账进行精简？\n\n提示：精简将由AI分析并建议删除老旧、次要的伏笔，避免上下文膨胀。",
-    })
+    answer = interrupt(
+        {
+            "type": InterruptType.FORESHADOW_PRUNE_ASK.value,
+            "message": "是否对伏笔台账进行精简？\n\n提示：精简将由AI分析并建议删除老旧、次要的伏笔，避免上下文膨胀。",
+        }
+    )
     # 空字符串 / 否 / no / n → 不精简；是 / yes / y → 精简
     answer_str = str(answer or "").strip().lower()
     do_prune = answer_str not in _SKIP_WORDS and answer_str != ""
-    _logger.info("伏笔精简·询问：用户答=%r → %s", answer_str, "执行精简" if do_prune else "跳过（不精简）")
+    _logger.info(
+        "伏笔精简·询问：用户答=%r → %s",
+        answer_str,
+        "执行精简" if do_prune else "跳过（不精简）",
+    )
     return {"foreshadow_prune_enabled": do_prune}
 
 
@@ -79,18 +91,26 @@ def foreshadow_prune_analyze(state) -> dict:
     try:
         # 解析当前草稿中的伏笔数据（LLM 生成的 JSON 台账，先修复再解析）
         draft = state.current_draft
-        foreshadow_data = repair_and_parse(draft, kind=dict) if isinstance(draft, str) else draft
+        foreshadow_data = (
+            repair_and_parse(draft, kind=dict) if isinstance(draft, str) else draft
+        )
         pending_n = len(foreshadow_data.get("pending", []) or [])
         collected_n = len(foreshadow_data.get("collected", []) or [])
-        _logger.info("伏笔精简·分析开始：pending=%d collected=%d 人物卡=%d",
-                     pending_n, collected_n, len(state.entity_cards or []))
+        _logger.info(
+            "伏笔精简·分析开始：pending=%d collected=%d 人物卡=%d",
+            pending_n,
+            collected_n,
+            len(state.entity_cards or []),
+        )
 
         # 准备上下文
         recent_summaries = "\n".join(
-            state.all_chapter_summaries[-3:] if len(state.all_chapter_summaries) >= 3 else state.all_chapter_summaries
+            state.all_chapter_summaries[-3:]
+            if len(state.all_chapter_summaries) >= 3
+            else state.all_chapter_summaries
         )
         all_titles_str = "\n".join(
-            f"第{i+1}章：{title}" for i, title in enumerate(state.all_chapter_titles)
+            f"第{i + 1}章：{title}" for i, title in enumerate(state.all_chapter_titles)
         )
 
         prompt = FORESHADOW_PRUNE_ANALYSIS_PROMPT.format(
@@ -98,15 +118,25 @@ def foreshadow_prune_analyze(state) -> dict:
             all_titles_count=len(state.all_chapter_titles),
             all_titles=all_titles_str or "（暂无章节标题）",
             world_building=state.world_building or "（暂无世界观设定）",
-            character_profiles=format_character_profiles_from_cards(state.entity_cards) or "（暂无人物档案）",
-            foreshadowing_json=json.dumps(foreshadow_data, ensure_ascii=False, indent=2),
+            character_profiles=format_character_profiles_from_cards(state.entity_cards)
+            or "（暂无人物档案）",
+            foreshadowing_json=json.dumps(
+                foreshadow_data, ensure_ascii=False, indent=2
+            ),
         )
 
         # 伏笔精简是结构化分类（输出 JSON 删除建议），且结果还要经 foreshadow_prune_confirm
         # 让用户勾选确认兜底：关闭深度思考加速，即便建议略糙也有人工把关。
+        # system 走 build_system(SystemRole.FORESHADOW_LIBRARIAN)：身份文本单点定义在 render._ROLE_TEXT。
+        from noval_workflow.prompts.render import SystemRole, build_system
+
         llm = get_llm(temperature=0.3, label="foreshadow_prune", thinking="disabled")
+        prune_system = build_system(
+            SystemRole.FORESHADOW_LIBRARIAN,
+            "分析伏笔台账并给出删除建议",
+        )
         messages = [
-            SystemMessage(content="你是专业的小说伏笔管理专家，擅长识别核心伏笔与次要伏笔，帮助作者精简上下文。"),
+            SystemMessage(content=prune_system),
             HumanMessage(content=prompt),
         ]
         # invoke_json：先修复脏 JSON，失败则回喂报错重试一次；仍失败抛错 → 下方 except 兜底空建议。
@@ -114,33 +144,52 @@ def foreshadow_prune_analyze(state) -> dict:
         to_delete = suggestion.get("to_delete", []) or []
         # 关键日志：区分「LLM 真判定无可删（to_delete=0）」与下方 except 的「报错被吞」——
         # 二者都会让路由跳过确认 UI，靠这行日志判断是哪种。
-        _logger.info("伏笔精简·分析完成：S级=%s A级=%s 建议删除=%d 条｜建议语：%s",
-                     suggestion.get("s_level_count"), suggestion.get("a_level_count"),
-                     len(to_delete), suggestion.get("suggestion", ""))
+        _logger.info(
+            "伏笔精简·分析完成：S级=%s A级=%s 建议删除=%d 条｜建议语：%s",
+            suggestion.get("s_level_count"),
+            suggestion.get("a_level_count"),
+            len(to_delete),
+            suggestion.get("suggestion", ""),
+        )
         return {"foreshadow_prune_suggestion": suggestion}
 
     except Exception as e:
         # 失败时返回空建议不中断流程——但这会让路由按「无待删」跳过确认 UI（表现为「界面没弹」）。
         # 故此处 error 级 + 完整 traceback 落盘，便于回答「到底是 LLM 返回空还是报错」。
-        _logger.error("伏笔精简·分析失败（将跳过精简、不弹确认 UI）: %s", e, exc_info=True)
-        return {"foreshadow_prune_suggestion": {"s_level_count": 0, "a_level_count": 0, "to_delete": [], "suggestion": "分析失败，跳过精简"}}
+        _logger.error(
+            "伏笔精简·分析失败（将跳过精简、不弹确认 UI）: %s", e, exc_info=True
+        )
+        return {
+            "foreshadow_prune_suggestion": {
+                "s_level_count": 0,
+                "a_level_count": 0,
+                "to_delete": [],
+                "suggestion": "分析失败，跳过精简",
+            }
+        }
 
 
 def foreshadow_prune_confirm(state) -> dict:
     """展示精简建议，让用户勾选确认。"""
     suggestion = state.foreshadow_prune_suggestion
-    foreshadow_data = repair_and_parse(state.current_draft, kind=dict) if isinstance(state.current_draft, str) else state.current_draft
+    foreshadow_data = (
+        repair_and_parse(state.current_draft, kind=dict)
+        if isinstance(state.current_draft, str)
+        else state.current_draft
+    )
 
-    answer = interrupt({
-        "type": InterruptType.FORESHADOW_PRUNE_CONFIRM.value,
-        "message": "请确认需要删除的伏笔。",
-        "s_level_count": suggestion.get("s_level_count", 0),
-        "a_level_count": suggestion.get("a_level_count", 0),
-        "to_delete": suggestion.get("to_delete", []),
-        "suggestion": suggestion.get("suggestion", ""),
-        "pending_count": len(foreshadow_data.get("pending", [])),
-        "collected_count": len(foreshadow_data.get("collected", [])),
-    })
+    answer = interrupt(
+        {
+            "type": InterruptType.FORESHADOW_PRUNE_CONFIRM.value,
+            "message": "请确认需要删除的伏笔。",
+            "s_level_count": suggestion.get("s_level_count", 0),
+            "a_level_count": suggestion.get("a_level_count", 0),
+            "to_delete": suggestion.get("to_delete", []),
+            "suggestion": suggestion.get("suggestion", ""),
+            "pending_count": len(foreshadow_data.get("pending", [])),
+            "collected_count": len(foreshadow_data.get("collected", [])),
+        }
+    )
 
     # answer 是用户提交的 JSON 字符串数组，如 "[\"F01\", \"F02\"]"
     try:
@@ -164,27 +213,37 @@ def foreshadow_prune_apply(state) -> dict:
         return {}  # 没有要删除的，直接返回
 
     try:
-        foreshadow_data = repair_and_parse(state.current_draft, kind=dict) if isinstance(state.current_draft, str) else state.current_draft
+        foreshadow_data = (
+            repair_and_parse(state.current_draft, kind=dict)
+            if isinstance(state.current_draft, str)
+            else state.current_draft
+        )
 
         # 从 pending 中删除
         before_pending = len(foreshadow_data.get("pending", []))
         foreshadow_data["pending"] = [
-            entry for entry in foreshadow_data.get("pending", [])
+            entry
+            for entry in foreshadow_data.get("pending", [])
             if entry.get("id") not in selected_ids
         ]
 
         # 从 collected 中删除
         before_collected = len(foreshadow_data.get("collected", []))
         foreshadow_data["collected"] = [
-            entry for entry in foreshadow_data.get("collected", [])
+            entry
+            for entry in foreshadow_data.get("collected", [])
             if entry.get("id") not in selected_ids
         ]
 
-        deleted_count = (before_pending - len(foreshadow_data["pending"])) + (before_collected - len(foreshadow_data["collected"]))
+        deleted_count = (before_pending - len(foreshadow_data["pending"])) + (
+            before_collected - len(foreshadow_data["collected"])
+        )
         _logger.info(f"伏笔精简完成，共删除 {deleted_count} 个伏笔")
 
         # 更新 current_draft 为新的 JSON 字符串
-        return {"current_draft": json.dumps(foreshadow_data, ensure_ascii=False, indent=2)}
+        return {
+            "current_draft": json.dumps(foreshadow_data, ensure_ascii=False, indent=2)
+        }
 
     except Exception as e:
         _logger.error(f"伏笔精简应用失败: {e}")
@@ -194,6 +253,7 @@ def foreshadow_prune_apply(state) -> dict:
 # ── routing ───────────────────────────────────────────────────────────────────
 # 跳过 / 直达支路一律指向本子图的 END，再由工厂 add_edge("post_review", "step_save")
 # 兜到保存——子图内部引用不到外层的 step_save。
+
 
 def route_after_prune_ask(state) -> str:
     if state.foreshadow_prune_enabled:
@@ -213,6 +273,7 @@ def route_after_prune_analyze(state) -> str:
 
 
 # ── graph assembly ────────────────────────────────────────────────────────────
+
 
 def _build_foreshadow_prune_subgraph():
     builder = StateGraph(ForeshadowSubState)

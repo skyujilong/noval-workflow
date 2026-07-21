@@ -25,6 +25,7 @@ from dataclasses import fields, replace
 from noval_workflow.context import build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.prompts import get_prompt_pack
+from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import NovelState, Volume, reset_review_fields
 
 _logger = logging.getLogger(__name__)
@@ -66,7 +67,9 @@ def prepare_volumes(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
     if not state.volumes:
         # 首次：整书大纲 → 卷 1 激活 + 前瞻草稿
-        task_prompt = pack.volumes_prompt(state.overall_outline, lookahead=VOLUME_LOOKAHEAD)
+        task_prompt = pack.volumes_prompt(
+            state.overall_outline, lookahead=VOLUME_LOOKAHEAD
+        )
     else:
         # 滚动：只承接「已激活卷」(planned_end>0)——旧草稿卷本轮要重生成，不参与承接。
         existing = [_coerce_volume(v) for v in state.volumes]
@@ -82,8 +85,12 @@ def prepare_volumes(state: NovelState) -> dict:
             lookahead=VOLUME_LOOKAHEAD,
         )
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": task_prompt,
+        **build_prepare_fields(
+            role=SystemRole.VOLUME_PLANNER,
+            task_contract="为本书规划分卷（1 激活卷 + 前瞻草稿卷队列）",
+            context=build_foundation_context(state, include_identity=False),
+            task=task_prompt,
+        ),
         "review_type": "volumes",
         **reset_review_fields(),
     }
@@ -110,14 +117,18 @@ def _parse_active_volume(raw) -> tuple[str, str, str, int]:
 def _parse_draft_volume(raw, position: int) -> tuple[str, str, str]:
     """解析前瞻草稿卷（数组第 2 项起）→ (title, summary, setup_for_next)。草稿卷不含 chapters。"""
     if not isinstance(raw, dict):
-        raise ValueError(f"草稿卷(第 {position} 项)必须是 JSON 对象，实际类型={type(raw).__name__}")
+        raise ValueError(
+            f"草稿卷(第 {position} 项)必须是 JSON 对象，实际类型={type(raw).__name__}"
+        )
     title = raw.get("title")
     if not isinstance(title, str) or not title.strip():
         raise ValueError(f"草稿卷(第 {position} 项)缺 title(卷名)，原始={raw!r}")
     summary = raw.get("summary", "")
     setup_for_next = raw.get("setup_for_next", "")
     if not isinstance(summary, str) or not isinstance(setup_for_next, str):
-        raise ValueError(f"草稿卷(第 {position} 项) summary/setup_for_next 必须是字符串，原始={raw!r}")
+        raise ValueError(
+            f"草稿卷(第 {position} 项) summary/setup_for_next 必须是字符串，原始={raw!r}"
+        )
     return title.strip(), summary, setup_for_next
 
 
@@ -148,7 +159,9 @@ def _parse_volume_drafts(
     human_authored = raw.get("human_confirmed") is True
 
     active = _parse_active_volume(vol_list[0])
-    drafts = [_parse_draft_volume(v, pos) for pos, v in enumerate(vol_list[1:], start=2)]
+    drafts = [
+        _parse_draft_volume(v, pos) for pos, v in enumerate(vol_list[1:], start=2)
+    ]
     return active, drafts, human_authored
 
 
@@ -161,13 +174,18 @@ def _clamp_chapters(chapters: int, human_authored: bool) -> int:
         if clamped != chapters:
             _logger.warning(
                 "分卷章数 %d 超出松护栏 [%d,%d]，夹到 %d（LLM 自主输出；人工可在 review 抽屉突破）",
-                chapters, VOLUME_MIN_CHAPTERS, VOLUME_MAX_CHAPTERS, clamped,
+                chapters,
+                VOLUME_MIN_CHAPTERS,
+                VOLUME_MAX_CHAPTERS,
+                clamped,
             )
         return clamped
     if chapters < VOLUME_MIN_CHAPTERS or chapters > VOLUME_MAX_CHAPTERS:
         _logger.info(
             "分卷章数 %d 超出松护栏 [%d,%d]，人工在 review 抽屉显式突破，予以尊重",
-            chapters, VOLUME_MIN_CHAPTERS, VOLUME_MAX_CHAPTERS,
+            chapters,
+            VOLUME_MIN_CHAPTERS,
+            VOLUME_MAX_CHAPTERS,
         )
     return chapters
 
@@ -238,4 +256,8 @@ def route_after_save_volumes(state: NovelState) -> str:
     滚动分支落到 prepare_volume_cast（而非直接 chapter_plan）：新激活卷先定登场阵容再展开章节规划。
     开书路径的花名册在设定链末尾经 save_config → prepare_volume_cast 汇入（见 graph.py），两路统一。
     """
-    return "prepare_character_cards" if state.total_chapters_written == 0 else "prepare_volume_cast"
+    return (
+        "prepare_character_cards"
+        if state.total_chapters_written == 0
+        else "prepare_volume_cast"
+    )

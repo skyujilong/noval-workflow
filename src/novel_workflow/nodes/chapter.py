@@ -18,7 +18,12 @@ from noval_workflow.context import (
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.llm import get_llm
 from noval_workflow.nodes.chapter_edit import _clean_title
-from noval_workflow.prompts import SUMMARY_PROMPT, format_cards_for_chapter_prompt, get_prompt_pack
+from noval_workflow.prompts import (
+    SUMMARY_PROMPT,
+    format_cards_for_chapter_prompt,
+    get_prompt_pack,
+)
+from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import NovelState, reset_review_fields
 
 _logger = logging.getLogger(__name__)
@@ -26,14 +31,24 @@ _logger = logging.getLogger(__name__)
 
 # ── titles ────────────────────────────────────────────────────────────────────
 
+
 def prepare_titles(state: NovelState) -> dict:
     pack = get_prompt_pack(state.genre, state.novel_name)
+    chapter_ctx = build_chapter_context(state)
+    context = build_foundation_context(state, include_identity=False)
+    if chapter_ctx:
+        context = f"{context}\n\n{chapter_ctx}" if context else chapter_ctx
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.titles_prompt(
-            state.all_chapter_titles,
-            build_chapter_context(state),
-            arc_outline=state.current_arc_outline,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract="生成本批章节标题",
+            context=context,
+            task=pack.titles_prompt(
+                state.all_chapter_titles,
+                chapter_ctx,
+                arc_outline=state.current_arc_outline,
+            ),
         ),
         "review_type": "titles",
         **reset_review_fields(),
@@ -48,11 +63,18 @@ def save_titles(state: NovelState) -> dict:
     current_batch_titles mid-batch and have changes reflected in all_chapter_titles.
     """
     from noval_workflow.config import BATCH_SIZE
-    lines = [_clean_title(l) for l in state.current_draft.strip().splitlines() if l.strip()]
-    new_titles = [l for l in lines if l][:BATCH_SIZE]
+
+    lines = [
+        _clean_title(line)
+        for line in state.current_draft.strip().splitlines()
+        if line.strip()
+    ]
+    new_titles = [line for line in lines if line][:BATCH_SIZE]
 
     if not new_titles:
-        raise ValueError(f"LLM returned no valid titles. Raw draft:\n{state.current_draft}")
+        raise ValueError(
+            f"LLM returned no valid titles. Raw draft:\n{state.current_draft}"
+        )
 
     return {
         "current_batch_titles": new_titles,
@@ -61,6 +83,7 @@ def save_titles(state: NovelState) -> dict:
 
 
 # ── chapter ───────────────────────────────────────────────────────────────────
+
 
 def prepare_chapter(state: NovelState) -> dict:
     chapter_num = state.total_chapters_written + 1
@@ -71,7 +94,10 @@ def prepare_chapter(state: NovelState) -> dict:
     # already contains the already-written chapters of the current batch. Appending only
     # current_batch_titles[current_chapter_index:] (the not-yet-written portion) avoids
     # duplicate entries in the numbered list rendered for the LLM.
-    merged_titles = state.all_chapter_titles + state.current_batch_titles[state.current_chapter_index:]
+    merged_titles = (
+        state.all_chapter_titles
+        + state.current_batch_titles[state.current_chapter_index :]
+    )
     # 批内定位：current_chapter_index 为本章在当前批次内的 0-based 序号（save_chapter 写完才自增），
     # 故 batch_pos = index + 1；据此把「本批弧线大纲」中对应本章的那一段锚定到提示词。
     batch_pos = state.current_chapter_index + 1
@@ -93,27 +119,38 @@ def prepare_chapter(state: NovelState) -> dict:
     # 末尾作为「本章人物/物品设定锚点」，防止写正文时人物外貌/口吻、装备状态写飘。
     cards_section = ""
     if state.cast_chapter_index == chapter_num and state.current_chapter_cast:
-        rendered = format_cards_for_chapter_prompt(state.entity_cards, state.current_chapter_cast)
+        rendered = format_cards_for_chapter_prompt(
+            state.entity_cards, state.current_chapter_cast
+        )
         if rendered:
             cards_section = (
                 "\n\n---\n【本章登场实体卡（人物/物品/装备设定锚点，务必严格遵守，防写飘）】\n"
                 f"{rendered}"
             )
     pack = get_prompt_pack(state.genre, state.novel_name)
+    context = build_foundation_context(state, include_identity=False)
+    if chapter_context:
+        context = f"{context}\n\n{chapter_context}" if context else chapter_context
     return {
-        "system_context": build_foundation_context(state),
-        "task_prompt": pack.chapter_prompt(
-            title,
-            chapter_num,
-            merged_titles,
-            chapter_context,
-            arc_outline=state.current_arc_outline,
-            batch_pos=batch_pos,
-            batch_total=batch_total,
-            scene_beats=scene_beats_for_prompt,
-            chapter_plan_entry=chapter_plan_entry_for_prompt,
-            state=state,
-        ) + cards_section,
+        **build_prepare_fields(
+            role=SystemRole.GENRE_AUTHOR,
+            genre_identity=pack.flavor.system_identity,
+            task_contract=f"撰写第{chapter_num}章《{title}》正文",
+            context=context,
+            task=pack.chapter_prompt(
+                title,
+                chapter_num,
+                merged_titles,
+                chapter_context,
+                arc_outline=state.current_arc_outline,
+                batch_pos=batch_pos,
+                batch_total=batch_total,
+                scene_beats=scene_beats_for_prompt,
+                chapter_plan_entry=chapter_plan_entry_for_prompt,
+                state=state,
+            )
+            + cards_section,
+        ),
         "review_type": "chapter",
         **reset_review_fields(),
     }
@@ -141,7 +178,9 @@ def save_chapter(state: NovelState) -> dict:
         _logger.error(
             "Failed to write chapter %d file %s: %s. "
             "Chapter content will not be available for context window.",
-            chapter_num, filename, e,
+            chapter_num,
+            filename,
+            e,
         )
 
     return {
@@ -169,7 +208,7 @@ def generate_summary(state: NovelState) -> dict:
     save_chapter already incremented current_chapter_index, so the title is at
     current_chapter_index - 1.
     """
-    chapter_num = state.total_chapters_written   # already incremented by save_chapter
+    chapter_num = state.total_chapters_written  # already incremented by save_chapter
     # Title comes from current_batch_titles (not all_chapter_titles) so user edits
     # made via ask_chapter_edit are picked up correctly.
     title = state.current_batch_titles[state.current_chapter_index - 1]
@@ -178,10 +217,22 @@ def generate_summary(state: NovelState) -> dict:
     try:
         # 章节概要是对已定稿正文的压缩提炼（摘要任务），非创作：关闭深度思考加速。
         # 每章生成一次，累积加速明显；摘要质量对思考不敏感，风险低。
+        # 三层结构：L1=身份+硬契约+"章节摘要"任务契约；L2=本作设定；L3=SUMMARY_PROMPT。
+        # 不再复用前序残留 system_context（已删字段），独立组装三层。
+        from noval_workflow.prompts.render import SystemRole, build_system, render_user
+
+        pack = get_prompt_pack(state.genre, state.novel_name)
         llm = get_llm(temperature=0.3, label="chapter_summary", thinking="disabled")
+        system = build_system(
+            SystemRole.GENRE_AUTHOR,
+            "为已定稿章节生成简洁情节概要",
+            genre_identity=pack.flavor.system_identity,
+        )
+        context = build_foundation_context(state, include_identity=False)
+        task = SUMMARY_PROMPT.format(title=title, content=state.current_draft)
         messages = [
-            SystemMessage(content=state.system_context),
-            HumanMessage(content=SUMMARY_PROMPT.format(title=title, content=state.current_draft)),
+            SystemMessage(content=system),
+            HumanMessage(content=render_user(context, task)),
         ]
         result = llm.invoke(messages)
         summary = result.content.strip()
@@ -189,7 +240,8 @@ def generate_summary(state: NovelState) -> dict:
         _logger.error(
             "Failed to generate summary for chapter %d after all retries: %s. "
             "An empty summary will be stored; context window for subsequent chapters may be degraded.",
-            chapter_num, e,
+            chapter_num,
+            e,
         )
 
     if summary:
@@ -234,6 +286,7 @@ def ask_continue(state: NovelState) -> dict:
 
 
 # ── routers ───────────────────────────────────────────────────────────────────
+
 
 def route_chapter_or_continue(state: NovelState) -> str:
     # 本批未完 → 回到 scene_beats_step（每章都进 gate，用户可选择跳过或做 beats）

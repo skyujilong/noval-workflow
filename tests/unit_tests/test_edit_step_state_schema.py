@@ -43,7 +43,12 @@ def test_prepare_fn_receives_full_subclass_state(monkeypatch):
         # 关键断言点：真实读子类专属字段。窄化成基类会在此 AttributeError。
         seen["type"] = type(state).__name__
         seen["value"] = state.subclass_only_field
-        return {"system_context": "SYS", "task_prompt": "TASK", "review_type": "entity_cards"}
+        return {
+            "system_prompt": "SYS",
+            "context_prompt": "CTX",
+            "task_prompt": "TASK",
+            "review_type": "entity_cards",
+        }
 
     def save_fn(_state):
         return {}
@@ -65,5 +70,9 @@ def test_prepare_fn_receives_full_subclass_state(monkeypatch):
     graph.invoke(_ProbeSubState(subclass_only_field=["beat-a"]), cfg)  # 停在 entry gate
     graph.invoke(Command(resume="yes"), cfg)  # 点「执行」→ 走到 step_prepare
 
-    assert seen["type"] == "_ProbeSubState", "prepare_fn 应收到完整子类 state，而非被窄化的基类"
-    assert seen["value"] == ["beat-a"], "子类专属字段必须原样流入，不能被 schema 窄化丢弃"
+    assert seen["type"] == "_ProbeSubState", (
+        "prepare_fn 应收到完整子类 state，而非被窄化的基类"
+    )
+    assert seen["value"] == ["beat-a"], (
+        "子类专属字段必须原样流入，不能被 schema 窄化丢弃"
+    )

@@ -26,6 +26,7 @@ from noval_workflow.json_utils import (
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts.base import EVOLVED_DIRECTIVES_FIELDS, evolved_field_for
 from noval_workflow.prompts.evolution_store import Proposal, ProposalOp
+from noval_workflow.prompts.render import SystemRole, build_system
 
 # 整改提案允许落到的字段：三桶 evolved_directives_* + 章节文体/审核清单。
 # 老单桶 evolved_directives 不再允许作为提案 field(会被 _coerce_field 归到当前 review_type 对应桶)。
@@ -117,12 +118,8 @@ def _coerce_op(name: object) -> ProposalOp:
 
 
 # ── distill：修改要求 → 整改提案 ─────────────────────────────────────────────
-
-_DISTILL_SYSTEM = (
-    "你是小说创作提示词的「进化工程师」。你的职责：把编辑对某一章的人工修改意见，"
-    "提炼成可复用、可执行、简洁去重的写作整改规则，沉淀进后续所有章节的生成提示词。"
-    "只产出规则本身，不复述意见、不解释过程。"
-)
+# 身份文本已迁入 render._ROLE_TEXT[SystemRole.EVOLUTION_ENGINEER]——通过 build_system(role, contract)
+# 组装 SystemMessage,不叠硬契约(propose 阶段允许挑战规则,见 _NO_HARD_CONTRACTS_ROLES)。
 
 
 def _distill_prompt(
@@ -171,7 +168,9 @@ def distill(
     data = _invoke_json(
         llm,
         [
-            SystemMessage(content=_DISTILL_SYSTEM),
+            SystemMessage(
+                content=build_system(SystemRole.EVOLUTION_ENGINEER, "把人工修改意见提炼成结构化整改提案")
+            ),
             HumanMessage(content=_distill_prompt(feedback, review_type, current, draft_excerpt)),
         ],
         dict,
@@ -194,11 +193,7 @@ def distill(
 
 
 # ── refine_to_items：累积整改 → 原子入库条目 ────────────────────────────────
-
-_REFINE_SYSTEM = (
-    "你是小说创作提示词的「整改库编辑」。你的职责：把一本小说累积的历史整改要点，"
-    "拆分、去重、精炼成一条条独立自洽的通用整改条目，供同题材其他小说复用。"
-)
+# 身份文本已迁入 render._ROLE_TEXT[SystemRole.EVOLUTION_EDITOR]——同上,不叠硬契约。
 
 
 def _refine_prompt(evolved_directives: str, genre: str) -> str:
@@ -224,7 +219,9 @@ def refine_to_items(evolved_directives: str, genre: str) -> list[RefinedItem]:
     data = _invoke_json(
         llm,
         [
-            SystemMessage(content=_REFINE_SYSTEM),
+            SystemMessage(
+                content=build_system(SystemRole.EVOLUTION_EDITOR, "把累积历史整改拆成原子可入库条目")
+            ),
             HumanMessage(content=_refine_prompt(evolved_directives, genre)),
         ],
         list,
@@ -246,12 +243,7 @@ def refine_to_items(evolved_directives: str, genre: str) -> list[RefinedItem]:
 
 
 # ── reconcile：累积整改 → 去重消解矛盾后的自洽全集 ──────────────────────────────
-
-_RECONCILE_SYSTEM = (
-    "你是小说创作提示词的「整改消解官」。你的职责：把一本小说历次累积、可能重复甚至"
-    "互相矛盾的历史整改要点，重写成一份去重、消解矛盾、逻辑自洽的最终整改清单，"
-    "供后续所有章节稳定执行。只做整理消解，不新增原文没有的要求。"
-)
+# 身份文本已迁入 render._ROLE_TEXT[SystemRole.EVOLUTION_DISSOLVER]——同上,不叠硬契约。
 
 
 def _reconcile_prompt(evolved_directives: str, genre: str) -> str:
@@ -278,7 +270,9 @@ def reconcile(evolved_directives: str, genre: str) -> ReconcileResult:
     data = _invoke_json(
         llm,
         [
-            SystemMessage(content=_RECONCILE_SYSTEM),
+            SystemMessage(
+                content=build_system(SystemRole.EVOLUTION_DISSOLVER, "把累积整改去重消解成自洽全集")
+            ),
             HumanMessage(content=_reconcile_prompt(evolved_directives, genre)),
         ],
         dict,

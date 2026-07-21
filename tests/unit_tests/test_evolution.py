@@ -9,7 +9,11 @@ import pytest
 from noval_workflow.prompts import evolution as e
 from noval_workflow.prompts.base import PromptPack
 from noval_workflow.prompts.evolution_store import ProposalOp
-from noval_workflow.prompts.overrides import apply_overrides, load_overrides, save_overrides
+from noval_workflow.prompts.overrides import (
+    apply_overrides,
+    load_overrides,
+    save_overrides,
+)
 from noval_workflow.prompts.registry import get_prompt_pack
 
 
@@ -65,7 +69,9 @@ def test_arc_outline_prompt_injects_arc_bucket_directives():
         get_prompt_pack("玄幻").flavor,
         evolved_directives_arc_outline="战斗压到300字内",
     )
-    prompt = PromptPack("玄幻", flavor).arc_outline_prompt(NovelState(novel_name="x", genre="玄幻"))
+    prompt = PromptPack("玄幻", flavor).arc_outline_prompt(
+        NovelState(novel_name="x", genre="玄幻")
+    )
     assert "历史整改要点" in prompt
     assert "战斗压到300字内" in prompt
 
@@ -78,14 +84,18 @@ def test_arc_outline_prompt_ignores_chapter_bucket():
         get_prompt_pack("玄幻").flavor,
         evolved_directives_chapter="正文单场景不超500字",
     )
-    prompt = PromptPack("玄幻", flavor).arc_outline_prompt(NovelState(novel_name="x", genre="玄幻"))
+    prompt = PromptPack("玄幻", flavor).arc_outline_prompt(
+        NovelState(novel_name="x", genre="玄幻")
+    )
     assert "正文单场景不超500字" not in prompt
 
 
 def test_arc_outline_prompt_no_section_when_empty():
     from noval_workflow.state import NovelState
 
-    prompt = get_prompt_pack("玄幻").arc_outline_prompt(NovelState(novel_name="x", genre="玄幻"))
+    prompt = get_prompt_pack("玄幻").arc_outline_prompt(
+        NovelState(novel_name="x", genre="玄幻")
+    )
     assert "历史整改要点" not in prompt
 
 
@@ -173,7 +183,9 @@ def test_distill_parses_proposals_with_conflict(monkeypatch):
         '"conflicts_with":"原每场战斗约3000字"}],"summary":"收紧战斗篇幅"}\n```'
     )
     monkeypatch.setattr(e, "get_llm", lambda *a, **k: _FakeLLM(out))
-    res = e.distill("战斗太长", "chapter", e.CurrentPrompt(chapter_style_rules="每场战斗约3000字"))
+    res = e.distill(
+        "战斗太长", "chapter", e.CurrentPrompt(chapter_style_rules="每场战斗约3000字")
+    )
     assert res.summary == "收紧战斗篇幅"
     assert len(res.proposals) == 1
     p = res.proposals[0]
@@ -195,7 +207,10 @@ def test_distill_coerces_unknown_field(monkeypatch):
     """LLM 输出的非法 field 被归一到当前 review_type 对应桶(chapter → evolved_directives_chapter)。"""
     out = '{"proposals":[{"field":"weird","text":"x"}],"summary":""}'
     monkeypatch.setattr(e, "get_llm", lambda *a, **k: _FakeLLM(out))
-    assert e.distill("f", "chapter", e.CurrentPrompt()).proposals[0].field == "evolved_directives_chapter"
+    assert (
+        e.distill("f", "chapter", e.CurrentPrompt()).proposals[0].field
+        == "evolved_directives_chapter"
+    )
 
 
 def test_distill_coerces_unknown_field_for_scene_beats(monkeypatch):
@@ -229,7 +244,9 @@ def test_refine_empty_input_short_circuits(monkeypatch):
 
 def test_distill_raises_on_unparseable_llm_output(monkeypatch):
     # LLM 反复吐无 JSON 的脏文本：json_repair 修不出、回喂重试仍失败 → 抛 EvolutionParseError 到顶层。
-    monkeypatch.setattr(e, "get_llm", lambda *a, **k: _FakeLLM("这里没有 JSON，纯说明文字"))
+    monkeypatch.setattr(
+        e, "get_llm", lambda *a, **k: _FakeLLM("这里没有 JSON，纯说明文字")
+    )
     with pytest.raises(e.EvolutionParseError):
         e.distill("把战斗写短一点", "chapter", e.CurrentPrompt())
 
@@ -262,17 +279,25 @@ def test_reconcile_empty_input_short_circuits(monkeypatch):
 
 
 class _RecLLM:
-    """记录收到的 messages，返回固定正文。"""
+    """记录收到的 messages，返回固定 content。
 
-    def __init__(self) -> None:
+    默认返回 "新正文"（散文，够 chapter 类 review 用）；scene_beats 类测试需要合规
+    BeatDraft JSON 才能通过 invoke_pydantic_list 校验——可传 `content` 覆盖。
+
+    只记录**第一次** invoke 的 messages（桶注入发生在第一次调用前），后续重试不再覆盖。
+    """
+
+    def __init__(self, content: str = "新正文") -> None:
         self.messages: list = []
+        self._content = content
 
     def invoke(self, messages):
-        self.messages = messages
+        if not self.messages:  # 只记录首轮，避免 pydantic 重试覆盖成回喂消息
+            self.messages = messages
 
         class _R:
-            content = "新正文"
-
+            content = self._content
+        _R.content = self._content
         return _R()
 
 
@@ -293,7 +318,7 @@ def test_generate_injects_latest_evolved_on_reject_rerun(monkeypatch, tmp_path):
         novel_name="重跑书",
         genre="玄幻",
         review_type="chapter",
-        system_context="设定",
+        system_prompt="设定",
         review_feedback="战斗太长",
         review_history=[
             {"role": "human", "content": "任务"},
@@ -318,14 +343,14 @@ def test_generate_injects_scene_beats_bucket_on_reject_rerun(monkeypatch, tmp_pa
             "evolved_directives_scene_beats": "打脸桥段必须四拍齐全",
         },
     )
-    rec = _RecLLM()
+    rec = _RecLLM(content='[{"beat_id":1,"device_tags":["setup"]}]')
     monkeypatch.setattr(sg, "get_llm", lambda *a, **k: rec)
 
     state = ReviewSubState(
         novel_name="beats重跑书",
         genre="玄幻",
         review_type="scene_beats",
-        system_context="设定",
+        system_prompt="设定",
         review_feedback="打脸不齐",
         review_history=[
             {"role": "human", "content": "任务"},
@@ -352,7 +377,7 @@ def test_generate_no_evolved_injection_for_non_evolvable_type(monkeypatch, tmp_p
         novel_name="重跑书2",
         genre="玄幻",
         review_type="world_building",
-        system_context="设定",
+        system_prompt="设定",
         review_feedback="改一下",
         review_history=[
             {"role": "human", "content": "任务"},

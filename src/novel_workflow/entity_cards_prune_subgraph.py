@@ -65,13 +65,20 @@ class EntityCardsPruneSubState:
     # ── 本子图私有流转 ──────────────────────────────────────────────────────────
     entity_cards_prune_enabled: bool = False
     entity_cards_prune_suggestion: dict = field(default_factory=dict)  # LLM 分析结果
-    entity_cards_prune_selected: list[str] = field(default_factory=list)  # 用户勾选待删的实体名
+    entity_cards_prune_selected: list[str] = field(
+        default_factory=list
+    )  # 用户勾选待删的实体名
 
 
 # ── 卡取值工具（卡可能是 EntityCard 实例或 checkpoint roundtrip 后的 dict）──────
 
+
 def _card_get(card, key, default=""):
-    return card.get(key, default) if isinstance(card, dict) else getattr(card, key, default)
+    return (
+        card.get(key, default)
+        if isinstance(card, dict)
+        else getattr(card, key, default)
+    )
 
 
 def _card_text(card, key) -> str:
@@ -84,23 +91,32 @@ def _card_text(card, key) -> str:
 # ⚠️ 节点闭包不写 state 类型注解：LangGraph 会按第一个参数的注解窄化传入的 state，
 # 写基类就丢掉子类字段。不写注解 → 回退到编译时的图 schema（EntityCardsPruneSubState）。
 
+
 def entity_cards_prune_ask(state) -> dict:
     """询问用户是否需要精简实体卡库（先过节流：非精简章直接跳过，不弹中断、不调 LLM）。"""
     # 章末精简节流：仅每 PRUNE_STRIDE 章执行一次。非节流章判「不精简」→ route_after_prune_ask
     # 走 END。与伏笔精简共用同一步长（后端全局生效，不感知前端自动模式）。
     chapter_no = state.total_chapters_written
     if not should_prune_at_chapter(chapter_no):
-        _logger.info("卡库精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE)
+        _logger.info(
+            "卡库精简·节流跳过：第%d章 未到步长 %d 的整数倍", chapter_no, PRUNE_STRIDE
+        )
         return {"entity_cards_prune_enabled": False}
 
-    answer = interrupt({
-        "type": InterruptType.ENTITY_CARDS_PRUNE_ASK.value,
-        "message": "是否对实体卡库进行精简？\n\n提示：精简将由AI分析并建议删除一次性碎屑、彻底离场且无复现价值的卡，抑制人物档案/装备清单持续膨胀。",
-    })
+    answer = interrupt(
+        {
+            "type": InterruptType.ENTITY_CARDS_PRUNE_ASK.value,
+            "message": "是否对实体卡库进行精简？\n\n提示：精简将由AI分析并建议删除一次性碎屑、彻底离场且无复现价值的卡，抑制人物档案/装备清单持续膨胀。",
+        }
+    )
     # 空字符串 / 否 / no / n → 不精简；其他 → 精简
     answer_str = str(answer or "").strip().lower()
     do_prune = answer_str not in _SKIP_WORDS and answer_str != ""
-    _logger.info("卡库精简·询问：用户答=%r → %s", answer_str, "执行精简" if do_prune else "跳过（不精简）")
+    _logger.info(
+        "卡库精简·询问：用户答=%r → %s",
+        answer_str,
+        "执行精简" if do_prune else "跳过（不精简）",
+    )
     return {"entity_cards_prune_enabled": do_prune}
 
 
@@ -108,14 +124,22 @@ def entity_cards_prune_analyze(state) -> dict:
     """调用 LLM 分析整个卡库，给出建议删除清单（人工只是默认预选，可再增删）。"""
     cards = state.entity_cards or []
     if not cards:
-        return {"entity_cards_prune_suggestion": {"card_count": 0, "to_delete": [], "suggestion": "卡库为空，无需精简"}}
+        return {
+            "entity_cards_prune_suggestion": {
+                "card_count": 0,
+                "to_delete": [],
+                "suggestion": "卡库为空，无需精简",
+            }
+        }
 
     try:
         recent_summaries = "\n".join(
-            state.all_chapter_summaries[-3:] if len(state.all_chapter_summaries) >= 3 else state.all_chapter_summaries
+            state.all_chapter_summaries[-3:]
+            if len(state.all_chapter_summaries) >= 3
+            else state.all_chapter_summaries
         )
         all_titles_str = "\n".join(
-            f"第{i+1}章：{title}" for i, title in enumerate(state.all_chapter_titles)
+            f"第{i + 1}章：{title}" for i, title in enumerate(state.all_chapter_titles)
         )
 
         prompt = ENTITY_CARDS_PRUNE_ANALYSIS_PROMPT.format(
@@ -128,20 +152,38 @@ def entity_cards_prune_analyze(state) -> dict:
         )
 
         # 结构化分类（输出 JSON 删除建议），结果还经 confirm 让用户勾选兜底：关闭深度思考加速。
+        # system 走 build_system(SystemRole.ENTITY_LIBRARIAN)：身份文本单点定义在 render._ROLE_TEXT。
+        from noval_workflow.prompts.render import SystemRole, build_system
+
         llm = get_llm(temperature=0.3, label="entity_cards_prune", thinking="disabled")
+        prune_system = build_system(
+            SystemRole.ENTITY_LIBRARIAN,
+            "分析卡库并给出删除建议",
+        )
         messages = [
-            SystemMessage(content="你是专业的小说实体卡库管理专家，擅长识别关键实体与一次性碎屑，帮助作者精简写作上下文。"),
+            SystemMessage(content=prune_system),
             HumanMessage(content=prompt),
         ]
         suggestion = invoke_json(llm, messages, kind=dict, label="entity_cards_prune")
-        _logger.info("卡库精简分析完成，建议删除 %d 张", len(suggestion.get("to_delete", []) or []))
+        _logger.info(
+            "卡库精简分析完成，建议删除 %d 张",
+            len(suggestion.get("to_delete", []) or []),
+        )
         return {"entity_cards_prune_suggestion": suggestion}
 
     except Exception as e:
         # 分析失败不中断流程：给空建议，confirm 仍会展示全库让用户手动勾选（不同于伏笔——这里照样弹 UI）。
         # 仍以 error 级 + traceback 落盘，便于定位 LLM/解析问题。
-        _logger.error("卡库精简·分析失败（confirm 仍展示全库供手动勾选）: %s", e, exc_info=True)
-        return {"entity_cards_prune_suggestion": {"card_count": len(cards), "to_delete": [], "suggestion": "分析失败，可手动勾选"}}
+        _logger.error(
+            "卡库精简·分析失败（confirm 仍展示全库供手动勾选）: %s", e, exc_info=True
+        )
+        return {
+            "entity_cards_prune_suggestion": {
+                "card_count": len(cards),
+                "to_delete": [],
+                "suggestion": "分析失败，可手动勾选",
+            }
+        }
 
 
 def entity_cards_prune_confirm(state) -> dict:
@@ -160,25 +202,29 @@ def entity_cards_prune_confirm(state) -> dict:
         name = _card_text(card, "name")
         if not name:
             continue
-        items.append({
-            "name": name,
-            "type": _card_text(card, "type"),
-            "role": _card_text(card, "role"),
-            "summary": _card_text(card, "summary"),
-            "current_state": _card_text(card, "current_state"),
-            "first_appear_chapter": _card_get(card, "first_appear_chapter", None),
-            "suggested": name in suggested,
-            "reason": suggested.get(name, ""),
-        })
+        items.append(
+            {
+                "name": name,
+                "type": _card_text(card, "type"),
+                "role": _card_text(card, "role"),
+                "summary": _card_text(card, "summary"),
+                "current_state": _card_text(card, "current_state"),
+                "first_appear_chapter": _card_get(card, "first_appear_chapter", None),
+                "suggested": name in suggested,
+                "reason": suggested.get(name, ""),
+            }
+        )
 
-    answer = interrupt({
-        "type": InterruptType.ENTITY_CARDS_PRUNE_CONFIRM.value,
-        "message": "请勾选要从卡库删除的实体（已预选 AI 建议删除的，可增减后提交）。",
-        "cards": items,
-        "suggestion": suggestion.get("suggestion", ""),
-        "suggested_count": len(suggested),
-        "total_count": len(items),
-    })
+    answer = interrupt(
+        {
+            "type": InterruptType.ENTITY_CARDS_PRUNE_CONFIRM.value,
+            "message": "请勾选要从卡库删除的实体（已预选 AI 建议删除的，可增减后提交）。",
+            "cards": items,
+            "suggestion": suggestion.get("suggestion", ""),
+            "suggested_count": len(suggested),
+            "total_count": len(items),
+        }
+    )
 
     # answer 是用户提交的 JSON 字符串数组（选中的实体名），如 "[\"张三\", \"遣散费\"]"
     try:
@@ -193,8 +239,12 @@ def entity_cards_prune_confirm(state) -> dict:
     if not isinstance(selected, list):
         selected = []
 
-    _logger.info("卡库精简：全库 %d 张，AI 建议删 %d，用户确认删 %d",
-                 len(items), len(suggested), len(selected))
+    _logger.info(
+        "卡库精简：全库 %d 张，AI 建议删 %d，用户确认删 %d",
+        len(items),
+        len(suggested),
+        len(selected),
+    )
     return {"entity_cards_prune_selected": [str(k) for k in selected]}
 
 
@@ -214,6 +264,7 @@ def entity_cards_prune_apply(state) -> dict:
 
 # ── routing ───────────────────────────────────────────────────────────────────
 
+
 def route_after_prune_ask(state) -> str:
     if state.entity_cards_prune_enabled:
         return "entity_cards_prune_analyze"
@@ -230,6 +281,7 @@ def route_after_prune_analyze(state) -> str:
 
 
 # ── graph assembly ────────────────────────────────────────────────────────────
+
 
 def _build_entity_cards_prune_subgraph():
     builder = StateGraph(EntityCardsPruneSubState)

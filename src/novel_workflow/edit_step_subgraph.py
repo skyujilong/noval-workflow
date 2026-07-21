@@ -48,6 +48,7 @@ class EditStepSubState(ReviewSubState):
     Inherits all ReviewSubState fields. Additional fields carry parent-graph
     context needed by prepare_fn / save_fn.
     """
+
     novel_name: str = ""
     genre: str = ""
     writing_style: str = ""
@@ -98,8 +99,8 @@ def make_edit_step_subgraph(
 
     Args:
         entry_prompt:      Text shown in the entry interrupt ("是否执行本步骤？")
-        prepare_fn:        Receives state; returns dict with system_context,
-                           task_prompt, review_type (and any other overrides).
+        prepare_fn:        Receives state; returns dict with system_prompt(L1),
+                           context_prompt(L2), task_prompt(L3), review_type (and any other overrides).
         save_fn:           Receives state; writes current_draft back to the
                            appropriate history field; returns a dict.
         entry_gate_type:   step_entry 中断的权威 type（复用节点由调用方传入身份，
@@ -139,10 +140,12 @@ def make_edit_step_subgraph(
         return {"step_execute_gate": execute, "step_direction_input": ""}
 
     def step_direction(state) -> dict:
-        direction = interrupt({
-            "type": direction_type.value,
-            "message": "请输入调整方向（直接回车使用默认提示词）：",
-        })
+        direction = interrupt(
+            {
+                "type": direction_type.value,
+                "message": "请输入调整方向（直接回车使用默认提示词）：",
+            }
+        )
         # 处理 None，避免 str(None) = "None"
         return {"step_direction_input": str(direction or "").strip()}
 
@@ -183,7 +186,9 @@ def make_edit_step_subgraph(
     # entry → skip (END) or continue
     if ask_direction:
         builder.add_conditional_edges(
-            "step_entry", route_after_entry, {END: END, "step_direction": "step_direction"}
+            "step_entry",
+            route_after_entry,
+            {END: END, "step_direction": "step_direction"},
         )
         builder.add_edge("step_direction", "step_prepare")
     else:

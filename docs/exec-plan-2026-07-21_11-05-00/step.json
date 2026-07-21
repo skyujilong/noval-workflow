@@ -1,0 +1,42 @@
+[
+  {
+    "step": "01-render-user-helper",
+    "state": "complate"
+  },
+  {
+    "step": "02-state-schema",
+    "state": "complate"
+  },
+  {
+    "step": "03-prepare-foundation",
+    "state": "complate"
+  },
+  {
+    "step": "04-prepare-chapter-arc",
+    "state": "complate"
+  },
+  {
+    "step": "05-prepare-snapshot",
+    "state": "complate"
+  },
+  {
+    "step": "06-generate-self-review",
+    "state": "complate"
+  },
+  {
+    "step": "07-edit-subgraphs",
+    "state": "complate"
+  },
+  {
+    "step": "08-independent-llm",
+    "state": "complate"
+  },
+  {
+    "step": "09-verify-expand",
+    "state": "complate"
+  },
+  {
+    "step": "10-test-final",
+    "state": "complate"
+  }
+]

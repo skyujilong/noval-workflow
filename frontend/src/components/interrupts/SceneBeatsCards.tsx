@@ -2,6 +2,8 @@
 // 每 beat 一张卡片，device_tags 按分组着色 chip 展示，让"打脸四拍 / 章尾钩 / 伏笔 / 缓冲"
 // 一眼可扫。JSON 解析失败时降级为原纯文本视图 + 顶部黄条警告。
 
+import { safeStr } from "../../lib/safe";
+
 // 与后端 prompts/scene_beats.py 的 5 组 device_tag 完全对齐；组标签同名，避免语义漂移。
 const TAG_GROUPS = {
   slap: {
@@ -309,12 +311,16 @@ function BeatCard({ beat, index, isLast }: { beat: Beat; index: number; isLast: 
   );
 }
 
-function FieldCell({ label, value }: { label: string; value?: string }) {
+function FieldCell({ label, value }: { label: string; value?: unknown }) {
+  // safeStr 兜底：LLM 可能把 str 字段（goal/obstacle/outcome/cost/emotion_arc/prose_focus）
+  // 出成 dict/list，直接 {value} 塞 JSX 会崩 React。同款问题在 EntityCardsReadonly 已经
+  // 出过、这里预防性加护栏。
+  const text = safeStr(value);
   return (
     <div>
       <div className="mb-0.5 text-xs font-medium text-gray-500">{label}</div>
       <div className="text-sm text-gray-800 leading-snug">
-        {value || <em className="text-gray-300">（空）</em>}
+        {text || <em className="text-gray-300">（空）</em>}
       </div>
     </div>
   );

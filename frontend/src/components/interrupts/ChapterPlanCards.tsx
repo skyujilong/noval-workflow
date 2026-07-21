@@ -6,6 +6,7 @@
 
 import { INTENSITY_META, INTENSITY_ORDER } from "../../lib/chapterPlanMeta";
 import type { ChapterPlanItem, NovelState } from "../../lib/types";
+import { safeStr } from "../../lib/safe";
 
 interface Props {
   draft: string;
@@ -157,12 +158,15 @@ function detectIssues(items: ChapterPlanItem[], writtenUpto: number): {
   return { warnings, intensityCount };
 }
 
-function FieldCell({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+function FieldCell({ label, value, warn }: { label: string; value: unknown; warn?: boolean }) {
+  // safeStr 兜底：LLM 可能把 str 字段（purpose/key_turn/ending_hook）出成 dict/list，
+  // 直接 {value} 塞 JSX 会崩 React。同款问题在 EntityCardsReadonly 已经出过。
+  const text = safeStr(value);
   return (
     <div>
       <div className="mb-0.5 text-xs font-medium text-gray-500">{label}</div>
       <div className={"text-sm leading-snug whitespace-pre-wrap " + (warn ? "text-red-600" : "text-gray-800")}>
-        {value?.trim() ? value : <em className="text-gray-300">（空）</em>}
+        {text.trim() ? text : <em className="text-gray-300">（空）</em>}
       </div>
     </div>
   );
@@ -171,8 +175,9 @@ function FieldCell({ label, value, warn }: { label: string; value: string; warn?
 function ChapterCard({ item, locked }: { item: ChapterPlanItem; locked: boolean }) {
   const intensity = item.intensity || "";
   const meta = INTENSITY_META[intensity];
-  const kt = item.key_turn || "";
-  const hk = item.ending_hook || "";
+  // safeStr 兜底：key_turn/ending_hook 若被 LLM 出成 dict/list，拼字符串会崩
+  const kt = safeStr(item.key_turn);
+  const hk = safeStr(item.ending_hook);
   const lazyKt = LAZY_KEY_TURN_PATTERNS.some((p) => p.test(kt));
   const lazyHook = LAZY_HOOK_PATTERNS.some((p) => p.test(hk));
   return (

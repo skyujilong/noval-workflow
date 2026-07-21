@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import type { HumanReviewPayload, ReviewResume } from "../../lib/interruptTypes";
 import { buildReviewResume } from "../../lib/interruptTypes";
+import { safeStr } from "../../lib/safe";
 import { ThinkingSwitch } from "./ThinkingSwitch";
 
 interface ForeshadowEntry {
@@ -139,15 +140,15 @@ export function ForeshadowingReviewForm({
                     <div className="space-y-1 text-gray-600">
                       <div>
                         <span className="text-gray-400">潜伏表现：</span>
-                        {entry.current_appearance}
+                        {safeStr(entry.current_appearance)}
                       </div>
                       <div>
                         <span className="text-gray-400">核心作用：</span>
-                        {entry.core_purpose}
+                        {safeStr(entry.core_purpose)}
                       </div>
                       <div>
                         <span className="text-gray-400">预计回收：</span>
-                        {entry.planned_recovery_range}
+                        {safeStr(entry.planned_recovery_range)}
                       </div>
                     </div>
                   </div>
@@ -185,11 +186,11 @@ export function ForeshadowingReviewForm({
                     <div className="space-y-1 text-gray-600">
                       <div>
                         <span className="text-gray-400">潜伏表现：</span>
-                        {entry.current_appearance}
+                        {safeStr(entry.current_appearance)}
                       </div>
                       <div>
                         <span className="text-gray-400">核心作用：</span>
-                        {entry.core_purpose}
+                        {safeStr(entry.core_purpose)}
                       </div>
                     </div>
                   </div>

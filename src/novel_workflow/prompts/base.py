@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Callable, Optional, Protocol
 from noval_workflow.volume_utils import volume_cast_card, volume_position_card
 
 if TYPE_CHECKING:
+    from noval_workflow.prompts.render import PromptRequest
     from noval_workflow.state import ChapterPlanItem, NovelState
 
     # chapter_plan_prompt_builder 的完整签名：与 PromptPack.chapter_plan_prompt 对应。
@@ -119,7 +120,9 @@ def _extract_chapter_plan_range(
     """
     if not chapter_plan or start_chapter > end_chapter:
         return []
-    return [item for item in chapter_plan if start_chapter <= item.chapter <= end_chapter]
+    return [
+        item for item in chapter_plan if start_chapter <= item.chapter <= end_chapter
+    ]
 
 
 def _format_chapter_plan_block(entries: "list[ChapterPlanItem]") -> str:
@@ -161,6 +164,7 @@ def _format_written_chapters_brief(state: "NovelState", max_recent: int = 10) ->
 
 class _PromptState(Protocol):
     """台账类提示词所需的状态结构类型（ledger.py 使用）。"""
+
     foreshadowing: dict  # 结构化格式 {"pending": [...], "collected": [...]}
     phase_summary: str
     total_chapters_written: int
@@ -282,7 +286,9 @@ _REVIEW_TYPE_TO_EVOLVED_FIELD: dict[str, str] = {
 }
 
 # 所有已接入自进化的 evolved_directives 桶字段名——供 overrides/HTTP 层遍历。
-EVOLVED_DIRECTIVES_FIELDS: frozenset[str] = frozenset(_REVIEW_TYPE_TO_EVOLVED_FIELD.values())
+EVOLVED_DIRECTIVES_FIELDS: frozenset[str] = frozenset(
+    _REVIEW_TYPE_TO_EVOLVED_FIELD.values()
+)
 
 
 def evolved_field_for(review_type: str) -> str:
@@ -325,7 +331,11 @@ class PromptPack:
 
     @property
     def core_theme_prompt(self) -> str:
-        focus = f"\n- 题材聚焦：{self.flavor.core_theme_focus}" if self.flavor.core_theme_focus else ""
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.core_theme_focus}"
+            if self.flavor.core_theme_focus
+            else ""
+        )
         return f"""请为本小说创作【核心主题与立意】。
 
 要求：
@@ -335,9 +345,63 @@ class PromptPack:
 {_FOUNDATION_RIGOR}
 请直接输出主题内容，不需要标题。"""
 
+    def core_theme_request(self, state: "NovelState") -> "PromptRequest":
+        """core_theme 步骤的三层 prompt（P0 新路径，与 core_theme_prompt 并存，不接入运行链路）。
+
+        P0 验证三层架构可行性：
+        - L1 system：身份 + 硬契约 + 任务契约 + 优先级约定（build_system 产出）。
+        - L2 context：作品设定（build_foundation_context 去身份 include_identity=False，避免与 L1 双注）。
+        - L3 task：任务要求 + 输出前自检 + 输出格式。
+
+        与旧 core_theme_prompt 的差异：_FOUNDATION_RIGOR 的「硬约束」升入 L1 的 HARD_CONTRACTS
+        （单一真源），L3 只保留「输出前自检」执行性清单 + 任务要求。身份只在 L1 出现一次。
+        """
+        from noval_workflow.context import build_foundation_context
+        from noval_workflow.prompts.render import (
+            ContextSection,
+            PromptRequest,
+            SystemRole,
+            build_system,
+        )
+
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.core_theme_focus}"
+            if self.flavor.core_theme_focus
+            else ""
+        )
+        system = build_system(
+            SystemRole.GENRE_AUTHOR,
+            "为本小说创作【核心主题与立意】",
+            genre_identity=self.flavor.system_identity,
+        )
+        context = (
+            ContextSection(
+                key="作品设定",
+                body=build_foundation_context(state, include_identity=False),
+            ),
+        )
+        task = f"""请为本小说创作【核心主题与立意】。
+
+要求：
+- 用200-400字阐述小说的核心主题、价值观、哲学命题
+- 明确作品想传递的核心思想
+- 确保主题与类型、基调、目标读者相符{focus}
+
+【输出前自检（全部通过才输出，否则改到通过）】
+1. 是否有「已声明会生效的机制」无法回答「为什么成立」、只是凭空规定？--若有，补足因果或删除（有意标明为悬念的留白不在此列，予以保留）。
+2. 是否与前置已定稿设定存在矛盾、或与其内在逻辑冲突？--若有，以前置为准调和。
+3. 是否存在为剧情效果而降智、靠巧合硬凑的环节？--若有，改成由设定内在逻辑自然导出。
+
+请直接输出主题内容，不需要标题。"""
+        return PromptRequest(system=system, context=context, task=task)
+
     @property
     def world_building_prompt(self) -> str:
-        focus = f"\n- 题材聚焦：{self.flavor.world_building_focus}" if self.flavor.world_building_focus else ""
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.world_building_focus}"
+            if self.flavor.world_building_focus
+            else ""
+        )
         return f"""请为本小说创作【世界观设定】。
 
 要求：
@@ -352,7 +416,11 @@ class PromptPack:
 
     @property
     def power_system_prompt(self) -> str:
-        focus = f"\n- 题材聚焦：{self.flavor.power_system_focus}" if self.flavor.power_system_focus else ""
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.power_system_focus}"
+            if self.flavor.power_system_focus
+            else ""
+        )
         return f"""请为本小说创作【力量体系】设定。
 
 力量体系是本书人物凭以行动、竞争、成长的那套「能力规则」——修炼境界 / 科技装备 / 异能进化 / 社会资源与规则等，视题材而定。它须与已定稿的【世界观设定】自洽，并作为后续人物成长、冲突升级、大纲与分卷规划的统一标尺。
@@ -370,7 +438,11 @@ class PromptPack:
 
     @property
     def core_conflicts_prompt(self) -> str:
-        focus = f"\n- 题材聚焦：{self.flavor.core_conflicts_focus}" if self.flavor.core_conflicts_focus else ""
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.core_conflicts_focus}"
+            if self.flavor.core_conflicts_focus
+            else ""
+        )
         return f"""请为本小说设计【核心冲突】。
 
 要求：
@@ -390,12 +462,12 @@ class PromptPack:
         定位「条件触发」（主角/根源反派/关键角色才写，普通配角/非战斗角色留空，避免套路化雷同）。
         返回的是已格式化终稿字符串（含字面 JSON 花括号），不再经二次 .format()。
         """
-        focus = f"\n- 题材聚焦：{self.flavor.character_profiles_focus}" if self.flavor.character_profiles_focus else ""
-        return f"""## 角色定位
-
-{self.flavor.system_identity}
-
-## 任务目标
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.character_profiles_focus}"
+            if self.flavor.character_profiles_focus
+            else ""
+        )
+        return f"""## 任务目标
 
 为全书一次性生成可对接全书 Synopsis 与滚动分卷、适配明暗双线、分层立体的**全套核心人物结构化卡**，直接输出 JSON（不写散文档案）。
 
@@ -408,7 +480,7 @@ class PromptPack:
 ## 单张人物卡字段（严格 JSON）
 
 ```
-{{"name": "角色名（唯一，作主键）", "type": "人物", "aliases": ["别称/绰号，无则空数组"], "summary": "一句话定位（≤30字）", "first_appear_chapter": 1, "role": "单选,只能填一个:主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（身兼多重定位如「主要配角+感情线」只填最主要的一个,禁止拼多个）", "appearance": "体貌基线（身形/气质/年龄段/大致长相,供正文外貌一致性）+ 可选1个识别特征,≤60字", "speech_style": "说话风格/口吻/温度（健谈/毒舌/寡言/温和/跳脱…,≤30字）", "personality": "【表层公开人设】读者视角性格底色", "abilities": "能力底牌一句话摘要（须落【力量体系】层级/流派）", "hidden_persona": "【深层隐藏人设·条件字段】仅主角/根源反派/确有反转设计的关键角色写:暗线秘密/异常/隐藏能力/立场偏差,与表层不冲突、可后期反转;普通配角/功能角色留空,不强凑", "arc_trajectory": "全书弧光:开篇→收官心性/立场/羁绊/认知迭代大势(只写大势不填情节);反派写阶段作用+闭环退场", "ability_contract": "【条件字段】仅战力相关的关键角色/确有需要才写:初始锚点(开篇实力对应力量体系哪层)+全书成长天花板(开篇→收官能力上限走势)+隐藏杀手锏(触发与反噬,不提前解锁);非战斗/次要/纯功能角色留空或只写简单 abilities", "motivation": "开篇当前动机/目标", "current_state": "开篇处境:位置/情绪/状态（≤30字）", "relations": "与主角/他人关系(围绕主角:情感位/信任位/冲突位/对立位/功能位)"}}
+{{"name": "角色名（唯一，作主键）", "type": "人物", "aliases": ["别称/绰号，无则空数组"], "summary": "一句话定位（≤30字）", "first_appear_chapter": 1, "role": "单选,只能填一个:主角/主要配角/功能性反派/根源反派/感情线角色/次要角色（身兼多重定位如「主要配角+感情线」只填最主要的一个,禁止拼多个）", "appearance": "体貌基线（身形/气质/年龄段/大致长相,供正文外貌一致性）+ 可选1个识别特征,≤60字", "speech_style": "说话风格/口吻/温度（健谈/毒舌/寡言/温和/跳脱…,≤30字）", "personality": "【表层公开人设】读者视角性格底色", "abilities": "能力底牌一句话摘要（须落【力量体系】层级/流派）", "hidden_persona": "【深层隐藏人设·条件字段·一段中文字符串】仅主角/根源反派/确有反转设计的关键角色写:暗线秘密/异常/隐藏能力/立场偏差,与表层不冲突、可后期反转;普通配角/功能角色留空字符串 \\"\\",不强凑;禁止嵌套 JSON 对象", "arc_trajectory": "【一段中文字符串】全书弧光大势:开篇→收官心性/立场/羁绊/认知迭代(只写大势不填情节);反派写阶段作用+闭环退场;禁止拆成 {{开篇, 收官}} 嵌套对象", "ability_contract": "【条件字段·一段中文字符串】仅战力相关的关键角色写,格式 \\"初始锚点：X（开篇实力对应力量体系哪层）；成长天花板：Y（开篇→收官能力上限走势）；隐藏杀手锏：Z（触发与反噬,不提前解锁）\\" 拼成一段字符串;非战斗/次要/纯功能角色留空字符串 \\"\\" 或只写简单 abilities;**禁止拆成 {{initial_anchor, growth_ceiling, hidden_trump}} 嵌套 JSON 对象**", "motivation": "开篇当前动机/目标", "current_state": "开篇处境:位置/情绪/状态（≤30字）", "relations": "与主角/他人关系(围绕主角:情感位/信任位/冲突位/对立位/功能位)"}}
 ```
 
 ## 硬性创作规则（沿用 bible）
@@ -416,6 +488,7 @@ class PromptPack:
 - **人设双层按需触发**：主角、根源反派、及确有反转设计的关键角色才写 `hidden_persona`（深层隐藏人设），与表层 `personality` 不冲突、可后期完美反转收束；普通配角/功能角色只写 `personality`、留空 `hidden_persona`——不搞全员双层，避免「人人藏秘密/藏铁证」式套路化雷同。
 - **严格绑定全书成长**：`arc_trajectory` 只写心性/立场/羁绊/认知的迭代大势，不填充具体情节/互动/台词。
 - **能力落体系 + 底牌契约按需**：`abilities` 必须归属【力量体系】层级/流派，禁止体系外凭空能力（全员适用）。`ability_contract`（初始锚点+全书成长天花板+隐藏杀手锏）仅对战力相关的关键角色写，非战斗/次要/纯功能角色留空——不给官僚/文职等角色硬塞「隐藏杀手锏」。写了契约的，隐藏杀手锏须写明触发与反噬、作为暗线素材不得提前解锁；此契约为「阶段固化数据」台账的战力校验红线。
+- **字段值一律字符串**：除 `aliases`（数组）外，所有字段值必须是**字符串**（可为空串 `""`）；禁止把 `ability_contract` / `hidden_persona` / `arc_trajectory` 拆成嵌套 JSON 对象（如 `{{"initial_anchor": ..., "growth_ceiling": ..., "hidden_trump": ...}}`），要用中文一段话描述、以 `；` 或 `+` 分隔子要素。
 - **人设绝对自洽**：所有角色具备明确软肋/原生缺陷/心理枷锁/立场理由，无绝对善恶，对立/抉择/背叛/牺牲均源于底层逻辑，杜绝脸谱化、工具人、强行降智。
 - **外貌给足基线、但别刷标签**：`appearance` 要写清体貌基线（身形/气质/年龄段/大致长相），供后期正文外貌一致、不乱飘；识别特征最多 1 个。人设仍靠对话/选择/反应建立，禁止靠口头禅/固定动作/服饰反复刷标签（反刷标签只约束识别特征，不压制体貌本身）。
 - **说话风格拉开差异**：全卡司 `speech_style` 要有温度/句长/口头禅的区分，需有足够健谈/外放的角色带动对话；主角不宜默认寡言话少；忌全员冷/沉默/话少，否则对话推不动剧情。
@@ -458,9 +531,12 @@ class PromptPack:
         """
         # word_count_desc 直接用用户原文(如"50万字"),不再额外拼"字"——历史遗留双字 bug 修复
         word_count_desc = total_word_count if total_word_count else "长篇"
-        focus = f"\n- 题材聚焦：{self.flavor.overall_outline_focus}" if self.flavor.overall_outline_focus else ""
-        return f"""{self.flavor.system_identity}
-任务：为本书撰写**全书战略概要（Synopsis）**——只锁定故事内核、主线动力方向、暗线悬念承诺与结局锚点，不写具体事件、不分阶段作文，也**不预先划分卷数、不锁定章数**（分卷与具体剧情在写作推进中按内容量滚动生成）。全书体量：{word_count_desc}。
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.overall_outline_focus}"
+            if self.flavor.overall_outline_focus
+            else ""
+        )
+        return f"""任务：为本书撰写**全书战略概要（Synopsis）**——只锁定故事内核、主线动力方向、暗线悬念承诺与结局锚点，不写具体事件、不分阶段作文，也**不预先划分卷数、不锁定章数**（分卷与具体剧情在写作推进中按内容量滚动生成）。全书体量：{word_count_desc}。
 
 按以下五个小节组织内容（小节标题保留，各节只写方向与定性）：
 【故事内核】（约100字）：一句话故事前提 + 全书情感基调 + 核心立意。
@@ -486,7 +562,7 @@ class PromptPack:
           - index/chapter_start/planned_end/status 由后端权威赋值，LLM 不出绝对章号
         """
         total = 1 + lookahead
-        return f"""你是网文分卷结构化规划助手。任务：为本书规划开篇的前 {total} 卷，返回严格 JSON 对象。
+        return f"""任务：为本书规划开篇的前 {total} 卷，返回严格 JSON 对象。
 第 1 卷是**要立即展开写作的激活卷**，第 2-{total} 卷是**前瞻草稿卷**（只给方向、不写细节，用于规划当前卷时提供中期地图）。
 
 # 输入：整体大纲（全书战略方向）
@@ -529,8 +605,11 @@ class PromptPack:
         """
         total = 1 + lookahead
         last_index = next_index + lookahead
-        prev_hook = prev_setup_for_next.strip() or "（上一卷未显式埋钩，请自行从整体大纲下一阶段接续）"
-        return f"""你是网文分卷结构化规划助手。本书正在连载，现需重新规划**从第 {next_index} 卷起的后续 {total} 卷**（第 {next_index} 卷是即将展开的激活卷，第 {next_index + 1}-{last_index} 卷是前瞻草稿），返回严格 JSON 对象。
+        prev_hook = (
+            prev_setup_for_next.strip()
+            or "（上一卷未显式埋钩，请自行从整体大纲下一阶段接续）"
+        )
+        return f"""本书正在连载，现需重新规划**从第 {next_index} 卷起的后续 {total} 卷**（第 {next_index} 卷是即将展开的激活卷，第 {next_index + 1}-{last_index} 卷是前瞻草稿），返回严格 JSON 对象。
 
 # 整体大纲（全书战略方向）
 {overall_outline}
@@ -556,7 +635,9 @@ class PromptPack:
 
 现在开始，直接输出 JSON 对象："""
 
-    def titles_prompt(self, all_titles: list[str], chapter_context: str = "", arc_outline: str = "") -> str:
+    def titles_prompt(
+        self, all_titles: list[str], chapter_context: str = "", arc_outline: str = ""
+    ) -> str:
         """生成下 BATCH_SIZE 章的章节标题。
 
         arc_outline 为本批弧线大纲（含 BATCH_SIZE 个【章节X】分段）。提供时，要求生成的
@@ -568,20 +649,20 @@ class PromptPack:
         existing = ""
         if all_titles:
             existing = "\n\n已有章节标题（请勿重复）：\n" + "\n".join(
-                f"{i+1}. {t}" for i, t in enumerate(all_titles)
+                f"{i + 1}. {t}" for i, t in enumerate(all_titles)
             )
 
         context_section = ""
         if chapter_context:
-            context_section = f"\n\n【前文故事进展（请据此规划后续走向）】\n{chapter_context}"
+            context_section = (
+                f"\n\n【前文故事进展（请据此规划后续走向）】\n{chapter_context}"
+            )
 
         # 弧线大纲对齐：把整批分章大纲塞进任务提示，并要求标题与分段按顺序一一对应。
         arc_section = ""
         arc_rule = ""
         if arc_outline:
-            arc_section = (
-                f"\n\n【本批章节弧线大纲（每个标题对应其中一个章节分段，按顺序一一对应）】\n{arc_outline}"
-            )
+            arc_section = f"\n\n【本批章节弧线大纲（每个标题对应其中一个章节分段，按顺序一一对应）】\n{arc_outline}"
             arc_rule = (
                 f"\n- {BATCH_SIZE}个标题须与上方【本批章节弧线大纲】的章节分段**按出现顺序一一对应**："
                 "第1个标题对应第1个章节分段，依此类推；每个标题须精准概括其对应章节的核心事件，"
@@ -629,7 +710,7 @@ class PromptPack:
 
         arc_outline/batch_pos/batch_total 用于把「本批弧线大纲」中专属本章的那一段
         显式锚定到任务提示词里：batch_pos 为本章在当前批次内的序号（1-based），
-        batch_total 为本批章节数。整批弧线大纲仍在 system_context 中，供铺垫参考。
+        batch_total 为本批章节数。整批弧线大纲仍在 context_prompt 中，供铺垫参考。
 
         scene_beats（可选）：本章 scene beats 节拍表；非空时作为「首要依据」注入正文创作
         提示词，并追加第 7 条硬约束「Scene beats 对齐」——逐 beat 展开、打脸四拍必须齐全、
@@ -642,9 +723,7 @@ class PromptPack:
         state（可选）：传入 NovelState 以启用【当前卷位置】注入。为空则不注入（旧调用点/单测
         不受影响）；prepare_chapter 会传入，让本章创作能感知横向分卷定位（卷内位置、上下卷）。
         """
-        all_titles_text = "\n".join(
-            f"{i+1}. {t}" for i, t in enumerate(all_titles)
-        )
+        all_titles_text = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(all_titles))
 
         context_section = ""
         if chapter_context:
@@ -657,7 +736,11 @@ class PromptPack:
         arc_section = ""
         arc_rule = ""
         if arc_outline and batch_pos:
-            pos_desc = f"本批第 {batch_pos}" + (f"/{batch_total}" if batch_total else "") + " 章"
+            pos_desc = (
+                f"本批第 {batch_pos}"
+                + (f"/{batch_total}" if batch_total else "")
+                + " 章"
+            )
             block = _extract_arc_chapter_block(arc_outline, batch_pos)
             if block:
                 arc_section = (
@@ -701,7 +784,10 @@ class PromptPack:
         beats_rule = ""
         if scene_beats:
             # 惰性 import 避免循环：scene_beats.py 依赖 base.py 的 _extract_arc_chapter_block。
-            from noval_workflow.prompts.scene_beats import format_beats_for_chapter_prompt
+            from noval_workflow.prompts.scene_beats import (
+                format_beats_for_chapter_prompt,
+            )
+
             beats_md = format_beats_for_chapter_prompt(scene_beats)
             beats_section = (
                 f"\n\n【本章 Scene Beats（章内节拍表，首要依据，逐 beat 展开正文）】\n{beats_md}\n"
@@ -730,9 +816,7 @@ class PromptPack:
             if card:
                 volume_section = f"\n\n{card}"
 
-        return f"""{self.flavor.system_identity}
-
-请撰写第{chapter_num}章：《{title}》{volume_section}
+        return f"""请撰写第{chapter_num}章：《{title}》{volume_section}
 
 全书章节目录（供参考）：
 {all_titles_text}{context_section}{arc_section}{chapter_plan_section}{beats_section}
@@ -781,10 +865,13 @@ class PromptPack:
         prev_section = ""
         if state.all_chapter_summaries:
             recent = state.all_chapter_summaries[-SUMMARY_COUNT:]
-            prev_section = f"\n\n【前文故事摘要（最近{SUMMARY_COUNT}章）】\n" + "\n".join(
-                f"第{state.total_chapters_written - len(recent) + i + 1}章摘要：{s}"
-                for i, s in enumerate(recent)
-                if s
+            prev_section = (
+                f"\n\n【前文故事摘要（最近{SUMMARY_COUNT}章）】\n"
+                + "\n".join(
+                    f"第{state.total_chapters_written - len(recent) + i + 1}章摘要：{s}"
+                    for i, s in enumerate(recent)
+                    if s
+                )
             )
 
         # ── 远端锚点注入:从 chapter_plan 切出本批对应的窗口条目 ──────────────────
@@ -792,7 +879,9 @@ class PromptPack:
         # + 前文摘要;chapter_plan 未开启 or 未覆盖到本批时自然跳过,行为向后兼容。
         batch_start = state.total_chapters_written + 1
         batch_end = batch_start + BATCH_SIZE - 1
-        plan_entries = _extract_chapter_plan_range(state.chapter_plan, batch_start, batch_end)
+        plan_entries = _extract_chapter_plan_range(
+            state.chapter_plan, batch_start, batch_end
+        )
         chapter_plan_section = ""
         chapter_plan_rule = ""
         if plan_entries:
@@ -816,8 +905,8 @@ class PromptPack:
             plan_coverage_note = (
                 f" · chapter_plan 已前瞻到第 {state.chapter_plan_planned_upto} 章"
                 f"({len(plan_entries)} 条锚点覆盖本批)"
-                if plan_entries else
-                f" · chapter_plan 已前瞻到第 {state.chapter_plan_planned_upto} 章(本批未覆盖)"
+                if plan_entries
+                else f" · chapter_plan 已前瞻到第 {state.chapter_plan_planned_upto} 章(本批未覆盖)"
             )
         position_section = (
             "\n\n【本批位置卡】\n"
@@ -839,12 +928,14 @@ class PromptPack:
         is_first_batch = state.total_chapters_written == 0
         continuity_rule = (
             "1. 作为本书第一批章节，请严格按照整体大纲的开篇定位规划故事起点，奠定世界观、人物关系与核心冲突的基调。"
-            if is_first_batch else
-            "1. 严格承接上一批大纲最终结尾情节，情节逻辑连贯、无断层，全程贴合作品整体主线大纲，不偏离核心世界观、势力设定、人物人设与核心冲突。"
+            if is_first_batch
+            else "1. 严格承接上一批大纲最终结尾情节，情节逻辑连贯、无断层，全程贴合作品整体主线大纲，不偏离核心世界观、势力设定、人物人设与核心冲突。"
         )
 
         max_words = BATCH_SIZE * 500
-        focus = f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
+        focus = (
+            f"\n- 题材聚焦：{self.flavor.arc_focus}" if self.flavor.arc_focus else ""
+        )
 
         # 【档位分配与节奏张弛】段:题材可通过 arc_rhythm_override 完全覆盖 base 通用版本。
         # 用 .format() 展开 BATCH_SIZE 等占位——因为 override 字段是纯字符串,不能在其中
@@ -854,9 +945,13 @@ class PromptPack:
             "batch_default_burst": int(BATCH_SIZE * 0.4),
             "batch_default_calm": max(1, BATCH_SIZE // 3),
             "batch_max_burst": max(1, int(BATCH_SIZE * 0.2)),
-            "batch_mid_burst": max(1, int(BATCH_SIZE * 0.3)),  # 反爽文但要冒险撑主线的中间档:~30% 爆发上限
+            "batch_mid_burst": max(
+                1, int(BATCH_SIZE * 0.3)
+            ),  # 反爽文但要冒险撑主线的中间档:~30% 爆发上限
             "batch_min_daily": max(1, int(BATCH_SIZE * 0.5)),
-            "batch_mid_daily": max(1, int(BATCH_SIZE * 0.4)),  # 与 batch_mid_burst 配套:日常仍是主体但让出冒险空间,~40% 下限
+            "batch_mid_daily": max(
+                1, int(BATCH_SIZE * 0.4)
+            ),  # 与 batch_mid_burst 配套:日常仍是主体但让出冒险空间,~40% 下限
         }
         rhythm_template = (
             self.flavor.arc_rhythm_override
@@ -867,7 +962,6 @@ class PromptPack:
 
         return f"""请为本批接下来的 {BATCH_SIZE} 章（全书第 {batch_start} — {batch_end} 章）规划故事弧线大纲。{volume_section}{cast_section}{position_section}{prev_section}{chapter_plan_section}
 
-# 角色：你是专业网文分章弧线大纲撰写师
 ## 整体约束
 {continuity_rule}
 2. 本批次所有章节大纲总字数严格控制在 {max_words} 以内；**单章节内容节点文字不得超过500字**，精简表述，拒绝冗余描写、抒情、旁白。
@@ -919,7 +1013,9 @@ class PromptPack:
         builder = self.flavor.chapter_plan_prompt_builder
         if builder is not None:
             return builder(state, start_chapter, end_chapter, locked_entries)
-        return _default_chapter_plan_prompt(state, start_chapter, end_chapter, locked_entries)
+        return _default_chapter_plan_prompt(
+            state, start_chapter, end_chapter, locked_entries
+        )
 
 
 # ── chapter_plan_prompt 复用辅助 ──────────────────────────────────────────────
@@ -930,7 +1026,7 @@ def format_chapter_plan_state_snapshot(state: "NovelState") -> str:
     """把 state 里的台账快照(伏笔/阶段固化)组装成 chapter_plan 提示词的「状态注入」段。
     所有 flavor builder 共享此函数,避免各处重复。
 
-    人物动态（处境/关系）不在此注入——已并入 CharacterCard，由 system_context 经
+    人物动态（处境/关系）不在此注入——已并入 CharacterCard，由 context_prompt 经
     build_foundation_context 统一渲染，避免与卡库双源。无任何非空字段时返回空串。
     """
     import json
@@ -976,14 +1072,14 @@ def compute_chapter_plan_quotas(count: int) -> dict:
     """
     return {
         "count": count,
-        "burst_max": max(2, count // 5),           # 爆发章上限（约20%）
-        "burst_min": max(1, count // 7),           # 爆发章下限（约14%）
-        "big_turn_max": max(1, count // 6),        # 大转折上限（约16%,与爆发合计≤35%）
-        "small_turn_min": max(2, count // 8),      # 小转折下限（约12-15%）
-        "lull_streak_max": 2,                       # 连续淡章上限（铺垫/缓冲/回落）
-        "passive_streak_max": 2,                    # 主角连续被动承压上限
-        "win_cadence": 5,                           # 每N章必须有一次主角时刻/爽点
-        "core_hook_payoff_max": 12,                 # 核心冲突钩子铺到兑现上限（章数）
+        "burst_max": max(2, count // 5),  # 爆发章上限（约20%）
+        "burst_min": max(1, count // 7),  # 爆发章下限（约14%）
+        "big_turn_max": max(1, count // 6),  # 大转折上限（约16%,与爆发合计≤35%）
+        "small_turn_min": max(2, count // 8),  # 小转折下限（约12-15%）
+        "lull_streak_max": 2,  # 连续淡章上限（铺垫/缓冲/回落）
+        "passive_streak_max": 2,  # 主角连续被动承压上限
+        "win_cadence": 5,  # 每N章必须有一次主角时刻/爽点
+        "core_hook_payoff_max": 12,  # 核心冲突钩子铺到兑现上限（章数）
     }
 
 
@@ -1065,14 +1161,15 @@ def render_chapter_plan_prompt(
 
     continuity_rule = (
         "本次是首次章节规划，请紧扣整体大纲的开篇定位，奠定世界观、人物关系与核心冲突的基调；前 2-3 章允许慢热但必须挂钩子。"
-        if is_first_plan else
-        "本次是滚动重规划，请严格承接已写完章节的伏笔、人物状态、势力格局与情绪走向；不要另起炉灶推翻已发生的剧情。"
+        if is_first_plan
+        else "本次是滚动重规划，请严格承接已写完章节的伏笔、人物状态、势力格局与情绪走向；不要另起炉灶推翻已发生的剧情。"
     )
 
     written_brief = _format_written_chapters_brief(state)
     written_section = (
         f"\n\n【已写完章节速览（最近 10 章，供承接参考）】\n{written_brief}"
-        if written_brief else ""
+        if written_brief
+        else ""
     )
     locked_section = format_chapter_plan_locked_section(state, locked_entries)
     status_section = format_chapter_plan_state_snapshot(state)
@@ -1131,7 +1228,9 @@ def render_chapter_plan_prompt(
         "「XX看到了让他震惊的一幕」「眼前的景象让他惊呆了」",
         "「等待他们的是...」「接下来会发生什么」「故事才刚刚开始」",
     ]
-    hook_ban_block = "\n".join(f"- {h}" for h in generic_hook_bans + list(spec.genre_hook_antipatterns))
+    hook_ban_block = "\n".join(
+        f"- {h}" for h in generic_hook_bans + list(spec.genre_hook_antipatterns)
+    )
 
     # 通用常见错误 + 题材追加
     generic_mistakes = [
@@ -1145,13 +1244,15 @@ def render_chapter_plan_prompt(
         "ending_hook 写「XX 传来脚步声」「黑影闪过」「等待他们的是...」等套路伪钩子",
         "key_turn 写「无强转折」「以铺垫为主」等套话（必须写具体事件，哪怕是淡章也要写明具体推进了什么）",
     ]
-    mistakes_block = "\n".join(f"❌ {m}" for m in generic_mistakes + list(spec.genre_common_mistakes))
+    mistakes_block = "\n".join(
+        f"❌ {m}" for m in generic_mistakes + list(spec.genre_common_mistakes)
+    )
 
-    genre_extra_rhythm = f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
+    genre_extra_rhythm = (
+        f"\n\n{spec.genre_extra_rhythm_rules}" if spec.genre_extra_rhythm_rules else ""
+    )
 
     return f"""请为本作品规划**本卷** {count} 章的**中景章节规划**（chapter_plan）。{volume_section}{cast_section}{written_section}{locked_section}{status_section}
-
-# 角色：你是长篇网文的中景大纲规划师，负责在「整书大纲」与「批级弧线」之间给出**当前整卷** {count} 章的路线图。
 
 ## 本次任务范围
 只输出章号 {start_chapter} - {end_chapter}（闭区间，共 {count} 条）的新条目，**严禁**输出其他章号，**严禁**重复输出「已锁定的历史条目」中的章号。**严格停在第 {end_chapter} 章**——超出 {end_chapter} 的条目会被系统直接丢弃（本次规划覆盖当前整卷 [第 {start_chapter} 章, 第 {end_chapter} 章]，后续卷由下一轮滚动卷规划展开），多写纯属浪费 token。头部卷位置卡的「后续卷前瞻」只是中期方向地图，供你为当前卷提前埋线、铺垫、呼应用，**不要**为后续卷输出任何章节条目。
@@ -1187,11 +1288,11 @@ def render_chapter_plan_prompt(
    - `小转折` 档章数 ≥ {small_turn_min}（每5-8章必须有一次可感知的推进/胜利/揭露）
    - `铺垫`+`缓冲`+`回落` 合计 25-35%，张弛有度
    - `推进` 为主体档位，占 30-40%
-2. **禁止连续 {lull_streak_max+1} 章以上都是铺垫/缓冲/回落**（节奏塌陷）；淡章之间必须插入推进或小转折。
+2. **禁止连续 {lull_streak_max + 1} 章以上都是铺垫/缓冲/回落**（节奏塌陷）；淡章之间必须插入推进或小转折。
 3. **禁止连续 2 章以上爆发/大转折**（节奏窒息）；两个爆发/大转折之间至少隔 1-2 章缓冲或推进。{genre_extra_rhythm}
 
 ### 二、主角能动性（反被动硬约束）
-1. **禁止主角连续 {passive_streak_max+1} 章以上纯被动承压**（被欺负/被调查/被驳回/被刁难/被追赶却无反制）。主角被动章之后必须紧跟至少 1 章主角**主动决策 / 主动出手 / 获得关键契机 / 关系或立场主导**的章节。
+1. **禁止主角连续 {passive_streak_max + 1} 章以上纯被动承压**（被欺负/被调查/被驳回/被刁难/被追赶却无反制）。主角被动章之后必须紧跟至少 1 章主角**主动决策 / 主动出手 / 获得关键契机 / 关系或立场主导**的章节。
 2. 每 {win_cadence} 章内主角必须有至少一次「主角时刻」——本题材下的具体形态：**{spec.agency_examples}**。读者必须能感受到主角有能动性。
 3. 开篇前10章（新手期）主角可以略被动，但最迟第8章必须出现第一次明确的主动出手或关键收获。
 
@@ -1245,4 +1346,3 @@ def _default_chapter_plan_prompt(
     return render_chapter_plan_prompt(
         state, start_chapter, end_chapter, locked_entries, ChapterPlanGenreSpec()
     )
-
