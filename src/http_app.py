@@ -817,11 +817,13 @@ async def post_character_promote_apply(request: Request) -> JSONResponse:
     """把审改后的深层设计落库（canon 变更）：覆盖目标卡的 role + 4 深层字段，回写全量 entity_cards。
 
     body: {thread_id, name, patch: {role, appearance, hidden_persona, arc_trajectory, ability_contract}}
-    fail-loud：缺参/role 非法→400，卡不存在→404，非次要角色→400，parse_card 校验失败→400，
+    fail-loud：缺参/role 非法→400，卡不存在→404，非次要角色→400，pydantic 校验失败→400，
     update_state 失败→502。
     """
+    from pydantic import TypeAdapter, ValidationError
+
     from noval_workflow.prompts.entity_cards import PROMOTABLE_ROLES
-    from noval_workflow.state import parse_card
+    from noval_workflow.state import EntityCard
 
     body = await _json_body(request)
     thread_id, name, patch = body.get("thread_id"), body.get("name"), body.get("patch")
@@ -843,10 +845,10 @@ async def post_character_promote_apply(request: Request) -> JSONResponse:
         if k in patch:
             updated[k] = patch[k]
 
-    # parse_card 校验合法性（role 枚举 / type / 字段合规）——非法即抛，不写坏数据
+    # pydantic TypeAdapter 校验合法性（role 枚举 / type / 字段合规）——非法即抛，不写坏数据
     try:
-        parse_card(updated)
-    except ValueError as e:
+        TypeAdapter(EntityCard).validate_python(updated)
+    except (ValueError, ValidationError) as e:
         return JSONResponse({"error": f"卡校验失败：{e}"}, status_code=400)
 
     # 全量覆盖 entity_cards（无 reducer，last-value 语义）——只换目标卡

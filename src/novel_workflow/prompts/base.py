@@ -1050,10 +1050,10 @@ def format_chapter_plan_locked_section(
     if not locked_entries:
         return ""
     import json
-    from dataclasses import asdict
 
+    # ChapterPlanItem 现在是 pydantic BaseModel——用 model_dump()；老 checkpoint 遗留 dict 直放行
     locked_json = json.dumps(
-        [asdict(item) for item in locked_entries],
+        [item.model_dump() if hasattr(item, "model_dump") else item for item in locked_entries],
         ensure_ascii=False,
         indent=2,
     )

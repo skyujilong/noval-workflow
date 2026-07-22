@@ -1,22 +1,39 @@
+"""LangGraph state 定义——Pydantic v2 化。
+
+**关键设计**：所有跨 checkpoint 存储的类型都是 pydantic BaseModel，靠 langgraph
+JsonPlusSerializer 的 EXT_PYDANTIC_V2 分支保类型 + 递归字段校验重建嵌套实例。
+
+历史（背景）：Volume/EntityCard/ChapterPlanItem/NovelState 曾是 dataclass。
+dataclass 虽然在 msgpack 层有 EXT_CONSTRUCTOR_KW_ARGS 分支能保类型，但：
+  1. `Deserializing unregistered type` warning（"will be blocked in a future version"）
+  2. dataclass 构造时**不递归**——`NovelState(volumes=[dict, dict])` 塞的还是 dict
+  3. 带外 update_state 写 dict 后 → 下一 node 读到 dict → AttributeError 崩
+
+迁 pydantic 后：
+  1. EXT_PYDANTIC_V2 是内置一等公民（`model_validate_json` 兜底）
+  2. `list[Volume]` 触发递归 validate：dict 自动重建 Volume 实例
+  3. 字段级校验（`field_validator`）内置——`parse_card` 工厂 → discriminator Union
+"""
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass, field, fields
 from enum import Enum
+from typing import Annotated, Literal, Union
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ChapterPlanItem:
+class ChapterPlanItem(BaseModel):
     """章节规划单条条目——中景大纲层的结构化章节条目。
 
-    LangGraph checkpoint 序列化时 dataclass 自动转 dict，前端拿到的仍是标准 JSON；
-    LLM 出的 JSON 数组由 save_chapter_plan 逐条 `ChapterPlanItem(**item)` 造实例，
-    字段缺失/类型错时抛 TypeError，让审核循环重生成。
-
-    intensity 档位（7 档，与 arc 层 6 档对齐但更细）：
-      铺垫/缓冲/推进/小转折/大转折/爆发/回落
-    老 state 快照反序列化时缺字段走默认值，不会炸。
+    intensity 档位（7 档）：铺垫/缓冲/推进/小转折/大转折/爆发/回落。历史 checkpoint
+    里有空串或方向性词汇——保 str（不加 Literal），避免打回死循环；跨 item 章号
+    连续升序校验由 nodes/chapter_plan.py::parse_chapter_plan_items 落库时兜底。
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     chapter: int           # 全书章号（1-based）
     purpose: str           # 本章要完成的「活」/目标（≤40 字）
@@ -25,8 +42,7 @@ class ChapterPlanItem:
     intensity: str = ""    # 本章档位：铺垫/缓冲/推进/小转折/大转折/爆发/回落
 
 
-@dataclass
-class Volume:
+class Volume(BaseModel):
     """整书分卷条目——横向大结构，位于 overall_outline 之下、chapter_plan 之上（滚动生成卷 + 前瞻队列）。
 
     章号语义（关键，一律由 save_volumes 权威赋值，不信 LLM 的绝对章号）：
@@ -41,17 +57,20 @@ class Volume:
 
     前瞻队列：status=planning 且 chapter_start=planned_end=0 的卷是「前瞻草稿卷」（只有方向骨架
     title/summary/setup_for_next，未锁章号），轮到激活时 save_volumes 才权威锁章号转正；判「已激活」用 planned_end>0。
-    序列化/容错：LangGraph checkpoint 序列化时 dataclass 自动转 dict；save_volumes 从 LLM 多卷草稿
-    取内容字段、其余权威赋值；nodes 层用 _coerce_volume 归一（过滤未知键，兼容老快照）。
+    序列化：pydantic BaseModel → langgraph EXT_PYDANTIC_V2 分支保类型，字段级递归校验（dict 自动
+    重建 Volume 实例，废除老 _coerce_volume 胶水）。
     """
-    index: int                     # 第几卷（1-based）
-    title: str                     # 卷名，如「第一卷 · 少年入宗」
-    summary: str = ""              # 本卷主线目标 + 情绪基调 + 收尾状态（≤80 字）
-    setup_for_next: str = ""       # 卷尾要为下一卷埋的钩（≤60 字，最后一卷可空）
-    chapter_start: int = 1         # 起始**章号**（1-based，权威锁定）
-    planned_end: int = 0           # 末**章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]
-    actual_end: int | None = None  # 实际收卷**章号**（= planned_end），None = 仍在进行中
-    status: str = "planning"       # planning(前瞻草稿·未锁章号) | in_progress | closed
+
+    model_config = ConfigDict(extra="ignore")
+
+    index: int                       # 第几卷（1-based）
+    title: str                       # 卷名，如「第一卷 · 少年入宗」
+    summary: str = ""                # 本卷主线目标 + 情绪基调 + 收尾状态（≤80 字）
+    setup_for_next: str = ""         # 卷尾要为下一卷埋的钩（≤60 字，最后一卷可空）
+    chapter_start: int = 1           # 起始**章号**（1-based，权威锁定）
+    planned_end: int = 0             # 末**章号**（绝对章号，权威边界）；卷内窗口 = [chapter_start, planned_end]
+    actual_end: int | None = None    # 实际收卷**章号**（= planned_end），None = 仍在进行中
+    status: str = "planning"         # planning(前瞻草稿·未锁章号) | in_progress | closed
 
 
 class EntityType(str, Enum):
@@ -117,33 +136,35 @@ def coerce_character_role(raw) -> CharacterRole:
     return primary
 
 
-# 判别联合：基类 + 变体 + parse_card 工厂。变体间字段差异真实存在（人物 vs 物品），势力/地点
-# 无专属字段故共用 SimpleEntityCard。用 kw_only=True 绕开 dataclass 继承的「非默认字段不能跟在
-# 默认字段后」排序限制，让变体能声明必填字段（如 CharacterCard.role）。
-@dataclass(kw_only=True)
-class EntityCard:
-    """实体卡判别联合的**基类**——所有实体共有字段。不直接实例化，一律用 parse_card 造具体变体。
+# 判别联合：3 个具体变体（CharacterCard/ItemCard/SimpleEntityCard）由 type 字段分派。
+# 与老 dataclass 的差异：
+# - 用 `Literal[EntityType.X]` 作为 type 字段类型，pydantic 按 type 值原生分派（无需 parse_card 工厂）
+# - 变体间字段差异真实存在（人物 vs 物品），势力/地点无专属字段故共用 SimpleEntityCard
+# - EntityCard 是 Annotated Union，用法：`entity_cards: list[EntityCard]`——pydantic 自动按 type 字段
+#   把 dict 分派到对应变体校验+构造
+
+
+class _EntityCardBase(BaseModel):
+    """实体卡共有字段基类——不直接实例化，一律用具体变体（Character/Item/Simple）。
 
     唯一真源定位：EntityCard 卡库是人物/物品/装备/势力/地点的唯一结构化真源，一卡兼容
     canon（建卡锁定的深层设计）+ current（章末 entity_discover_step 覆盖的动态状态）。
     装备/物品真源亦在此（phase_summary 不再存装备）。
-
-    序列化/容错：LangGraph checkpoint 把 dataclass 转 dict，回来是 dict——不自动重建实例，
-    故 nodes 层读卡前一律 _coerce_card→parse_card 归一，按 type 重新分派到正确变体。
-    渲染函数则同时兼容 dict 与实例（getattr/get 双分支），不依赖已归一。
     """
 
+    model_config = ConfigDict(extra="ignore")
+
     name: str                          # 实体名（主键，name+aliases 归一化后查重去重）
-    type: EntityType                   # 判别标签，parse_card 权威写入
-    aliases: list[str] = field(default_factory=list)  # 别称（参与归一化查重，防同一实体重复建卡）
+    aliases: list[str] = Field(default_factory=list)  # 别称（参与归一化查重，防同一实体重复建卡）
     summary: str = ""                  # 一句话定位（≤30 字）
     first_appear_chapter: int = 0      # 首次登场章号（1-based）
 
 
-@dataclass(kw_only=True)
-class CharacterCard(EntityCard):
+class CharacterCard(_EntityCardBase):
     """人物卡——canon 深层设计（吸收自原 character_profiles bible）+ current 动态状态。"""
-    role: CharacterRole                # canon·必填：角色定位（主角/反派分层），parse_card 强校验
+
+    type: Literal[EntityType.CHARACTER] = EntityType.CHARACTER
+    role: CharacterRole                # canon·必填：角色定位（主角/反派分层），validator 强校验
     appearance: str = ""               # canon：外貌锚点（防写飘，操作视图）
     speech_style: str = ""             # canon：说话风格/口吻/口头禅（操作视图）
     personality: str = ""              # canon：表层公开人设/性格底色（操作视图）
@@ -155,74 +176,73 @@ class CharacterCard(EntityCard):
     current_state: str = ""            # 动态·覆盖：当前处境（位置/情绪/状态），吸收原 character_status
     relations: str = ""                # 动态·覆盖：与主角/他人关系，立场翻转（叛变）由此承载
 
+    @field_validator("role", mode="before")
+    @classmethod
+    def _coerce_role(cls, v):
+        # 多重定位收敛：「主要配角、感情线角色」→ 优先级排序取最高——与老 parse_card 一致
+        if v is None or v == "":
+            raise ValueError("人物卡 role 必填（六枚举之一：主角/主要配角/功能性反派/根源反派/感情线角色/次要角色）")
+        return coerce_character_role(v)
 
-@dataclass(kw_only=True)
-class ItemCard(EntityCard):
+
+class ItemCard(_EntityCardBase):
     """物品/装备卡（type=物品 或 装备）。owner 章末解析绑定到规范实体。"""
+
+    type: Literal[EntityType.ITEM, EntityType.EQUIPMENT] = EntityType.ITEM
     effect: str = ""                   # canon：效果/能力
     rank: str = ""                     # canon：品阶/等级（落力量体系）
     owner: str = ""                    # 动态·覆盖·解析绑定：归属人（save 端匹配到规范实体卡）
     status: str = ""                   # 动态·覆盖：完好/损坏/消耗/遗失
 
 
-@dataclass(kw_only=True)
-class SimpleEntityCard(EntityCard):
+class SimpleEntityCard(_EntityCardBase):
     """势力/地点卡——只有基类字段 + 可选 standing。地点暂无动态字段。"""
+
+    type: Literal[EntityType.FACTION, EntityType.LOCATION] = EntityType.FACTION
     standing: str = ""                 # 动态·覆盖：势力强弱/格局（吸收原 character_relations 势力部分；地点留空）
 
 
-# type → 变体类 分派表（物品/装备共用 ItemCard，势力/地点共用 SimpleEntityCard）
-_CARD_CLASSES: dict[EntityType, type[EntityCard]] = {
-    EntityType.CHARACTER: CharacterCard,
-    EntityType.ITEM: ItemCard,
-    EntityType.EQUIPMENT: ItemCard,
-    EntityType.FACTION: SimpleEntityCard,
-    EntityType.LOCATION: SimpleEntityCard,
-}
+# 判别联合：list[EntityCard] 时 pydantic 按 type 字段自动分派到对应变体。
+# 老 parse_card 工厂已删除——判别逻辑内置于 pydantic Discriminator。
+EntityCard = Annotated[
+    Union[CharacterCard, ItemCard, SimpleEntityCard],
+    Field(discriminator="type"),
+]
+
+# 兼容层：老代码/测试里的 parse_card(dict) 保留同名 API，内部走 pydantic TypeAdapter。
+# 新代码推荐 `TypeAdapter(EntityCard).validate_python(...)`。
+_CARD_ADAPTER = None
 
 
-def parse_card(raw: dict) -> EntityCard:
-    """判别工厂：按 type 分派构造具体卡变体。无 compat——非法/缺失 type 直接 fail-loud。
+def parse_card(raw: dict):
+    """判别工厂（兼容层）：按 type 字段分派到具体卡变体（人物/物品/装备/势力/地点）。
 
-    - 字符串 type → EntityType 枚举（非法值抛 ValueError）。
-    - 按 type 选变体类，过滤掉不属于该变体的键（跨类脏键/老 schema 残留键不炸构造）。
-    - 人物卡 role 字符串 → CharacterRole 枚举（缺失抛 ValueError；多重定位收敛到单值，
-      经 coerce_character_role，全非法才抛 ValueError，落实「人物必填 role」）。
-    - checkpoint 反序列化的 dict 同经此路重新分派到正确变体（type 是 str 枚举，roundtrip 安全）。
+    Pydantic 化后判别逻辑已内置于 EntityCard Annotated Union（Discriminator）——
+    本函数保留为**旧调用点的兼容 shim**，等价于 `TypeAdapter(EntityCard).validate_python(raw)`。
+    错误行为一致：非法 type / 缺 role / 字段类型错 → ValueError（fail-loud）。
     """
+    global _CARD_ADAPTER
+    if _CARD_ADAPTER is None:
+        from pydantic import TypeAdapter as _TA
+        _CARD_ADAPTER = _TA(EntityCard)
     if not isinstance(raw, dict):
         raise ValueError(f"实体卡必须是对象(dict)，实际类型={type(raw).__name__}")
-    raw_type = raw.get("type")
-    if raw_type in (None, ""):
-        raise ValueError(f"实体卡缺 type 字段：{raw!r}")
     try:
-        etype = EntityType(raw_type)
-    except ValueError as exc:
-        valid = "/".join(e.value for e in EntityType)
-        raise ValueError(f"实体卡 type={raw_type!r} 非法，须为 {valid} 之一") from exc
-
-    cls = _CARD_CLASSES[etype]
-    valid_keys = {f.name for f in fields(cls)}
-    kwargs = {k: v for k, v in raw.items() if k in valid_keys}
-    kwargs["type"] = etype  # 权威覆盖：存枚举，消除原始字符串歧义
-
-    if cls is CharacterCard:
-        role = kwargs.get("role")
-        if role in (None, ""):
-            raise ValueError(f"人物卡 {raw.get('name')!r} 缺 role（必填，六枚举之一）")
-        try:
-            kwargs["role"] = coerce_character_role(role)  # 多重定位收敛到单值，全非法才 fail-loud
-        except ValueError as exc:
-            raise ValueError(f"人物卡 {raw.get('name')!r} {exc}") from exc
-
-    try:
-        return cls(**kwargs)
-    except TypeError as exc:
-        raise ValueError(f"实体卡字段不符: {exc}; 原始={raw!r}") from exc
+        return _CARD_ADAPTER.validate_python(raw)
+    except Exception as exc:
+        raise ValueError(f"实体卡校验失败: {exc}") from exc
 
 
-@dataclass
-class ReviewSubState:
+class ReviewSubState(BaseModel):
+    """审核桥接子状态——三层 prompt / current_draft / review 决策的共享字段。
+
+    子图流转：prepare 节点写 L1/L2/L3 → generate 出 current_draft → llm/human review →
+    approved 或 review_feedback（打回）→ 循环。桥接字段名与 NovelState 严格对齐、
+    langgraph 自动映射。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     novel_name: str = ""        # 小说名称（桥接字段：按小说加载提示词覆盖；由父图 NovelState.novel_name 自动映射）
     genre: str = ""             # 小说类型（桥接字段：按题材加载提示词包；由父图 NovelState.genre 自动映射）
     # 三层 prompt 桥接字段（prepare 节点写入、subgraph 消费）：
@@ -238,7 +258,7 @@ class ReviewSubState:
     review_feedback: str = ""   # LLM 或人工反馈（空字符串 = 无问题 / 已通过）
     approved: bool = False      # 人工审核通过后置为 True
     review_type: str = "foundation"  # 初始哨兵值；prepare 节点必覆盖为已登记类型（core_theme|titles|chapter|arc_outline|…），未覆盖即进 review 会 fail-fast
-    review_history: list = field(default_factory=list)
+    review_history: list = Field(default_factory=list)
     # list[dict]，每条格式：{"role": "human"|"ai", "content": str}
     # 由 generate() 管理；按 _HISTORY_MAX_ROUNDS 上限滚动裁剪（每轮 2 条消息）
     llm_review_count: int = 0
@@ -258,10 +278,18 @@ class ReviewSubState:
     # 由 human_review 写入（打回时置为原始意见，通过时重置为 ""）；不桥接到 NovelState，每次进子图自动归零。
 
 
-@dataclass
-class NovelState:
+class NovelState(BaseModel):
+    """LangGraph 全局状态——小说写作全流程的持久化容器。
+
+    Pydantic v2 化（详见模块 docstring）：字段声明为 `list[Volume]` / `list[EntityCard]` /
+    `list[ChapterPlanItem]` 时，pydantic 会**递归 validate** 每个元素——从 checkpoint / API
+    带外操作写入的 dict 会自动重建为对应实例，废除老 _coerce_volume / _coerce_card 胶水。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     # ── Phase -1：灵感脑爆（可选，入口分叉）──────────────────────────────────────
-    brainstorm_history: list = field(default_factory=list)
+    brainstorm_history: list = Field(default_factory=list)
     # 脑爆多轮对话历史，格式 [{"role": "human"|"ai", "content": str}]。
     # 覆盖语义（节点每次返回完整新 list）——切勿加 operator.add，否则压缩无法移除旧条目。
     brainstorm_summary: str = ""    # 早期对话轮次的 LLM 压缩概要（滑出保留窗口的部分并入此处）
@@ -281,7 +309,7 @@ class NovelState:
     # 切不到的字段名累积到 finalize_missing_fields，供 brainstorm_extract_review 面板对应字段头部
     # 挂黄色警告条提示用户手填。
     finalize_markdown: str = ""            # 完整版 markdown 原文（供 confirm 闸门与 back_to_chat 剥离比对）
-    finalize_missing_fields: list = field(default_factory=list)  # 切分不到的字段名子集（core_theme/world_building/power_system/core_conflicts）
+    finalize_missing_fields: list = Field(default_factory=list)  # 切分不到的字段名子集（core_theme/world_building/power_system/core_conflicts）
 
     # ── Phase 0：用户输入 ────────────────────────────────────────────────────────
     novel_name: str = ""            # 小说名称
@@ -309,7 +337,7 @@ class NovelState:
     review_type: str = "foundation" # 初始哨兵值；prepare 节点必覆盖为已登记 review 类型（未覆盖进 review 即 fail-fast）
     llm_review_count: int = 0       # LLM 自审累计轮数（子图桥接字段）
 
-    # ── Phase 1：小说基础设定（每项审核通过后保存）────────────────────────────────
+    # ── Phase 1:小说基础设定（每项审核通过后保存）────────────────────────────────
     core_theme: str = ""            # 核心主题与立意
     world_building: str = ""        # 世界观设定
     power_system: str = ""          # 力量体系（修炼境界/科技/异能/社会竞争等，视题材而定；依赖世界观、喂给冲突/大纲/人物）
@@ -321,9 +349,10 @@ class NovelState:
     # ── Phase 1.5 / 滚动：分卷规划（Volumes，横向大结构中间层）───────────────────
     # 位于 overall_outline 之下、chapter_plan 之上。滚动生成卷：开书由 prepare_volumes 只规划
     # 卷 1，写作推进到触及当前卷末章时由 route_continue_or_end 触发再规划下一卷；卷长 LLM 内容
-    # 驱动（松护栏 [15,50]，人可破），章号一律 save_volumes 权威赋值（详见 Volume dataclass 注释）。
+    # 驱动（松护栏 [15,50]，人可破），章号一律 save_volumes 权威赋值（详见 Volume 类注释）。
     # 覆盖语义：save_volumes 全量覆盖返回（含上一卷收口 + 新卷 append）；不使用 operator.add。
-    volumes: list[Volume] = field(default_factory=list)
+    # Pydantic 递归 validate：checkpoint / API 带外操作写 dict 时自动重建为 Volume 实例。
+    volumes: list[Volume] = Field(default_factory=list)
 
     # ── Phase 1.5 / 滚动：卷级花名册（Volume Cast Roster）─────────────────────────
     # 卷激活、展开 chapter_plan 之前，由 prepare/save_volume_cast 生成本卷登场阵容——
@@ -334,7 +363,7 @@ class NovelState:
     # 覆盖语义（非 reducer）：每次卷激活由 save_volume_cast 覆盖写入；非 review 桥接字段，
     # 不进 reset_review_fields()。结构：
     #   {"volume_index", "focus", "returning":[{"name","role_in_volume"}], "introducing":[{"name","type"}]}
-    volume_cast: dict = field(default_factory=dict)
+    volume_cast: dict = Field(default_factory=dict)
     # 花名册锚定的卷号（= 生成时激活卷 index）；volume_cast_card 用它核对当前激活卷，
     # 防陈旧花名册串到下一卷。初始 -1 = 从未生成。
     volume_cast_index: int = -1
@@ -345,7 +374,7 @@ class NovelState:
     consistency_report: str = ""      # 最近一次审计报告全文（audit 写，gate 展示）："无问题" 或问题清单
     consistency_pass: bool = False    # 审计判定通过（路由 / 前端提示用）
     consistency_audit_count: int = 0  # 已审计轮数，达 _MAX_AUDIT_ROUNDS 强制放行、防死循环
-    consistency_revisions: list = field(default_factory=list)
+    consistency_revisions: list = Field(default_factory=list)
     # AI 修订提案：[{"field","label","before","after","reason"}]；diff_gate 展示，应用/放弃后清空
     consistency_action: str = ""
     # 最近一次闸门 / diff 决定，供路由：freeze|revise|reaudit|apply|discard（transient）
@@ -353,16 +382,16 @@ class NovelState:
     # AI 修订未产出可用改动时给闸门的一行提示（gate 展示后自清）
 
     # ── Phase 2：章节写作追踪 ───────────────────────────────────────────────────
-    current_batch_titles: list[str] = field(default_factory=list)
+    current_batch_titles: list[str] = Field(default_factory=list)
     # 当前批次的章节标题列表（每批 BATCH_SIZE 个，每批开始时重置）
 
     # 覆盖语义：generate_summary 每章返回完整新 list（历史 + 本章）。切勿加 operator.add——
     # 子图（scene_beats/entity_cards/chapter_edit 等）结束时会把镜像字段原样回写父图，
     # 追加语义会把整份列表重复 append，导致列表每章翻倍爆炸。
-    all_chapter_titles: list[str] = field(default_factory=list)
+    all_chapter_titles: list[str] = Field(default_factory=list)
     # 全书已生成的所有章节标题（跨批次累积，索引 i 对应第 i+1 章）
 
-    all_chapter_summaries: list[str] = field(default_factory=list)
+    all_chapter_summaries: list[str] = Field(default_factory=list)
     # 全书已生成的所有章节摘要（与 all_chapter_titles 索引对齐，缺失章节存空字符串）
 
     current_chapter_index: int = 0  # 当前批次内的写作进度（0 = 第 1 章未写；每批开始时重置为 0）
@@ -374,7 +403,8 @@ class NovelState:
     # （首卷 / 滚动新卷）一次规划整卷 [chapter_start, planned_end]，本卷之前条目永久锁定不重规划。
     #
     # 覆盖语义：全量覆盖返回（不用 operator.add，因为不是纯追加，是「历史保留 + 新卷追加」）。
-    chapter_plan: list[ChapterPlanItem] = field(default_factory=list)
+    # Pydantic 递归 validate：dict → ChapterPlanItem 实例自动重建。
+    chapter_plan: list[ChapterPlanItem] = Field(default_factory=list)
     # 已被规划到的最远章号（1-based）；供路由与前端用于展示「已规划到第 N 章」。
     chapter_plan_planned_upto: int = 0
 
@@ -387,7 +417,7 @@ class NovelState:
     # chapter_prompt；save_chapter 之后由 chapter loop 清零，防止下一章跳过 gate 时误用上一章的 beats。
     # 结构：list[dict]，每个 beat 含 id / scene / goal / obstacle / outcome / cost / emotion_arc /
     # device_tags / target_words 字段，落地格式详见 prompts/scene_beats.py。
-    current_chapter_beats: list = field(default_factory=list)
+    current_chapter_beats: list = Field(default_factory=list)
     # 章号锚定：记录 current_chapter_beats 是为哪一章生成的（1-based 全书章号）。prepare_chapter
     # 严格核对 beats_chapter_index == chapter_num 才注入；不匹配（跳过 gate / 上一章残留）时视同无 beats。
     # 初始 -1 = 从未生成过。
@@ -398,9 +428,11 @@ class NovelState:
     # 从正文补卡 + 更新动态字段。装备/物品的唯一真源（phase_summary 不再存装备）。
     # 覆盖语义：save 端按 name+aliases 归一化去重 merge（已有锁定只追加，新增 append），
     # 参照 chapter_plan 的「历史锁定+增量」，不用 operator.add（否则压缩无法移除/改写旧卡）。
-    entity_cards: list[EntityCard] = field(default_factory=list)
+    # Pydantic Discriminator：按 type 字段自动分派到 Character/Item/SimpleEntityCard 变体
+    # （dict 或已 dump 的实例都能自动重建）——废除老 parse_card 工厂 + _coerce_card 胶水。
+    entity_cards: list[EntityCard] = Field(default_factory=list)
     # 本章登场实体名单（transient，含新+旧全部登场者）；供 prepare_chapter 触发式注入对应卡。
-    current_chapter_cast: list = field(default_factory=list)
+    current_chapter_cast: list = Field(default_factory=list)
     # 章号锚定（同 beats_chapter_index 套路）：记录 current_chapter_cast 为哪一章生成。
     # prepare_chapter 严格核对 cast_chapter_index == chapter_num 才注入；不匹配（跳过 gate /
     # 上一章残留）视同无登场名单。初始 -1 = 从未生成过。
@@ -409,7 +441,7 @@ class NovelState:
     # ── Phase 2.5：动态状态库（每次覆盖写入最新快照）────────────────────────────
     # 人物动态（处境/动机/关系）已并入 CharacterCard 的动态字段，由章末 entity_discover_step
     # 单腿覆盖更新——原 character_status / character_relations 两条散文快照腿已删。
-    foreshadowing: dict = field(default_factory=dict)
+    foreshadowing: dict = Field(default_factory=dict)
     # 伏笔台账（结构化 JSON：{"pending": [...], "collected": [...]}）
 
     phase_summary: str = ""

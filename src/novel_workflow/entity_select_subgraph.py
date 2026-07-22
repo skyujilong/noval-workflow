@@ -19,14 +19,14 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
+from langgraph.types import interrupt
+from pydantic import Field
 
 from noval_workflow.edit_step_subgraph import EditStepSubState
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import repair_and_parse
-from langgraph.types import interrupt
 
 _logger = logging.getLogger(__name__)
 
@@ -39,7 +39,6 @@ _UPDATE_PREFIX = "update:"
 _UPDATE_META_KEYS = frozenset({"name"})
 
 
-@dataclass
 class EntityDiscoverSubState(EditStepSubState):
     """章末实体发现步骤专用 state：在通用 EditStepSubState 之上补入库筛选字段。
 
@@ -48,7 +47,7 @@ class EntityDiscoverSubState(EditStepSubState):
     的 state_cls 说明）。
     """
     # 用户勾选保留（入库）的项 key 列表，如 ["new:圣焰皇家骑士团", "update:陆默"]
-    entity_select_selected: list[str] = field(default_factory=list)
+    entity_select_selected: list[str] = Field(default_factory=list)
 
 
 def _parse_draft(draft) -> dict:

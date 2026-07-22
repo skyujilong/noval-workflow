@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import fields, replace
 
 from noval_workflow.context import build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
@@ -29,20 +28,6 @@ from noval_workflow.prompts.render import SystemRole, build_prepare_fields
 from noval_workflow.state import NovelState, Volume, reset_review_fields
 
 _logger = logging.getLogger(__name__)
-
-
-def _coerce_volume(v) -> Volume:
-    """把 state.volumes 里的元素归一为 Volume 实例。
-
-    LangGraph checkpoint 重水合可能把 Volume 落成 dict（参照 entity_cards 的 _coerce_card）；
-    这里防御性归一，过滤未知键（老快照残留的 target_min/target_max 等已删字段被自动丢弃）。
-    """
-    if isinstance(v, Volume):
-        return v
-    if isinstance(v, dict):
-        valid = {f.name for f in fields(Volume)}
-        return Volume(**{k: val for k, val in v.items() if k in valid})
-    raise ValueError(f"分卷条目类型非法: {type(v).__name__}")
 
 
 def _prior_volumes_brief(volumes: list[Volume]) -> str:
@@ -72,8 +57,8 @@ def prepare_volumes(state: NovelState) -> dict:
         )
     else:
         # 滚动：只承接「已激活卷」(planned_end>0)——旧草稿卷本轮要重生成，不参与承接。
-        existing = [_coerce_volume(v) for v in state.volumes]
-        activated = [v for v in existing if v.planned_end > 0]
+        # NovelState.volumes 已由 pydantic 递归 validate 保证元素为 Volume 实例（老 _coerce_volume 已删除）
+        activated = [v for v in state.volumes if v.planned_end > 0]
         prev = max(activated, key=lambda v: v.index)
         task_prompt = pack.volumes_prompt_rolling(
             overall_outline=state.overall_outline,
@@ -204,7 +189,7 @@ def save_volumes(state: NovelState) -> dict:
     a_title, a_summary, a_setup, a_chapters = active
     a_chapters = _clamp_chapters(a_chapters, human_authored)
 
-    existing = [_coerce_volume(v) for v in state.volumes]
+    existing = list(state.volumes)  # NovelState 已递归重建为 Volume 实例
     # 已激活卷 = 有权威章号（planned_end>0）的卷；旧 planning 草稿（planned_end=0）本轮丢弃重生成。
     activated = [v for v in existing if v.planned_end > 0]
 
@@ -216,7 +201,8 @@ def save_volumes(state: NovelState) -> dict:
     else:
         # 滚动：上一激活卷（最大 index）收口 closed，保留全部已激活卷（含它），丢弃旧草稿
         prev = max(activated, key=lambda v: v.index)
-        closed_prev = replace(prev, actual_end=prev.planned_end, status="closed")
+        # pydantic model_copy 替代 dataclasses.replace（不可变更新，返回新实例）
+        closed_prev = prev.model_copy(update={"actual_end": prev.planned_end, "status": "closed"})
         kept = [closed_prev if v.index == prev.index else v for v in activated]
         base_index = prev.index
         chapter_start = prev.planned_end + 1

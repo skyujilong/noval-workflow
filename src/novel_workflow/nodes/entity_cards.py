@@ -4,15 +4,21 @@ entity_cards 是 scene_beats 之后、prepare_chapter 之前的可跳步骤：�
 大纲 + 已有实体清单，识别本章登场实体，只为**新**实体建结构化卡，写回父图卡库 + 本章登场名单。
 
 数据落地：LLM 输出 {"cast": [...], "new_cards": [EntityCard...]} → repair_and_parse(kind=dict)
-解析 → 逐条 EntityCard(**c) → name+aliases 归一化去重 merge 进 entity_cards。
+解析 → 逐条经 pydantic Discriminator 分派到具体变体（CharacterCard/ItemCard/SimpleEntityCard）→
+name+aliases 归一化去重 merge 进 entity_cards。
 
 去重两层保证（防重复建卡）见 _merge_cards：即使 LLM 把已有实体也吐进 new_cards，代码层按
 name+aliases 归一化命中已有卡即丢弃（canon 锁定），卡库永不出现同一实体两张卡。
+
+Pydantic v2 化后：EntityCard 是判别联合 Annotated Union，pydantic TypeAdapter 按 type 字段自动
+分派到对应变体——废除老 parse_card 工厂 + _coerce_card 胶水（判别逻辑内置于 pydantic）。
 """
 
 from __future__ import annotations
 
 import logging
+
+from pydantic import TypeAdapter, ValidationError
 
 from noval_workflow.context import build_chapter_context, build_foundation_context
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
@@ -25,9 +31,31 @@ from noval_workflow.prompts import (
     resolve_owner,
 )
 from noval_workflow.prompts.render import SystemRole, build_prepare_fields
-from noval_workflow.state import EntityCard, ItemCard, parse_card
+from noval_workflow.state import EntityCard, ItemCard
 
 _logger = logging.getLogger(__name__)
+
+# 判别联合的 TypeAdapter——按 type 字段分派到 CharacterCard/ItemCard/SimpleEntityCard。
+# 单条 dict → 实例、单条实例校验、list 全量校验统一走这个入口，替代老 parse_card 工厂。
+_ENTITY_CARD_ADAPTER: TypeAdapter[EntityCard] = TypeAdapter(EntityCard)
+
+
+def _to_entity_card(raw) -> EntityCard:
+    """把 raw（LLM 出的 dict 或已重建的实例）归一为具体 EntityCard 变体。
+
+    pydantic 按 type 字段自动分派（Discriminator）：
+      - dict → 对应变体实例（跨类脏键自动过滤，字符串 type/role 转回枚举）
+      - 已是实例 → validate 后照原样返回
+    非法 type/缺 role/字段类型错 → ValidationError → 转 ValueError（fail-loud）。
+    """
+    try:
+        return _ENTITY_CARD_ADAPTER.validate_python(raw)
+    except ValidationError as exc:
+        raise ValueError(f"实体卡校验失败: {exc}") from exc
+
+
+# 兼容别名——老测试/调用点里的 _coerce_card 等价于本模块的 _to_entity_card
+_coerce_card = _to_entity_card
 
 
 def _prepare_entity_cards(state) -> dict:
@@ -50,7 +78,7 @@ def _prepare_entity_cards(state) -> dict:
 
 
 def _save_entity_cards(state) -> dict:
-    """解析并落库本章登场实体卡：JSON → 逐条 EntityCard → 归一化去重 merge → 写回三字段。
+    """解析并落库本章登场实体卡：JSON → 逐条 pydantic 判别联合 → 归一化去重 merge → 写回三字段。
 
     - JSON 解析失败 / 字段缺失 / 类型错 / type 非法 时抛 ValueError（fail-loud，不静默把
       脏数据塞进卡库）；上游审核循环对这种失败友好。
@@ -78,14 +106,15 @@ def _save_entity_cards(state) -> dict:
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            # _coerce_card 判别工厂：先把 LLM 漂移出的 dict/list 字段收敛回字符串（例如
-            # ability_contract 拆成三段 JSON 的常见漂移），再走 parse_card 分派变体+校验。
+            # pydantic TypeAdapter：按 type 字段分派到具体变体，字段级严格校验。
             # 章前/章末/Phase-1/volume_cast 四条建卡路径统一入口，避免脏数据串到 checkpoint。
-            new_cards.append(_coerce_card(raw))
+            new_cards.append(_to_entity_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
 
-    existing = [_coerce_card(c) for c in (state.entity_cards or [])]
+    # state.entity_cards 已由 NovelState 递归 validate 保证为实例（老 checkpoint 里的裸 dict
+    # 经 TypeAdapter 兜底归一），无需再走胶水入口。
+    existing = [_to_entity_card(c) for c in (state.entity_cards or [])]
     merged = _merge_cards(existing, new_cards)
     _resolve_owners(merged)  # 物品 owner 解析绑定到规范实体（引用完整性）
 
@@ -134,23 +163,6 @@ def _merge_cards(existing: list[EntityCard], new: list[EntityCard]) -> list[Enti
         merged.append(card)
         seen |= keys
     return merged
-
-
-def _coerce_card(obj) -> EntityCard:
-    """把卡库里的条目归一成具体 EntityCard 变体——checkpoint 反序列化后条目是 dict。
-
-    dict 一律走 parse_card：按 type 重新分派到正确变体（CharacterCard/ItemCard/SimpleEntityCard），
-    跨类脏键自动过滤，字符串 type/role 转回枚举。已是实例（含子类）直接返回。
-
-    字段值类型校验（str 字段被 LLM 漂移成 dict/list 等）已上移到 subgraph.generate 出口的
-    pydantic 层——draft 写入 state 前校验+回喂重试，落库路径不再做字段值收敛。
-    老 checkpoint 里的脏数据由前端 safeStr helper 兜底渲染，不再在这里静默收敛。
-    """
-    if isinstance(obj, EntityCard):
-        return obj
-    if isinstance(obj, dict):
-        return parse_card(obj)
-    raise ValueError(f"卡库条目类型非法：{type(obj).__name__}")
 
 
 # ── 章末「实体发现 + 动态更新」闭包（读已写正文，补新卡 + 更新已有卡动态字段）──────
@@ -205,12 +217,12 @@ def _save_entity_discover(state) -> dict:
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            # 走 _coerce_card 统一入口：先字段值收敛(dict/list→str) 再 parse_card 分派变体
-            new_cards.append(_coerce_card(raw))
+            # pydantic TypeAdapter 统一入口：按 type 分派变体 + 字段级校验
+            new_cards.append(_to_entity_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
 
-    cards = [_coerce_card(c) for c in (state.entity_cards or [])]
+    cards = [_to_entity_card(c) for c in (state.entity_cards or [])]
     cards = _merge_cards(cards, new_cards)  # 先补新卡
     cards, applied = _apply_updates(cards, updates)  # 再对已有卡应用动态更新
     _resolve_owners(cards)  # owner 解析绑定（新卡/易主后统一校验）
@@ -301,15 +313,15 @@ def merge_cards_from_json(raw_new: list, existing_cards: list) -> list[EntityCar
     """把一批 new_cards（原始 dict 列表）parse + 去重 merge + owner 解析进已有卡库并返回。
 
     Phase-1 建卡司（foundation.save_character_cards）复用本函数，与章前 _save_entity_cards
-    走同一套 _coerce_card / 去重 / owner 解析，保证两条建卡路径行为一致（字段值先收敛回
-    字符串再判别分派，避免 LLM 漂移出的 dict 字段串到 checkpoint 和前端）。解析失败 fail-loud。
+    走同一套 _to_entity_card / 去重 / owner 解析，保证两条建卡路径行为一致（pydantic Discriminator
+    按 type 分派 + 字段级校验，脏 dict 立即报错回喂）。解析失败 fail-loud。
     """
     new_cards: list[EntityCard] = []
     for idx, raw in enumerate(raw_new):
         try:
-            new_cards.append(_coerce_card(raw))
+            new_cards.append(_to_entity_card(raw))
         except ValueError as exc:
             raise ValueError(f"new_cards 第 {idx} 条: {exc}") from exc
-    merged = _merge_cards([_coerce_card(c) for c in (existing_cards or [])], new_cards)
+    merged = _merge_cards([_to_entity_card(c) for c in (existing_cards or [])], new_cards)
     _resolve_owners(merged)
     return merged

@@ -14,14 +14,14 @@ entity_cards（已有卡库，判新旧 + 去重）+ 章循环上下文（由 Ed
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pydantic import Field
 
 from noval_workflow.edit_step_subgraph import EditStepSubState, make_edit_step_subgraph
 from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.nodes.entity_cards import _prepare_entity_cards, _save_entity_cards
+from noval_workflow.state import EntityCard
 
 
-@dataclass
 class EntityCardsSubState(EditStepSubState):
     """继承 EditStepSubState（已含基础设定 + 章循环上下文），额外声明本步骤要读/写的字段。
 
@@ -29,18 +29,20 @@ class EntityCardsSubState(EditStepSubState):
     写回字段（卡库/登场名单/章号锚）由 save_fn 返回后流回父图 NovelState。
     """
     # 读：本章已定稿 beats（登场实体主要依据）+ 章号锚（严格核对，防跳 gate 残留串章）
-    current_chapter_beats: list = field(default_factory=list)
+    current_chapter_beats: list = Field(default_factory=list)
     beats_chapter_index: int = -1
     # 读：分卷 + 本卷花名册——entity_cards_prompt 头部注入【本卷花名册】（volume_cast_card 读
     # volumes/volume_cast/volume_cast_index），让本章建卡依据卷级登场规划、减少临场乱造新重要角色。
     # 只读桥接，不写回 parent。
-    volumes: list = field(default_factory=list)
-    volume_cast: dict = field(default_factory=dict)
+    # volumes 从 parent 桥接：list[Volume]（pydantic 递归重建），但子图只读渲染，
+    # 用 list 泛型简化——真正校验由 parent NovelState 完成。
+    volumes: list = Field(default_factory=list)
+    volume_cast: dict = Field(default_factory=dict)
     volume_cast_index: int = -1
-    # 读 + 写：全书实体卡库（save 端去重 merge 后写回）
-    entity_cards: list = field(default_factory=list)
+    # 读 + 写：全书实体卡库（save 端去重 merge 后写回）——pydantic 递归重建变体实例
+    entity_cards: list[EntityCard] = Field(default_factory=list)
     # 写：本章登场实体名单 + 章号锚（供 prepare_chapter 触发式注入）
-    current_chapter_cast: list = field(default_factory=list)
+    current_chapter_cast: list = Field(default_factory=list)
     cast_chapter_index: int = -1
 
 

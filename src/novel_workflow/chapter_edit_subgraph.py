@@ -21,9 +21,9 @@ Each *_step is a pre-compiled subgraph that internally asks the user
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
+from pydantic import BaseModel, ConfigDict, Field
 
 from noval_workflow.chapter_plan_edit_subgraph import make_chapter_plan_edit_subgraph
 from noval_workflow.context import build_chapter_context, build_foundation_context
@@ -52,20 +52,25 @@ from noval_workflow.prompts.render import (
     SystemRole,
     build_prepare_fields,
 )
+from noval_workflow.state import ChapterPlanItem, EntityCard, Volume
 
 _logger = logging.getLogger(__name__)
 
 # ── ChapterEditSubState ────────────────────────────────────────────────────────
 
 
-@dataclass
-class ChapterEditSubState:
+class ChapterEditSubState(BaseModel):
     """Bridge state between the parent NovelState and the 5 edit-step subgraphs.
 
     Fields are a union of all fields consumed by the subgraphs.
     Removed: do_arc, tracking_fields, edit_tracking_cursor, pending_steps,
              active_tracking_field (all menu/dispatcher artefacts).
+
+    Pydantic v2 化：跨 checkpoint roundtrip 保类型 + 递归重建 volumes/chapter_plan/entity_cards
+    的元素为对应变体实例（原 dataclass 不递归，需 _coerce_volume 胶水，现已废除）。
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     # ── Phase 0 基础输入 ────────────────────────────────────────────────────────
     novel_name: str = ""
@@ -87,28 +92,28 @@ class ChapterEditSubState:
     overall_outline: str = ""
 
     # ── Phase 2 章节追踪（只读）─────────────────────────────────────────────────
-    current_batch_titles: list[str] = field(default_factory=list)
+    current_batch_titles: list[str] = Field(default_factory=list)
     current_chapter_index: int = 0
     total_chapters_written: int = 0
-    all_chapter_titles: list[str] = field(default_factory=list)
-    all_chapter_summaries: list[str] = field(default_factory=list)
+    all_chapter_titles: list[str] = Field(default_factory=list)
+    all_chapter_summaries: list[str] = Field(default_factory=list)
 
     # ── Phase 2.5 弧线（只读入 + 派生写回；不再手改，纯 chapter_plan 下游）────────
     current_arc_outline: str = ""
 
     # ── Phase 2.5 长线章节规划 chapter_plan（读入 + 合并写回）──────────────────
     # 章末编辑从这里发起：调 chapter_plan 未写窗口 → 弧线自动派生跟随，二者永不分叉。
-    chapter_plan: list = field(default_factory=list)
+    chapter_plan: list[ChapterPlanItem] = Field(default_factory=list)
     chapter_plan_planned_upto: int = 0
     # chapter_plan_prompt 头部要注入分卷位置卡（volume_position_card 读 volumes）。
-    volumes: list = field(default_factory=list)
+    volumes: list[Volume] = Field(default_factory=list)
 
     # ── Phase 2.5 动态状态库（读入最新值 + 覆盖写回）─────────────────────────
     # 人物动态（处境/动机/关系）已并入 entity_cards，原 character_status/relations 桥接字段已删。
-    foreshadowing: dict = field(default_factory=dict)
+    foreshadowing: dict = Field(default_factory=dict)
     phase_summary: str = ""
     # 统一实体卡库：章末 entity_discover_step 读入 + 写回（补新卡 / 更新动态字段）。
-    entity_cards: list = field(default_factory=list)
+    entity_cards: list[EntityCard] = Field(default_factory=list)
 
     # ── review_subgraph 桥接字段（三层 prompt：与 ReviewSubState 同构）────────
     system_prompt: str = ""  # L1：身份 + 硬契约 + 任务契约 + 优先级约定
@@ -122,7 +127,7 @@ class ChapterEditSubState:
     review_type: str = (
         "foundation"  # 初始哨兵值；各 prepare 步骤必覆盖为已登记 review 类型
     )
-    review_history: list = field(default_factory=list)
+    review_history: list = Field(default_factory=list)
     llm_review_count: int = 0
     llm_review_max: int = 3
 
@@ -131,9 +136,9 @@ class ChapterEditSubState:
     ai_chapter_plan: str = ""
     chapter_plan_error: str = ""
     chapter_plan_needs_rewrite: bool = False
-    final_chapter_plan: list = field(default_factory=list)
+    final_chapter_plan: list = Field(default_factory=list)
     # 弧线联动标题（沿用）
-    ai_titles: list[str] = field(default_factory=list)
+    ai_titles: list[str] = Field(default_factory=list)
     titles_direction: str = ""
     titles_needs_regen: bool = False
 

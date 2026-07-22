@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from noval_workflow.nodes import consistency as C
@@ -32,7 +30,8 @@ def _state(**kw) -> NovelState:
             "ability_contract": "初始锚点弱、四卷成长天花板明确。",
         })],
     )
-    return replace(base, **kw)
+    # NovelState 是 pydantic BaseModel——用 model_copy(update=) 替代老 dataclasses.replace
+    return base.model_copy(update=kw)
 
 
 class _FakeLLM:

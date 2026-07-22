@@ -8,20 +8,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from pydantic import Field
 
 from noval_workflow.edit_step_subgraph import EditStepSubState, make_edit_step_subgraph
 from noval_workflow.interrupt_types import InterruptType
 
 
-@dataclass
 class _ProbeSubState(EditStepSubState):
-    """带一个基类没有的字段，模拟 EntityCardsSubState.current_chapter_beats 那类子类专属字段。"""
+    """带一个基类没有的字段，模拟 EntityCardsSubState.current_chapter_beats 那类子类专属字段。
 
-    subclass_only_field: list = field(default_factory=list)
+    EditStepSubState 已迁至 pydantic BaseModel——继承时用 pydantic Field 声明子类字段。
+    """
+
+    subclass_only_field: list = Field(default_factory=list)
 
 
 def test_prepare_fn_receives_full_subclass_state(monkeypatch):

@@ -21,14 +21,14 @@ post_review_subgraph（可选）：人工审核通过后、save 之前插入的�
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Callable
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from pydantic import Field
 
 from noval_workflow.interrupt_types import InterruptType
-from noval_workflow.state import ReviewSubState, reset_review_fields
+from noval_workflow.state import EntityCard, ReviewSubState, reset_review_fields
 from noval_workflow.subgraph import (
     generate,
     llm_self_review,
@@ -41,16 +41,15 @@ from noval_workflow.subgraph import (
 _SKIP_WORDS = {"skip", "跳过", "", "s", "no", "n", "否", "不", "none", "null"}
 
 
-@dataclass
 class EditStepSubState(ReviewSubState):
     """State for a single edit step subgraph.
 
     Inherits all ReviewSubState fields. Additional fields carry parent-graph
     context needed by prepare_fn / save_fn.
+
+    Pydantic v2 化：跨 checkpoint roundtrip 保类型 + 递归 validate（dict→实例自动重建）。
     """
 
-    novel_name: str = ""
-    genre: str = ""
     writing_style: str = ""
     target_audience: str = ""
     core_tone: str = ""
@@ -64,18 +63,17 @@ class EditStepSubState(ReviewSubState):
     power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
-    current_batch_titles: list[str] = field(default_factory=list)
+    current_batch_titles: list[str] = Field(default_factory=list)
     current_chapter_index: int = 0
     total_chapters_written: int = 0
-    all_chapter_titles: list[str] = field(default_factory=list)
-    all_chapter_summaries: list[str] = field(default_factory=list)
+    all_chapter_titles: list[str] = Field(default_factory=list)
+    all_chapter_summaries: list[str] = Field(default_factory=list)
     current_arc_outline: str = ""
-    foreshadowing: dict = field(default_factory=dict)
+    foreshadowing: dict = Field(default_factory=dict)
     phase_summary: str = ""
     # 统一实体卡库——桥接父图 NovelState.entity_cards：章末 entity_discover 读入 + 写回，
-    # 其余台账步骤只读（build_foundation_context 渲染装备真源用）。
-    entity_cards: list = field(default_factory=list)
-    review_history: list = field(default_factory=list)
+    # 其余台账步骤只读（build_foundation_context 渲染装备真源用）。pydantic 递归重建变体实例。
+    entity_cards: list[EntityCard] = Field(default_factory=list)
 
     # Step gate fields (not written back to parent graph)
     step_execute_gate: bool = False

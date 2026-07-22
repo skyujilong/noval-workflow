@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field
 
 from noval_workflow.config import PRUNE_STRIDE, should_prune_at_chapter
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
@@ -38,12 +38,12 @@ from noval_workflow.prompts import (
     ENTITY_CARDS_PRUNE_ANALYSIS_PROMPT,
     format_cards_digest_for_prune,
 )
+from noval_workflow.state import EntityCard
 
 _logger = logging.getLogger(__name__)
 
 
-@dataclass
-class EntityCardsPruneSubState:
+class EntityCardsPruneSubState(BaseModel):
     """卡库精简子图专用 state。
 
     本子图挂在 chapter_edit_subgraph 顶层链（非 post_review 嵌套），故不继承
@@ -52,25 +52,30 @@ class EntityCardsPruneSubState:
     - entity_cards 读入 + 写回（删卡后覆盖，无 reducer，见 NovelState.entity_cards 注释）
     - all_chapter_summaries / all_chapter_titles / world_building 只读，供分析上下文
     prune_* 三个私有字段父层没有，桥接后被丢弃——它们只服务本子图内部流转，无需回传。
+
+    Pydantic v2 化：`entity_cards: list[EntityCard]` 按 type 递归重建判别联合变体。
     """
 
+    model_config = ConfigDict(extra="ignore")
+
     # ── 从父层桥接读入 ──────────────────────────────────────────────────────────
-    entity_cards: list = field(default_factory=list)
-    all_chapter_summaries: list = field(default_factory=list)
-    all_chapter_titles: list = field(default_factory=list)
+    entity_cards: list[EntityCard] = Field(default_factory=list)
+    all_chapter_summaries: list = Field(default_factory=list)
+    all_chapter_titles: list = Field(default_factory=list)
     world_building: str = ""
     # 刚写完的章号，供 ask 节点做精简节流（每 PRUNE_STRIDE 章执行一次）；只读桥接。
     total_chapters_written: int = 0
 
     # ── 本子图私有流转 ──────────────────────────────────────────────────────────
     entity_cards_prune_enabled: bool = False
-    entity_cards_prune_suggestion: dict = field(default_factory=dict)  # LLM 分析结果
-    entity_cards_prune_selected: list[str] = field(
+    entity_cards_prune_suggestion: dict = Field(default_factory=dict)  # LLM 分析结果
+    entity_cards_prune_selected: list[str] = Field(
         default_factory=list
     )  # 用户勾选待删的实体名
 
 
-# ── 卡取值工具（卡可能是 EntityCard 实例或 checkpoint roundtrip 后的 dict）──────
+# ── 卡取值工具（pydantic v2 化后 entity_cards 已递归重建为具体变体实例）──────────
+# 保留 dict fallback 是为兼容老 checkpoint 里的裸 dict 残留（不至于因单条老数据整批崩）。
 
 
 def _card_get(card, key, default=""):

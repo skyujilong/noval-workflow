@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 
 from noval_workflow.context import build_foundation_context, get_output_dir
@@ -222,8 +221,9 @@ def save_config(state: NovelState) -> dict:
         "core_conflicts": state.core_conflicts,
         "overall_outline": state.overall_outline,
         # 人物档案真源已并入 entity_cards（CharacterCard），持久化结构化卡库（枚举经 str 序列化）
+        # entity_cards 是 pydantic BaseModel 判别联合——用 model_dump()；老 checkpoint 遗留 dict 直放行。
         "entity_cards": [
-            dataclasses.asdict(c) if dataclasses.is_dataclass(c) else c
+            c.model_dump(mode="json") if hasattr(c, "model_dump") else c
             for c in (state.entity_cards or [])
         ],
         "phase_summary": state.phase_summary,

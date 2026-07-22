@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import asdict, dataclass, field
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
+from pydantic import BaseModel, ConfigDict, Field
 
 from noval_workflow.context import (
     build_chapter_context,
@@ -52,17 +52,22 @@ from noval_workflow.prompts.base import (
     _format_chapter_plan_block,
 )
 from noval_workflow.prompts.render import SystemRole, build_system, render_user
+from noval_workflow.state import ChapterPlanItem, EntityCard, Volume
 
 _logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ChapterPlanEditSubState:
+class ChapterPlanEditSubState(BaseModel):
     """State for the chapter-plan edit step subgraph.
 
     镜像父图 NovelState / ChapterEditSubState 中本子图要读的所有字段——缺字段会被
     langgraph 静默丢弃 / build_foundation_context 与 chapter_plan_prompt 里 AttributeError。
+
+    Pydantic v2 化：跨 checkpoint roundtrip 保类型 + 递归重建 volumes/chapter_plan/entity_cards
+    的元素为对应变体实例。
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     # Parent-graph fields (read-only context)
     novel_name: str = ""
@@ -78,24 +83,24 @@ class ChapterPlanEditSubState:
     power_system: str = ""
     core_conflicts: str = ""
     overall_outline: str = ""
-    current_batch_titles: list[str] = field(default_factory=list)
+    current_batch_titles: list[str] = Field(default_factory=list)
     current_chapter_index: int = 0
     total_chapters_written: int = 0
-    all_chapter_titles: list[str] = field(default_factory=list)
-    all_chapter_summaries: list[str] = field(default_factory=list)
+    all_chapter_titles: list[str] = Field(default_factory=list)
+    all_chapter_summaries: list[str] = Field(default_factory=list)
     current_arc_outline: str = ""
-    foreshadowing: dict = field(default_factory=dict)
+    foreshadowing: dict = Field(default_factory=dict)
     phase_summary: str = ""
-    entity_cards: list = field(default_factory=list)
+    entity_cards: list[EntityCard] = Field(default_factory=list)
     # chapter_plan_prompt 头部要注入分卷位置卡，volume_position_card 读 volumes——
     # 旧弧线子图自建 prompt 不需要它，改走 chapter_plan_prompt 后必须镜像。
-    volumes: list = field(default_factory=list)
+    volumes: list[Volume] = Field(default_factory=list)
     # chapter_plan_prompt 头部还注入【本卷花名册】，volume_cast_card 读这两个字段——同样必须镜像
     # （否则 mid-batch 编辑重跑 chapter_plan 时 AttributeError）。只读注入，不写回 parent。
-    volume_cast: dict = field(default_factory=dict)
+    volume_cast: dict = Field(default_factory=dict)
     volume_cast_index: int = -1
     # chapter_plan 镜像（读入 + 合并后写回 parent）
-    chapter_plan: list = field(default_factory=list)
+    chapter_plan: list[ChapterPlanItem] = Field(default_factory=list)
     chapter_plan_planned_upto: int = 0
 
     # Review bridge（三层 prompt：system_prompt=L1 / context_prompt=L2 / task_prompt=L3）
@@ -107,10 +112,10 @@ class ChapterPlanEditSubState:
     ai_chapter_plan: str = ""  # LLM 输出的原始 JSON 草稿（供 confirm 解析/展示）
     chapter_plan_error: str = ""
     chapter_plan_needs_rewrite: bool = False
-    final_chapter_plan: list = field(default_factory=list)  # 确认后的新未写段条目
+    final_chapter_plan: list = Field(default_factory=list)  # 确认后的新未写段条目
 
     # 弧线联动标题（沿用旧逻辑）
-    ai_titles: list[str] = field(default_factory=list)
+    ai_titles: list[str] = Field(default_factory=list)
     titles_direction: str = ""
     titles_needs_regen: bool = False
 
@@ -318,7 +323,8 @@ def _generate_titles_with_ai(
 
 def _plan_cards_payload(items: list) -> list[dict]:
     """把 ChapterPlanItem 列表转成前端 ChapterPlanCards 消费的 dict 数组。"""
-    return [asdict(it) for it in items]
+    # pydantic BaseModel → model_dump()；dict 元素（老 checkpoint 遗留）直接放行
+    return [it.model_dump() if hasattr(it, "model_dump") else it for it in items]
 
 
 # ── node functions ─────────────────────────────────────────────────────────────

@@ -23,15 +23,15 @@ from noval_workflow.prompts import (
 from noval_workflow.state import (
     CharacterCard,
     CharacterRole,
-    EntityCard,
     ItemCard,
     NovelState,
+    SimpleEntityCard,
     coerce_character_role,
     parse_card,
 )
 
 
-def _card(name: str, type_: str = "人物", aliases: list[str] | None = None, **kw) -> EntityCard:
+def _card(name: str, type_: str = "人物", aliases: list[str] | None = None, **kw):
     """构造具体卡变体——走 parse_card 判别工厂；人物默认补 role（parse_card 必填）。"""
     raw = {"name": name, "type": type_, "aliases": aliases or [], **kw}
     if type_ == "人物":
@@ -53,7 +53,7 @@ def test_normalize_strips_spaces_and_lowercases():
 def test_parse_card_dispatches_variants():
     assert isinstance(_card("张三", role="主角"), CharacterCard)
     assert isinstance(_card("灵剑", type_="装备"), ItemCard)
-    assert isinstance(_card("青云宗", type_="势力"), EntityCard)  # SimpleEntityCard 也是 EntityCard
+    assert isinstance(_card("青云宗", type_="势力"), SimpleEntityCard)  # 势力→SimpleEntityCard
 
 
 def test_parse_card_character_requires_role():
@@ -105,8 +105,11 @@ def test_parse_card_coerces_multi_role_no_crash():
 
 
 def test_parse_card_rejects_wholly_invalid_role():
-    """自造 role（无任何合法定位）仍 fail-loud，错误信息带人物名。"""
-    with pytest.raises(ValueError, match="沈清颜"):
+    """自造 role（无任何合法定位）仍 fail-loud——pydantic ValidationError 转 ValueError。
+
+    pydantic 报错是字段级（loc=人物.role），不含人物 name；只断言错误信息含 role 值。
+    """
+    with pytest.raises(ValueError, match="大反派头目"):
         parse_card({"name": "沈清颜", "type": "人物", "role": "大反派头目"})
 
 
@@ -168,7 +171,7 @@ def test_coerce_card_passthrough_instance():
 
 # ── _save_entity_cards：JSON 落地 ─────────────────────────────────────────────
 
-def _state(draft: str, existing: list[EntityCard] | None = None, done: int = 4) -> NovelState:
+def _state(draft: str, existing: list | None = None, done: int = 4) -> NovelState:
     return NovelState(
         current_draft=draft,
         entity_cards=existing or [],

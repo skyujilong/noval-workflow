@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import Field
 
 from noval_workflow.config import PRUNE_STRIDE, should_prune_at_chapter
 from noval_workflow.edit_step_subgraph import EditStepSubState, _SKIP_WORDS
@@ -36,7 +36,6 @@ from noval_workflow.prompts import (
 _logger = logging.getLogger(__name__)
 
 
-@dataclass
 class ForeshadowSubState(EditStepSubState):
     """伏笔步骤专用 state：在通用 EditStepSubState 之上补精简流程字段。
 
@@ -47,8 +46,8 @@ class ForeshadowSubState(EditStepSubState):
     """
 
     foreshadow_prune_enabled: bool = False
-    foreshadow_prune_suggestion: dict = field(default_factory=dict)  # LLM分析结果
-    foreshadow_prune_selected: list[str] = field(
+    foreshadow_prune_suggestion: dict = Field(default_factory=dict)  # LLM分析结果
+    foreshadow_prune_selected: list[str] = Field(
         default_factory=list
     )  # 用户勾选的待删ID
 
