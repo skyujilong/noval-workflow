@@ -37,6 +37,7 @@ def _compiled():
     b.add_edge("cp", END)
     return b.compile(checkpointer=MemorySaver())
 
+
 # written=2、批 1-5、下一章=第3章；chapter_plan 覆盖 1..8（planned_upto=8）
 _DONE = 2
 _PLANNED_UPTO = 8
@@ -46,8 +47,13 @@ _REWRITE_MARK = "主角提前暴露身份"
 
 def _init_plan() -> list[ChapterPlanItem]:
     return [
-        ChapterPlanItem(chapter=i, purpose=f"旧目标{i}", key_turn=f"旧转折{i}",
-                        ending_hook=f"旧钩子{i}", intensity="推进")
+        ChapterPlanItem(
+            chapter=i,
+            purpose=f"旧目标{i}",
+            key_turn=f"旧转折{i}",
+            ending_hook=f"旧钩子{i}",
+            intensity="推进",
+        )
         for i in range(1, _PLANNED_UPTO + 1)
     ]
 
@@ -57,20 +63,41 @@ class _FakeLLM:
     - rewrite:      输出未写段 [3..8] 的 JSON（purpose 带 _REWRITE_MARK 标记新方向）
     - derive_arc:   回显收到的 HumanMessage（含更新后的锚点块）——便于断言弧线来自新 plan
     - generate_titles: 按剩余章数输出对应行数标题
+
+    可选参数：
+    - bad_json=True: rewrite 始终返回畸形 JSON（验证 3 次重试全挂 → CONFIRM_ERROR）
+    - empty_before_ok=N: rewrite 前 N 次返回空 content，之后正常（验证 gateway 兜住偶发抽风）
     """
 
-    def __init__(self, label: str, *, bad_json: bool = False) -> None:
+    def __init__(
+        self,
+        label: str,
+        *,
+        bad_json: bool = False,
+        empty_before_ok: int = 0,
+    ) -> None:
         self.label = label
         self.bad_json = bad_json
+        self.empty_before_ok = empty_before_ok
+        self._invoke_count = 0
 
     def invoke(self, messages):
+        self._invoke_count += 1
         human = messages[-1].content
         if self.label.startswith("chapter_plan_edit:rewrite"):
             if self.bad_json:
                 return AIMessage(content="这不是 JSON {[")
+            # 前 N 次空 content：模拟 LLM 单次抽风 → gateway 回喂 + 重试
+            if self._invoke_count <= self.empty_before_ok:
+                return AIMessage(content="")
             arr = [
-                {"chapter": i, "purpose": f"{_REWRITE_MARK}-新目标{i}",
-                 "key_turn": f"新转折{i}", "ending_hook": f"新钩子{i}", "intensity": "转折"}
+                {
+                    "chapter": i,
+                    "purpose": f"{_REWRITE_MARK}-新目标{i}",
+                    "key_turn": f"新转折{i}",
+                    "ending_hook": f"新钩子{i}",
+                    "intensity": "转折",
+                }
                 for i in range(_DONE + 1, _PLANNED_UPTO + 1)
             ]
             return AIMessage(content=json.dumps(arr, ensure_ascii=False))
@@ -82,19 +109,25 @@ class _FakeLLM:
         return AIMessage(content="")
 
 
-def _install_llm(monkeypatch, *, bad_json: bool = False):
+def _install_llm(monkeypatch, *, bad_json: bool = False, empty_before_ok: int = 0):
     monkeypatch.setattr(
-        cpe, "get_llm",
-        lambda *a, **k: _FakeLLM(k.get("label", ""), bad_json=bad_json),
+        cpe,
+        "get_llm",
+        lambda *a, **k: _FakeLLM(
+            k.get("label", ""),
+            bad_json=bad_json,
+            empty_before_ok=empty_before_ok,
+        ),
     )
 
 
 def _mk_state(**over) -> ChapterPlanEditSubState:
     base = dict(
-        novel_name="测试书", genre="玄幻",
+        novel_name="测试书",
+        genre="玄幻",
         overall_outline="整书大纲……",
         current_batch_titles=list(_BATCH_TITLES),
-        current_chapter_index=_DONE,          # 已写 2 章 → 下一章 index=2（第3章）
+        current_chapter_index=_DONE,  # 已写 2 章 → 下一章 index=2（第3章）
         total_chapters_written=_DONE,
         all_chapter_titles=["旧标题1", "旧标题2"],
         all_chapter_summaries=["摘要1", "摘要2"],
@@ -120,16 +153,18 @@ def test_edit_chapter_plan_then_arc_follows(monkeypatch):
     graph.invoke(_mk_state(), config)
     assert _pending_type(graph, config) == "chapter_plan_edit_entry_gate"
 
-    graph.invoke(Command(resume="yes"), config)          # 执行 gate
+    graph.invoke(Command(resume="yes"), config)  # 执行 gate
     assert _pending_type(graph, config) == "chapter_plan_edit_direction"
 
     graph.invoke(Command(resume="让主角提前暴露身份"), config)  # 输入方向 → rewrite
     assert _pending_type(graph, config) == "chapter_plan_edit_confirm"
 
-    graph.invoke(Command(resume=""), config)             # 接受 → writeback + rederive + titles regen
+    graph.invoke(
+        Command(resume=""), config
+    )  # 接受 → writeback + rederive + titles regen
     assert _pending_type(graph, config) == "arc_titles_confirm"
 
-    final = graph.invoke(Command(resume=""), config)     # 接受标题 → END
+    final = graph.invoke(Command(resume=""), config)  # 接受标题 → END
 
     plan = final["chapter_plan"]
     assert [p.chapter for p in plan] == list(range(1, _PLANNED_UPTO + 1))
@@ -145,7 +180,13 @@ def test_edit_chapter_plan_then_arc_follows(monkeypatch):
     # 弧线切片只覆盖本批（batch 1..5），不应带入第 6 章之后的远端锚点
     assert "第6章" not in arc and "第7章" not in arc
     # ④ 剩余章标题（第3-5章）随新弧线重生成
-    assert final["current_batch_titles"] == ["旧标题1", "旧标题2", "新标题3", "新标题4", "新标题5"]
+    assert final["current_batch_titles"] == [
+        "旧标题1",
+        "旧标题2",
+        "新标题3",
+        "新标题4",
+        "新标题5",
+    ]
 
 
 def test_skip_gate_changes_nothing(monkeypatch):
@@ -155,7 +196,9 @@ def test_skip_gate_changes_nothing(monkeypatch):
     config = {"configurable": {"thread_id": "t-cpe-skip"}}
     graph.invoke(_mk_state(), config)
     final = graph.invoke(Command(resume="no"), config)
-    assert [p.purpose for p in final["chapter_plan"]] == [f"旧目标{i}" for i in range(1, _PLANNED_UPTO + 1)]
+    assert [p.purpose for p in final["chapter_plan"]] == [
+        f"旧目标{i}" for i in range(1, _PLANNED_UPTO + 1)
+    ]
     assert final["current_arc_outline"] == "旧弧线大纲"
 
 
@@ -164,7 +207,9 @@ def test_empty_chapter_plan_skips_without_interrupt(monkeypatch):
     _install_llm(monkeypatch)
     graph = _compiled()
     config = {"configurable": {"thread_id": "t-cpe-empty"}}
-    final = graph.invoke(_mk_state(chapter_plan=[], chapter_plan_planned_upto=0), config)
+    final = graph.invoke(
+        _mk_state(chapter_plan=[], chapter_plan_planned_upto=0), config
+    )
     # 无 pending interrupt（跑到 END）
     assert not graph.get_state(config).tasks
     assert final["current_arc_outline"] == "旧弧线大纲"
@@ -179,6 +224,32 @@ def test_bad_json_falls_back_without_polluting(monkeypatch):
     graph.invoke(Command(resume="yes"), config)
     graph.invoke(Command(resume="随便一个方向"), config)  # rewrite 出坏 JSON
     assert _pending_type(graph, config) == "chapter_plan_edit_confirm_error"
-    final = graph.invoke(Command(resume=""), config)    # 手动兜底也跳过 → 不改动
-    assert [p.purpose for p in final["chapter_plan"]] == [f"旧目标{i}" for i in range(1, _PLANNED_UPTO + 1)]
+    final = graph.invoke(Command(resume=""), config)  # 手动兜底也跳过 → 不改动
+    assert [p.purpose for p in final["chapter_plan"]] == [
+        f"旧目标{i}" for i in range(1, _PLANNED_UPTO + 1)
+    ]
     assert final["current_arc_outline"] == "旧弧线大纲"
+
+
+def test_rewrite_empty_content_recovers_via_gateway_retry(monkeypatch):
+    """LLM 前 2 次返回空 content → invoke_pydantic_list 回喂重试 → 第 3 次成功。
+
+    锁定的是关键路径：不走 CONFIRM_ERROR 分支、直达正常 CONFIRM，让用户几乎无感。
+    覆盖原始 bug 场景：`AI 重规划失败：修复后顶层不是 list（得到 str）；原文：''`
+    """
+    _install_llm(monkeypatch, empty_before_ok=2)  # 前 2 次空 → 第 3 次成功
+    graph = _compiled()
+    config = {"configurable": {"thread_id": "t-cpe-retry"}}
+
+    graph.invoke(_mk_state(), config)
+    graph.invoke(Command(resume="yes"), config)
+    graph.invoke(Command(resume="让主角提前暴露身份"), config)
+
+    # 关键断言：走正常 CONFIRM，不进 CONFIRM_ERROR
+    assert _pending_type(graph, config) == "chapter_plan_edit_confirm"
+
+    # 接受 → 走完整流程；未写段应含 _REWRITE_MARK（第 3 次成功输出的 JSON）
+    graph.invoke(Command(resume=""), config)
+    final = graph.invoke(Command(resume=""), config)
+    plan = final["chapter_plan"]
+    assert all(_REWRITE_MARK in plan[i].purpose for i in range(_DONE, _PLANNED_UPTO))

@@ -41,6 +41,7 @@ from noval_workflow.context import (
 )
 from noval_workflow.edit_step_subgraph import _SKIP_WORDS
 from noval_workflow.interrupt_types import InterruptType
+from noval_workflow.json_utils import invoke_pydantic_list
 from noval_workflow.llm import get_llm
 from noval_workflow.nodes.chapter_plan import (
     merge_chapter_plan,
@@ -109,7 +110,8 @@ class ChapterPlanEditSubState(BaseModel):
 
     # chapter_plan 编辑私有中间态
     chapter_plan_direction: str = ""
-    ai_chapter_plan: str = ""  # LLM 输出的原始 JSON 草稿（供 confirm 解析/展示）
+    # LLM 已解析 + pydantic 校验通过的未写段候选（cp_confirm 直接消费，不再 re-parse）
+    ai_chapter_plan: list[ChapterPlanItem] = Field(default_factory=list)
     chapter_plan_error: str = ""
     chapter_plan_needs_rewrite: bool = False
     final_chapter_plan: list = Field(default_factory=list)  # 确认后的新未写段条目
@@ -159,11 +161,16 @@ def _batch_window(state: ChapterPlanEditSubState) -> tuple[int, int]:
 
 def _rewrite_chapter_plan_with_ai(
     state: ChapterPlanEditSubState, direction: str
-) -> str:
+) -> list[ChapterPlanItem]:
     """按调整方向重规划 chapter_plan 未写窗口段，复用主图 chapter_plan_prompt 骨架。
 
     locked_entries = 章 <= done 的历史条目（LLM 禁止改动/重复输出）；prompt 末尾追加
-    「人工调整方向」段作为最高优先级约束。返回 LLM 原始 JSON 字符串（不在此解析）。
+    「人工调整方向」段作为最高优先级约束。
+
+    经统一 JSON gateway (invoke_pydantic_list) 走 3 次机会：单次抽风(空 content / 畸形
+    JSON / 字段漂移)自动回喂错误让 LLM 修正，避免走到 CONFIRM_ERROR 让用户手粘。3 次
+    全挂才抛，交上层记 chapter_plan_error 走手动兜底。章号连续升序是业务约束、gateway
+    不管，在此处补校验；违反同样抛 ValueError 走兜底。
     """
     done = state.total_chapters_written
     start, end = _plan_edit_range(state)
@@ -189,13 +196,26 @@ def _rewrite_chapter_plan_with_ai(
         genre_identity=pack.flavor.system_identity,
     )
     context = build_foundation_context(state, include_identity=False)
-    result = llm.invoke(
-        [
-            SystemMessage(content=system),
-            HumanMessage(content=render_user(context, base_task + direction_section)),
-        ]
+    messages = [
+        SystemMessage(content=system),
+        HumanMessage(content=render_user(context, base_task + direction_section)),
+    ]
+    items = invoke_pydantic_list(
+        llm,
+        messages,
+        item_schema=ChapterPlanItem,
+        label="chapter_plan_edit:rewrite",
+        max_retries=2,
     )
-    return result.content.strip()
+    # 章号连续升序校验（业务约束，gateway 不覆盖；违反抛 ValueError 交上层记 error）
+    if items:
+        chapters = [it.chapter for it in items]
+        expected = list(range(chapters[0], chapters[0] + len(chapters)))
+        if chapters != expected:
+            raise ValueError(
+                f"章节规划章号必须连续升序，实际={chapters}, 期望连续升序如 {expected}"
+            )
+    return items
 
 
 def _derive_arc_from_plan(state: ChapterPlanEditSubState, plan_slice: list) -> str:
@@ -365,7 +385,7 @@ def _cp_entry(entry_prompt: str):
         return {
             "cp_execute_gate": execute,
             "chapter_plan_direction": "",
-            "ai_chapter_plan": "",
+            "ai_chapter_plan": [],
             "chapter_plan_error": "",
             "final_chapter_plan": [],
             "chapter_plan_needs_rewrite": False,
@@ -403,17 +423,20 @@ def cp_direction_node(state: ChapterPlanEditSubState) -> dict:
 
 
 def cp_rewrite_node(state: ChapterPlanEditSubState) -> dict:
-    """按方向重规划未写窗口段；顺带解析校验，失败即记 error 交由 confirm 走手动兜底。"""
+    """按方向重规划未写窗口段。
+
+    重试策略下沉到 invoke_pydantic_list（3 次机会 + 回喂错误让 LLM 修正）；此层只
+    捕获重试用尽后的失败，记 error 交由 confirm 走手动兜底，绝不静默返回脏数据。
+    """
     direction = state.chapter_plan_direction
     if not direction:
-        return {"ai_chapter_plan": "", "chapter_plan_error": ""}
+        return {"ai_chapter_plan": [], "chapter_plan_error": ""}
     try:
-        raw = _rewrite_chapter_plan_with_ai(state, direction)
-        parse_chapter_plan_items(raw)  # 早校验：坏 JSON 立即暴露，走 CONFIRM_ERROR
-        return {"ai_chapter_plan": raw, "chapter_plan_error": ""}
+        items = _rewrite_chapter_plan_with_ai(state, direction)
+        return {"ai_chapter_plan": items, "chapter_plan_error": ""}
     except Exception as e:
         _logger.error("chapter_plan rewrite failed: %s", e)
-        return {"ai_chapter_plan": "", "chapter_plan_error": str(e)}
+        return {"ai_chapter_plan": [], "chapter_plan_error": str(e)}
 
 
 def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
@@ -446,6 +469,7 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
             return {"final_chapter_plan": [], "chapter_plan_needs_rewrite": False}
         return {"final_chapter_plan": items, "chapter_plan_needs_rewrite": False}
 
+    # 正常分支：ai_chapter_plan 已是 pydantic 校验通过的 list[ChapterPlanItem]，直接消费
     raw = interrupt(
         {
             "type": InterruptType.CHAPTER_PLAN_EDIT_CONFIRM.value,
@@ -456,36 +480,33 @@ def cp_confirm_node(state: ChapterPlanEditSubState) -> dict:
                 "· 输入新的调整方向 → AI 重新生成（可多次迭代）\n"
                 "· 以「=」开头粘贴 JSON 数组 → 直接替换（跳过 AI）"
             ),
-            "ai_chapter_plan": _plan_cards_payload(
-                parse_chapter_plan_items(state.ai_chapter_plan)
-            ),
+            "ai_chapter_plan": _plan_cards_payload(state.ai_chapter_plan),
         }
     )
     confirm = str(raw or "").strip()
 
     if not confirm:
         return {
-            "final_chapter_plan": parse_chapter_plan_items(state.ai_chapter_plan),
+            "final_chapter_plan": list(state.ai_chapter_plan),
             "chapter_plan_needs_rewrite": False,
         }
 
     if confirm.startswith("="):
         content = confirm[1:].strip()
-        try:
-            items = (
-                parse_chapter_plan_items(content)
-                if content
-                else parse_chapter_plan_items(state.ai_chapter_plan)
-            )
-        except ValueError as e:
-            _logger.error("手动替换的章节规划 JSON 非法，回退到 AI 结果: %s", e)
-            items = parse_chapter_plan_items(state.ai_chapter_plan)
+        if content:
+            try:
+                items = parse_chapter_plan_items(content)
+            except ValueError as e:
+                _logger.error("手动替换的章节规划 JSON 非法，回退到 AI 结果: %s", e)
+                items = list(state.ai_chapter_plan)
+        else:
+            items = list(state.ai_chapter_plan)
         return {"final_chapter_plan": items, "chapter_plan_needs_rewrite": False}
 
     # 其他输入 = 新方向，回 cp_rewrite 迭代
     return {
         "chapter_plan_direction": confirm,
-        "ai_chapter_plan": "",
+        "ai_chapter_plan": [],
         "chapter_plan_error": "",
         "final_chapter_plan": [],
         "chapter_plan_needs_rewrite": True,
@@ -575,7 +596,9 @@ def arc_titles_confirm_node(state: ChapterPlanEditSubState) -> dict:
         final_titles = ai_titles
     elif titles_confirm.startswith("="):
         content = titles_confirm[1:].strip()
-        new_lines = [_clean_title(line) for line in content.splitlines() if line.strip()]
+        new_lines = [
+            _clean_title(line) for line in content.splitlines() if line.strip()
+        ]
         final_titles = [line for line in new_lines if line][: len(remaining_titles)]
     else:
         return {

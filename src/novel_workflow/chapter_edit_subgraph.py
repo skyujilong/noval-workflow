@@ -133,7 +133,8 @@ class ChapterEditSubState(BaseModel):
 
     # ── chapter_plan 编辑子图私有中间状态（由 chapter_plan_edit_subgraph 读写）─────
     chapter_plan_direction: str = ""
-    ai_chapter_plan: str = ""
+    # 与 ChapterPlanEditSubState.ai_chapter_plan 类型必须一致（父子 state 桥接靠字段镜像）
+    ai_chapter_plan: list[ChapterPlanItem] = Field(default_factory=list)
     chapter_plan_error: str = ""
     chapter_plan_needs_rewrite: bool = False
     final_chapter_plan: list = Field(default_factory=list)
