@@ -10,7 +10,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Mapping, TypedDict
 from uuid import UUID
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -26,17 +26,33 @@ _PREVIEW_LEN = 20
 # LLM 生成的正文里也常带【子标题】（比如力量体系里的【输出天花板】、伏笔台账里的
 # 【伏笔编号】），若不白名单化会把子标题误报为独立 section，导致日志组成里出现
 # 大量重叠、嵌套的假 section（且长度层层递减）。
-_SYSTEM_CONTEXT_TOP_SECTIONS: frozenset[str] = frozenset({
-    # foundation
-    "小说名称", "小说类型", "写作风格", "目标读者", "核心基调", "每章字数", "总字数目标",
-    "核心主题与立意", "世界观设定", "力量体系（本作已定稿，创作时必须严格遵循）",
-    "核心冲突", "整体大纲与结局", "人物档案",
-    # dynamic tracking
-    "本批章节弧线大纲", "人物动态状态（最新）", "人物关系/势力动态（最新）",
-    "伏笔台账（最新）", "阶段固化数据（最新）",
-    # chapter window
-    "近期章节概要（供参考）", "最近章节完整内容（请保持情节连贯）",
-})
+_SYSTEM_CONTEXT_TOP_SECTIONS: frozenset[str] = frozenset(
+    {
+        # foundation
+        "小说名称",
+        "小说类型",
+        "写作风格",
+        "目标读者",
+        "核心基调",
+        "每章字数",
+        "总字数目标",
+        "核心主题与立意",
+        "世界观设定",
+        "力量体系（本作已定稿，创作时必须严格遵循）",
+        "核心冲突",
+        "整体大纲与结局",
+        "人物档案",
+        # dynamic tracking
+        "本批章节弧线大纲",
+        "人物动态状态（最新）",
+        "人物关系/势力动态（最新）",
+        "伏笔台账（最新）",
+        "阶段固化数据（最新）",
+        # chapter window
+        "近期章节概要（供参考）",
+        "最近章节完整内容（请保持情节连贯）",
+    }
+)
 
 # 顶层 section 一定以行首（或文本开头）出现，形如 `【名称】` 或 `【名称】xxx`。
 # 允许尾部带说明后缀（如"（最新）""（供参考）"），所以匹配到 】 为止即可。
@@ -50,6 +66,12 @@ class _Section:
     name: str
     chars: int
     preview: str
+
+
+_TokenUsage = TypedDict(
+    "_TokenUsage",
+    {"in": int, "out": int, "total": int},
+)
 
 
 @dataclass
@@ -142,17 +164,23 @@ class _PerfLogHandler(BaseCallbackHandler):
 
         # 打印详细组成（stderr 即时可见，保留原行为）
         self._log(f"→ 开始调用 [{self._label}]")
-        self._log(f"  总计: {total_chars} 字符 (system: {system_chars}, user: {user_chars})")
+        self._log(
+            f"  总计: {total_chars} 字符 (system: {system_chars}, user: {user_chars})"
+        )
         if sections:
             summary = ", ".join(f"{s.name}: ~{s.chars}字" for s in sections)
             self._log(f"  参考资料（L2）组成: {summary}")
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         pending = self._pending.pop(run_id, None)
-        elapsed = time.monotonic() - (pending.started_at if pending else time.monotonic())
+        elapsed = time.monotonic() - (
+            pending.started_at if pending else time.monotonic()
+        )
         usage = self._extract_usage(response)
         finish = self._extract_finish_reason(response)
-        self._write_record(pending, status="ok", elapsed=elapsed, usage=usage, finish=finish)
+        self._write_record(
+            pending, status="ok", elapsed=elapsed, usage=usage, finish=finish
+        )
 
         parts = [f"耗时 {elapsed:.1f}s"]
         if usage:
@@ -167,9 +195,16 @@ class _PerfLogHandler(BaseCallbackHandler):
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
     ) -> None:
         pending = self._pending.pop(run_id, None)
-        elapsed = time.monotonic() - (pending.started_at if pending else time.monotonic())
+        elapsed = time.monotonic() - (
+            pending.started_at if pending else time.monotonic()
+        )
         self._write_record(
-            pending, status="error", elapsed=elapsed, usage=None, finish=None, error=repr(error)
+            pending,
+            status="error",
+            elapsed=elapsed,
+            usage=None,
+            finish=None,
+            error=repr(error),
         )
         self._log(f"✗ 失败 [{self._label}]，已耗时 {elapsed:.1f}s：{error!r}")
 
@@ -179,7 +214,7 @@ class _PerfLogHandler(BaseCallbackHandler):
         *,
         status: str,
         elapsed: float,
-        usage: dict[str, int] | None,
+        usage: _TokenUsage | None,
         finish: str | None,
         error: str | None = None,
     ) -> None:
@@ -203,21 +238,32 @@ class _PerfLogHandler(BaseCallbackHandler):
         self._calls_logger.info(json.dumps(record, ensure_ascii=False))
 
     @staticmethod
-    def _extract_usage(response: LLMResult) -> dict[str, int] | None:
-        """从返回结果里提取 token 用量，兼容不同字段命名。"""
-        meta = (response.llm_output or {}).get("token_usage") if response.llm_output else None
-        if not meta:
-            # 部分实现把用量放在 generation 的 message.usage_metadata 上
+    def _extract_usage(response: LLMResult) -> _TokenUsage | None:
+        """从最终响应提取 token 用量；流式调用依赖 ``stream_usage=True`` 聚合。"""
+        meta: Mapping[str, Any] | None = None
+        if response.llm_output:
+            token_usage = response.llm_output.get("token_usage")
+            if isinstance(token_usage, Mapping) and token_usage:
+                meta = token_usage
+
+        if meta is None:
             try:
-                gen = response.generations[0][0]
-                meta = getattr(gen.message, "usage_metadata", None)
-            except (IndexError, AttributeError):
-                meta = None
-        if not meta:
+                generation = response.generations[0][0]
+                message = getattr(generation, "message", None)
+                usage_metadata = getattr(message, "usage_metadata", None)
+            except IndexError:
+                usage_metadata = None
+            if isinstance(usage_metadata, Mapping) and usage_metadata:
+                meta = usage_metadata
+
+        if meta is None:
             return None
-        prompt = meta.get("prompt_tokens") or meta.get("input_tokens")
-        completion = meta.get("completion_tokens") or meta.get("output_tokens")
-        total = meta.get("total_tokens") or meta.get("total")
+
+        prompt = meta.get("prompt_tokens", meta.get("input_tokens"))
+        completion = meta.get("completion_tokens", meta.get("output_tokens"))
+        total = meta.get("total_tokens", meta.get("total"))
+        if not all(isinstance(value, int) for value in (prompt, completion, total)):
+            return None
         return {"in": prompt, "out": completion, "total": total}
 
     @staticmethod
@@ -284,7 +330,7 @@ def _parse_context_sections(text: str) -> list[_Section]:
         end = candidates[i + 1][0] if i + 1 < len(candidates) else len(text)
         seg = text[start:end]
         tag_end = seg.find("】")
-        body = seg[tag_end + 1:] if tag_end != -1 else seg
+        body = seg[tag_end + 1 :] if tag_end != -1 else seg
         sections.append(_Section(name=name, chars=end - start, preview=_preview(body)))
     return sections
 
@@ -328,5 +374,8 @@ def get_llm(
         timeout=900,  # 超时 15 分钟，适应长文本生成避免中途截断
         max_retries=2,  # 减少重试次数，平衡总等待时长
         extra_body=extra_body,
+        # LangGraph 以流式模式执行；显式请求 Ark 在结束 chunk 返回 usage，
+        # LangChain 才能聚合到最终 AIMessage.usage_metadata 供回调落盘。
+        stream_usage=True,
         callbacks=[_PerfLogHandler(label)],
     )
