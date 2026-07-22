@@ -29,7 +29,13 @@ from noval_workflow.interrupt_types import InterruptType
 from noval_workflow.json_utils import JsonParseError, repair_and_parse
 from noval_workflow.llm import get_llm
 from noval_workflow.prompts.registry import available_genres
-from noval_workflow.prompts.render import SystemRole, build_system
+from noval_workflow.prompts.render import (
+    ContextSection,
+    PromptRequest,
+    SystemRole,
+    build_system,
+    render,
+)
 from noval_workflow.state import NovelState
 
 _logger = logging.getLogger(__name__)
@@ -125,11 +131,73 @@ def _build_brainstorm_system_prompt(has_power_system: bool) -> str:
 
 # 对话纪要员身份已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_COMPRESSOR]。
 
-_COMPRESS_PROMPT = """以下是一段小说灵感脑爆对话的早期内容（可能已包含一份更早的概要）。
-请把它压缩成一份简明的要点概要，保留所有已经确定或倾向的设定、主题、世界观线索与关键决定，
-丢弃寒暄和重复内容。直接输出概要正文，不超过 400 字，不要任何前后缀说明。
+# ── compress 三层 prompt 组件 ──────────────────────────────────────────────────
+# 为什么拆三层：
+# - 旧写法把「分节规则 + 保留规则 + 参考资料（旧概要 + 原文）」全塞一个 HumanMessage,
+#   LLM 在中部弱注意力区读到"禁止用等字"/"保留表格"这类关键指令,很容易忽略——
+#   这是内容持续丢失的结构性原因。
+# - 迁到三层后:硬规则（保留/禁止/分节格式）落在 L3 recency 端点拿最强执行注意力;
+#   参考资料（旧概要 + 溢出对话）落在 L2 中部弱区,容忍衰减;身份 + 角色边界落在 L1
+#   primacy 端点。
+# - 产物形态与 _FINALIZE_MARKDOWN_PROMPT_* **同构**（分节 markdown + 保留表格与数值）,
+#   压缩不再是"生成模糊要点摘要",而是"滚动更新分节草稿"——回喂给 respond 时 AI 能续
+#   接细节讨论,回喂给 finalize 时成品已经接近定稿只需合并最近增量。
 
-{material}"""
+# L1 task contract：明确压缩的角色边界（不重新提炼、不压缩已敲定的具体内容）。
+_COMPRESS_TASK_CONTRACT = (
+    "把脑爆对话滚动整理成一份分节草稿,作为后续对话与最终整理稿的参考底稿。"
+    "不重新提炼、不压缩已敲定的具体内容——只做原文级的合并与结构化。"
+)
+
+# L3 task：分节规则 + 保留规则 + 格式禁令,直接对齐 _FINALIZE_MARKDOWN_PROMPT_* 的写法
+# （因为形态就是要跟 finalize 同构）。4 节版（has_power_system=True）:
+_COMPRESS_TASK_WITH_POWER = """请把【已有分节概要】与【待合并的更早对话】整理成**一份滚动更新的分节 markdown 草稿**,作为后续对话与 finalize 整理稿的参考底稿。
+
+**关键约束**：
+1. **【已有分节概要】里的内容原样保留**——除非【待合并的更早对话】里有明确的修改/新增/删除决定,
+   否则每一节的原文一字不改照抄下来。**禁止重新提炼、禁止用你自己的话改写已有分节内容**。
+2. **【待合并的更早对话】里已敲定的新内容按话题归入对应节**——用户和 AI 已经共同敲定的部分
+   （具体阶位/等级/职业名称/数值/表格/专有名词/关键决定）原样并入对应节;
+   AI 已给出、用户认可的完整表述**必须全部保留**,包括 Markdown 表格。
+3. **只丢弃寒暄、重复、试探性语气**（"好的~"、"你觉得呢"、AI 反复确认的话）,
+   **不要丢弃已敲定的设定内容**。
+4. **禁止用"等"字概括**;**禁止只列名不带数值**;**禁止把多张表拍平成中文**。
+5. 输出用 `# 一级标题` 分节,标题严格是这四个（不加"与立意"、"设定"等后缀,不用 `##`）:
+   ```
+   # 核心主题
+   # 世界观
+   # 力量体系
+   # 核心冲突
+   ```
+6. 若对话与已有概要里都没聊过某一节,保留 `# 标题` 行,正文写一句"（对话中未涉及）",不要脑补。
+7. **禁止在 4 节之外输出任何前言/后语/emoji/口头禅**（"好的~"、"来看看"、"以下是整理"）;
+   **禁止**在开头包上 ```markdown 代码块围栏——直接从 `# 核心主题` 开始输出正文。
+8. **字数不限**——以信息完整为准,删除寒暄和重复后自然精简即可,不要为了短而砍掉具体内容。"""
+
+# L3 task：3 节版（has_power_system=False,不单列力量体系）。
+_COMPRESS_TASK_NO_POWER = """请把【已有分节概要】与【待合并的更早对话】整理成**一份滚动更新的分节 markdown 草稿**,作为后续对话与 finalize 整理稿的参考底稿。
+
+**关键约束**：
+1. **【已有分节概要】里的内容原样保留**——除非【待合并的更早对话】里有明确的修改/新增/删除决定,
+   否则每一节的原文一字不改照抄下来。**禁止重新提炼、禁止用你自己的话改写已有分节内容**。
+2. **【待合并的更早对话】里已敲定的新内容按话题归入对应节**——用户和 AI 已经共同敲定的部分
+   （具体数值/表格/专有名词/关键决定）原样并入对应节;
+   AI 已给出、用户认可的完整表述**必须全部保留**,包括 Markdown 表格。
+3. **只丢弃寒暄、重复、试探性语气**（"好的~"、"你觉得呢"、AI 反复确认的话）,
+   **不要丢弃已敲定的设定内容**。
+4. **禁止用"等"字概括**;**禁止只列名不带数值**;**禁止把多张表拍平成中文**。
+5. 输出用 `# 一级标题` 分节,标题严格是这三个（不加后缀,不用 `##`,**本作不单列力量体系,
+   绝不要输出 `# 力量体系` 节**）:
+   ```
+   # 核心主题
+   # 世界观
+   # 核心冲突
+   ```
+6. 若对话与已有概要里都没聊过某一节,保留 `# 标题` 行,正文写一句"（对话中未涉及）",不要脑补。
+7. **禁止在 3 节之外输出任何前言/后语/emoji/口头禅**（"好的~"、"来看看"、"以下是整理"）;
+   **禁止**在开头包上 ```markdown 代码块围栏——直接从 `# 核心主题` 开始输出正文。
+8. **字数不限**——以信息完整为准,删除寒暄和重复后自然精简即可,不要为了短而砍掉具体内容。"""
+
 
 # 设定整理员身份已迁入 render._ROLE_TEXT[SystemRole.BRAINSTORM_ORGANIZER]。
 
@@ -221,41 +289,65 @@ def _entries_to_text(entries: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _compress(prev_summary: str, overflow: list[dict]) -> str:
-    """把旧概要 + 滑出保留窗口的对话轮次压缩成新的简要概要。压缩失败不阻断脑爆。
+def _compress(prev_summary: str, overflow: list[dict], has_power_system: bool) -> str:
+    """把旧分节概要 + 滑出保留窗口的对话轮次滚动更新为新的分节 markdown 草稿。压缩失败不阻断脑爆。
 
-    ⚠️ 标记 tags=["nostream"]（LangGraph 官方约定的 TAG_NOSTREAM）：
-    压缩是 respond 节点内的隐藏后端优化调用，不是用户可见的对话回复。若不打标签，
-    messages-tuple 模式会把压缩 LLM 的 chunks 也流到前端，与 respond 的主对话回复
+    产物形态:与 _FINALIZE_MARKDOWN_PROMPT_* **同构**——分节 markdown（3 节 / 4 节由
+    has_power_system 决定,匹配 finalize 的两种输出格式）,保留具体阶位/等级/表格/数值/
+    专有名词,禁止用"等"字概括。**不是**模糊要点摘要。这样:
+    - 回喂给 respond 时（brainstorm.py:317-318）AI 能拿完整分节稿续接细节讨论,不"忘"设定。
+    - 回喂给 finalize 时（_finalize_material）成品已接近定稿,只需合并最近 3 轮增量。
+
+    三层 prompt 架构:
+    - L1 system: 身份（BRAINSTORM_COMPRESSOR 严谨的对话纪要员）+ 任务契约（不重新提炼、
+      不压缩已敲定内容,只做合并与结构化）——primacy 端点锚定角色边界。
+    - L2 context: 两个分区——「已有分节概要」（应原样保留）+「待合并的更早对话」（应归类合入）,
+      LLM 通过 key 名清晰区分职责,避免把已整理稿当原文重压缩。
+    - L3 task: 分节规则 + 保留规则 + 格式禁令——recency 端点拿最强执行注意力,
+      解决旧写法「关键规则塞中部弱区被吞掉」的结构性问题。
+
+    ⚠️ 标记 tags=["nostream"]（LangGraph 官方约定的 TAG_NOSTREAM）:
+    压缩是 respond 节点内的隐藏后端优化调用,不是用户可见的对话回复。若不打标签,
+    messages-tuple 模式会把压缩 LLM 的 chunks 也流到前端,与 respond 的主对话回复
     交织出现在同一节点的 message stream 里——前端会看到聊天气泡中途冒出「1. 题材...」
-    这种要点纪要格式的内容（compress 的输出），观感是「断开→冒不相干内容→变回去」。
-    加 nostream tag 后 LangGraph 从源头就不广播这次调用的 chunks，前端彻底看不到。
+    这种要点纪要格式的内容（compress 的输出）,观感是「断开→冒不相干内容→变回去」。
+    加 nostream tag 后 LangGraph 从源头就不广播这次调用的 chunks,前端彻底看不到。
     """
-    parts = []
-    if prev_summary:
-        parts.append(f"【已有概要】\n{prev_summary}")
-    parts.append("【需要并入概要的更早对话】")
-    parts.append(_entries_to_text(overflow))
-    material = "\n".join(parts)
+    # L1: 身份 + 任务契约（BRAINSTORM_COMPRESSOR 在 _NO_HARD_CONTRACTS_ROLES 白名单,不叠硬契约）
+    system = build_system(SystemRole.BRAINSTORM_COMPRESSOR, _COMPRESS_TASK_CONTRACT)
+    # L2: 参考资料分区——render() 会自动过滤 body 为空的分区（render.py:390）
+    context = (
+        ContextSection(key="已有分节概要", body=prev_summary),
+        ContextSection(key="待合并的更早对话", body=_entries_to_text(overflow)),
+    )
+    # L3: 分节 + 保留规则,3/4 节由 has_power_system 分派（与 finalize 的两分支对齐）
+    task = _COMPRESS_TASK_WITH_POWER if has_power_system else _COMPRESS_TASK_NO_POWER
+    req = PromptRequest(system=system, context=context, task=task)
+
     try:
-        # 压缩是每轮聊天的隐藏开销，必须快——关闭思考避免给对话回合再叠加十几秒延迟。
+        # 压缩是每轮聊天的隐藏开销,必须快——关闭思考避免给对话回合再叠加十几秒延迟。
         llm = get_llm(temperature=0.3, label="brainstorm_compress", thinking="disabled")
         result = llm.invoke(
-            [
-                SystemMessage(
-                    content=build_system(SystemRole.BRAINSTORM_COMPRESSOR, "把长对话压缩为不丢关键信息的要点概要")
-                ),
-                HumanMessage(content=_COMPRESS_PROMPT.format(material=material)),
-            ],
+            render(req),
             config={"tags": ["nostream"]},  # 别被 messages-tuple 流出到前端
         )
         return result.content.strip()
-    except Exception as e:  # noqa: BLE001 — 压缩失败退化为拼接，绝不阻断主流程
-        _logger.error("脑爆历史压缩失败，退化为简单拼接：%s", e)
-        fallback = prev_summary
-        if fallback:
-            fallback += "\n"
-        return (fallback + _entries_to_text(overflow)).strip()
+    except Exception as e:  # noqa: BLE001 — 压缩失败退化为拼接,绝不阻断主流程
+        _logger.error("脑爆历史压缩失败,退化为拼接（下次压缩会重试）:%s", e)
+        # 保留旧概要原样（可能已是分节 markdown 稿）,末尾追加带明确标记的未合并原文块。
+        # 下次成功压缩时,LLM 通过 L3 规则 1（"分节概要原样保留"）能保护已整理部分,
+        # 通过 L3 规则 2（"新内容归入对应节"）能把标记的未合并原文按话题合入——
+        # 不像旧 fallback 直接拼接会污染下次压缩的输入格式。
+        parts: list[str] = []
+        if prev_summary:
+            parts.append(prev_summary)
+        parts.append(
+            "\n---\n"
+            "⚠️【压缩失败,以下是本轮尚未合并进分节概要的原文,下次压缩会重新整理】\n"
+        )
+        parts.append(_entries_to_text(overflow))
+        return "\n".join(parts).strip()
+
 
 
 # ── 节点 ─────────────────────────────────────────────────────────────────────
@@ -333,7 +425,7 @@ def brainstorm_respond(state: NovelState) -> dict:
     chat_only = _chat_only(new_history)
     if len(chat_only) > _KEEP_MESSAGES:
         overflow = chat_only[:-_KEEP_MESSAGES]
-        new_summary = _compress(state.brainstorm_summary, overflow)
+        new_summary = _compress(state.brainstorm_summary, overflow, state.has_power_system)
         # 保留 chat 尾窗口 + 全部 pin 项；pin 按原始顺序穿插回来
         kept_chat_ids = {id(e) for e in chat_only[-_KEEP_MESSAGES:]}
         new_history = [
